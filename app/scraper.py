@@ -19,15 +19,17 @@ import asyncio
 
 async def fetch_html(url: str, params: Optional[dict] = None) -> str:
     """Fetches HTML using urllib to bypass Cloudflare's httpx blocking."""
-    if params:
-        query_string = urllib.parse.urlencode(params)
-        url = f"{url}?{query_string}"
-        
     headers = {"User-Agent": USER_AGENT}
     if ABB_COOKIE:
         headers["Cookie"] = ABB_COOKIE
-        
+    
     req = urllib.request.Request(url, headers=headers)
+    
+    # If we have params (search query), send as POST to avoid Cloudflare 301 on GET ?s=
+    if params:
+        query_string = urllib.parse.urlencode(params)
+        req.data = query_string.encode('ascii')
+        req.method = 'POST'
     
     # Bypass SSL verification
     context = ssl.create_default_context()
@@ -104,13 +106,9 @@ async def search_audiobooks(query: str) -> List[Dict]:
 
         # Try to find author
         author = "Unknown"
-        # Often it comes after Title or Category in some formats. Let's do a basic regex.
-        # Sometimes title is "Author - Title"
-        if "-" in title:
-            parts = title.split("-", 1)
-            author = parts[0].strip()
-            # Clean title
-            title = parts[1].strip()
+        # Often it comes after Title or Category in some formats, but trying to parse it
+        # from the title leads to truncated titles because the format varies wildly
+        # (e.g. Title - Author vs Author - Title). Pass full title to Jackett/Prowlarr.
 
         # Build basic result
         results.append({
