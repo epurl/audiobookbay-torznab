@@ -131,12 +131,10 @@ async def search_audiobooks(query: str, offset: int = 0, limit: int = 100) -> Li
             logger.error(f"Error fetching search results for '{query}' on page {page_num}: {e}", exc_info=True)
             return []
 
-    # Concurrently fetch pages
-    tasks = [fetch_and_parse(start_page + i) for i in range(pages_to_fetch)]
-    pages_results = await asyncio.gather(*tasks, return_exceptions=True)
-    
+    # Sequentially fetch pages to avoid Cloudflare rate limits and timeouts
     all_results = []
-    for page_res in pages_results:
+    for i in range(pages_to_fetch):
+        page_res = await fetch_and_parse(start_page + i)
         if isinstance(page_res, list):
             all_results.extend(page_res)
             # If a page returned less than 9 items, it's the last available page of results
