@@ -1,6 +1,6 @@
 # Audiobookbay Torznab Indexer
 
-*****VIBE-CODE PROJECT*****
+*****VIBE-CODE PROJECT FOR LEANRING PURPOSES*****
 
 This is a lightweight Docker container that acts as a Torznab indexer specifically for Audiobookbay.lu. It translates standard Torznab searches from apps like LazyLibrarian and Listenarr into Audiobookbay website searches and provides the results back as a Torznab RSS feed.
 
@@ -48,7 +48,7 @@ services:
 
 ## How it works
 
-Apps hit `/api?t=book&q=Sanderson` for example.
+Apps hit `/api?t=book&q=bible` for example.
 The scraper converts this to a standard `audiobookbay.lu/page/1?s=Sanderson` search.
 It scrapes the result page for Titles, Authors, and Size, then generates the required XML format.
 When the app attempts to "download" the `.torrent` file using the generated link, the server instead goes back to audiobookbay, grabs the `Info Hash` and emits an HTTP Redirect straight to the derived `magnet:` link.
