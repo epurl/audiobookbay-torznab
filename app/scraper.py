@@ -43,25 +43,7 @@ async def fetch_html(url: str, params: Optional[dict] = None) -> str:
     loop = asyncio.get_running_loop()
     html = await loop.run_in_executor(None, fetch)
     return html
-async def search_audiobooks(query: str) -> List[Dict]:
-    """Scrapes audiobookbay for the given query."""
-    
-    # Audiobookbay search URL structure: /page/1?s=term
-    # If no query, use the root or audio-books list
-    if query:
-        url = f"{BASE_URL}/page/1"
-        params = {"s": query}
-    else:
-        url = f"{BASE_URL}/"
-        params = {}
-    
-    logger.debug(f"Fetching search results from {url} with params {params}")
-    try:
-        html = await fetch_html(url, params)
-    except Exception as e:
-        logger.error(f"Error fetching search results for '{query}': {e}", exc_info=True)
-        return []
-
+def _parse_search_page(html: str) -> List[Dict]:
     soup = BeautifulSoup(html, "lxml")
     results = []
     
@@ -120,6 +102,50 @@ async def search_audiobooks(query: str) -> List[Dict]:
         })
         
     return results
+
+async def search_audiobooks(query: str, offset: int = 0, limit: int = 100) -> List[Dict]:
+    """Scrapes audiobookbay for the given query, supporting pagination."""
+    
+    # Audiobookbay generally returns 9 items per page
+    start_page = (offset // 9) + 1
+    
+    # Fetch up to 5 pages per query to avoid spamming the server
+    pages_to_fetch = min(5, max(1, (limit // 9) + 1))
+    
+    async def fetch_and_parse(page_num: int):
+        if query:
+            url = f"{BASE_URL}/page/{page_num}/"
+            params = {"s": query}
+        else:
+            if page_num == 1:
+                url = f"{BASE_URL}/"
+            else:
+                url = f"{BASE_URL}/page/{page_num}/"
+            params = {}
+            
+        logger.debug(f"Fetching search results from {url} with params {params}")
+        try:
+            html = await fetch_html(url, params)
+            return _parse_search_page(html)
+        except Exception as e:
+            logger.error(f"Error fetching search results for '{query}' on page {page_num}: {e}", exc_info=True)
+            return []
+
+    # Concurrently fetch pages
+    tasks = [fetch_and_parse(start_page + i) for i in range(pages_to_fetch)]
+    pages_results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    all_results = []
+    for page_res in pages_results:
+        if isinstance(page_res, list):
+            all_results.extend(page_res)
+            # If a page returned less than 9 items, it's the last available page of results
+            if len(page_res) < 9:
+                break
+                
+    # Calculate how many items to skip from the first fetched page
+    items_to_skip = offset % 9
+    return all_results[items_to_skip:items_to_skip + limit]
 
 async def get_magnet_link(detail_url: str) -> Optional[str]:
     """Fetches the detail page and extracts the InfoHash to build a magnet link."""

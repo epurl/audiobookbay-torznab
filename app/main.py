@@ -26,7 +26,7 @@ async def favicon():
     return Response(status_code=204)
 
 @app.get("/api")
-async def torznab_api(request: Request, t: str = "", q: str = "", author: str = "", title: str = ""):
+async def torznab_api(request: Request, t: str = "", q: str = "", author: str = "", title: str = "", offset: int = 0, limit: int = 100):
     """Main Torznab endpoint for indexer queries."""
     
     # Return Capabilities
@@ -36,7 +36,7 @@ async def torznab_api(request: Request, t: str = "", q: str = "", author: str = 
         
     # Handle Search Queries
     if t in ("search", "book"):
-        logger.info(f"Received search request - query: '{q}', author: '{author}', title: '{title}'")
+        logger.info(f"Received search request - query: '{q}', author: '{author}', title: '{title}', offset: {offset}, limit: {limit}")
         # Combine parameters into a generic search for audiobookbay
         query_parts = []
         if q:
@@ -50,14 +50,14 @@ async def torznab_api(request: Request, t: str = "", q: str = "", author: str = 
         
         try:
             logger.info(f"Searching AudiobookBay for: '{search_query}'")
-            results = await search_audiobooks(search_query)
+            results = await search_audiobooks(search_query, offset=offset, limit=limit)
             logger.info(f"Search returned {len(results)} results")
         except Exception as e:
             logger.error(f"Error during search: {e}", exc_info=True)
             results = []
             
         host_url = f"{request.url.scheme}://{request.url.netloc}"
-        xml = build_rss(results, host_url)
+        xml = build_rss(results, host_url, offset=offset)
         return Response(content=xml, media_type="application/xml")
 
     # Fallback for unsupported operations

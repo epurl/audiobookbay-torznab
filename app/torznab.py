@@ -21,9 +21,9 @@ def build_caps() -> str:
     
     return etree.tostring(root, xml_declaration=True, encoding="utf-8").decode()
 
-def build_rss(results: list, host_url: str) -> str:
+def build_rss(results: list, host_url: str, offset: int = 0) -> str:
     """Builds the RSS feed containing the search results."""
-    logger.debug(f"Building RSS feed for {len(results)} results with host_url {host_url}")
+    logger.debug(f"Building RSS feed for {len(results)} results with host_url {host_url}, offset {offset}")
     TORZNAB_NS = "http://torznab.com/schemas/2015/feed"
     ATOM_NS = "http://www.w3.org/2005/Atom"
     
@@ -32,6 +32,11 @@ def build_rss(results: list, host_url: str) -> str:
     
     etree.SubElement(channel, f"{{{ATOM_NS}}}link", rel="self", type="application/rss+xml")
     etree.SubElement(channel, "title").text = "Audiobookbay Indexer"
+    
+    total = offset + len(results)
+    if len(results) > 0:
+        total += 1000
+    etree.SubElement(channel, f"{{{TORZNAB_NS}}}response", offset=str(offset), total=str(total))
 
     for res in results:
         item = etree.SubElement(channel, "item")
