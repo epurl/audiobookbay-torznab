@@ -48,7 +48,7 @@ services:
 
 ## How it works
 
-Apps hit `/api?t=book&q=bible` for example.
-The scraper converts this to a standard `audiobookbay.lu/page/1?s=Sanderson` search.
+Apps hit `/api?t=book&q=my%20query` for example.
+The scraper converts this to a standard `audiobookbay.lu/page/1?s=my query` search.
 It scrapes the result page for Titles, Authors, and Size, then generates the required XML format.
 When the app attempts to "download" the `.torrent` file using the generated link, the server instead goes back to audiobookbay, grabs the `Info Hash` and emits an HTTP Redirect straight to the derived `magnet:` link.
