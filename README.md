@@ -20,7 +20,6 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # Optional but recommended, as Audiobookbay restricts searching unless logged in
       - ABB_COOKIE=${ABB_COOKIE:-} 
       - ABB_USER_AGENT=${ABB_USER_AGENT:-Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36}
     restart: unless-stopped
