@@ -12,20 +12,35 @@ BASE_URL = "https://audiobookbay.lu"
 ABB_COOKIE = os.environ.get("ABB_COOKIE", "")
 USER_AGENT = os.environ.get("ABB_USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
+import urllib.request
+import urllib.parse
+import ssl
+import asyncio
+
 async def fetch_html(url: str, params: Optional[dict] = None) -> str:
+    """Fetches HTML using urllib to bypass Cloudflare's httpx blocking."""
+    if params:
+        query_string = urllib.parse.urlencode(params)
+        url = f"{url}?{query_string}"
+        
     headers = {"User-Agent": USER_AGENT}
     if ABB_COOKIE:
         headers["Cookie"] = ABB_COOKIE
         
-    async with httpx.AsyncClient(http2=True, follow_redirects=True, verify=False, timeout=30.0) as client:
-        response = await client.get(
-            url, 
-            params=params,
-            headers=headers
-        )
-        response.raise_for_status()
-        return response.text
+    req = urllib.request.Request(url, headers=headers)
+    
+    # Bypass SSL verification
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
 
+    def fetch():
+        with urllib.request.urlopen(req, context=context, timeout=30.0) as response:
+            return response.read().decode('utf-8', errors='ignore')
+
+    loop = asyncio.get_running_loop()
+    html = await loop.run_in_executor(None, fetch)
+    return html
 async def search_audiobooks(query: str) -> List[Dict]:
     """Scrapes audiobookbay for the given query."""
     
