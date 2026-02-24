@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  audiobookbay-torznab:
+    build: .
+    container_name: audiobookbay-torznab
+    ports:
+      - "8000:8000"
+    environment:
+      - ABB_COOKIE=_ga=GA1.1.1088361529.1770819278; fpestid=CnIZoQB_lh9FKDStWiLxa-5i8sdllCjEJBerPFkyp4owootUateIowm_j6hKnbAc4Qub_g; _ga_DBSXMMT9CT=GS2.1.s1770819277$o1$g1$t1770819425$j60$l0$h0; PHPSESSID=33c72etack5omkkg95n6ejji64
+      - ABB_USER_AGENT=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0
+    restart: unless-stopped
