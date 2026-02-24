@@ -35,7 +35,7 @@ async def search_audiobooks(query: str) -> List[Dict]:
         url = f"{BASE_URL}/page/1"
         params = {"s": query}
     else:
-        url = f"{BASE_URL}/audio-books/page/1"
+        url = f"{BASE_URL}/"
         params = {}
     
     logger.debug(f"Fetching search results from {url} with params {params}")
