@@ -143,10 +143,21 @@ async def search_audiobooks(query: str, offset: int = 0, limit: int = 100) -> Li
                 
     # Calculate how many items to skip from the first fetched page
     items_to_skip = offset % 9
-    return all_results[items_to_skip:items_to_skip + limit]
+    final_results = all_results[items_to_skip:items_to_skip + limit]
+    
+    # Fetch magnets concurrently
+    async def populate_magnet(res):
+        magnet = await get_magnet_link(res['link'], res['title'])
+        if magnet:
+            res['magnet_url'] = magnet
+            
+    if final_results:
+        await asyncio.gather(*[populate_magnet(r) for r in final_results])
+        
+    return final_results
 
-async def get_magnet_link(detail_url: str) -> Optional[str]:
-    """Fetches the detail page and extracts the InfoHash to build a magnet link."""
+async def get_magnet_link(detail_url: str, title: str = "") -> Optional[str]:
+    """Fetches the detail page and extracts the InfoHash and trackers to build a magnet link."""
     logger.debug(f"Fetching detail page to extract magnet link: {detail_url}")
     try:
         html = await fetch_html(detail_url)
@@ -168,11 +179,28 @@ async def get_magnet_link(detail_url: str) -> Optional[str]:
                 
     if infohash:
         # Build magnet link
-        return f"magnet:?xt=urn:btih:{infohash}"
+        magnet = f"magnet:?xt=urn:btih:{infohash}"
+        
+        if title:
+            magnet += f"&dn={urllib.parse.quote(title)}"
+            
+        trackers = []
+        for row in soup.find_all('tr'):
+            tds = row.find_all('td')
+            if len(tds) >= 2 and "Tracker:" in tds[0].text:
+                trackers.append(tds[1].text.strip())
+                
+        for tr in trackers:
+            magnet += f"&tr={urllib.parse.quote(tr)}"
+            
+        return magnet
         
     # 2. Try looking for an existing magnet link in a href
     magnet_link = soup.find('a', href=re.compile(r'^magnet:'))
     if magnet_link:
-        return magnet_link.get('href')
+        magnet = magnet_link.get('href')
+        if title and "&dn=" not in magnet:
+            magnet += f"&dn={urllib.parse.quote(title)}"
+        return magnet
         
     return None

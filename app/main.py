@@ -64,14 +64,14 @@ async def torznab_api(request: Request, t: str = "", q: str = "", author: str = 
     return Response(content="<?xml version=\"1.0\" encoding=\"UTF-8\"?><error code=\"201\" description=\"Incorrect parameter\"/>", media_type="application/xml")
 
 @app.get("/api/download")
-async def download_magnet(url: str):
+async def download_magnet(url: str, title: str = ""):
     """Simulates downloading a torrent by fetching the detail page and redirecting to the extracted magnet link."""
-    logger.info(f"Download requested for URL: {url}")
+    logger.info(f"Download requested for URL: {url} with title: {title}")
     if not url:
         logger.warning("Download requested without URL parameter")
         raise HTTPException(status_code=400, detail="Missing url parameter")
         
-    magnet = await get_magnet_link(url)
+    magnet = await get_magnet_link(url, title)
     if not magnet:
         logger.error(f"Failed to find magnet link for URL: {url}")
         raise HTTPException(status_code=404, detail="Could not find magnet link for this audiobook")

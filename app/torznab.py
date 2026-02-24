@@ -49,10 +49,14 @@ def build_rss(results: list, host_url: str, offset: int = 0) -> str:
         description = res.get("description", "")
         etree.SubElement(item, "description").text = description
         
-        dl_url = f"{host_url}/api/download?url={res.get('link', '')}"
+        import urllib.parse
+        encoded_title = urllib.parse.quote(title)
+        dl_url = f"{host_url}/api/download?url={res.get('link', '')}&title={encoded_title}"
+        
+        magnet_url = res.get("magnet_url") or dl_url
         
         # GUID should typically be the unique tracker link, or download link as fallback
-        guid_val = res.get("link", dl_url)
+        guid_val = res.get("link", magnet_url)
         etree.SubElement(item, "guid").text = guid_val
         
         # Prowlarr Indexer node is sometimes expected in Torznab proxies, though usually injected by the proxy itself
@@ -67,7 +71,7 @@ def build_rss(results: list, host_url: str, offset: int = 0) -> str:
         size = str(res.get("size_bytes", 0))
         etree.SubElement(item, "size").text = size
         
-        etree.SubElement(item, "link").text = dl_url
+        etree.SubElement(item, "link").text = magnet_url
         
         # Torznab Standard Categories for Audio/Audiobooks
         etree.SubElement(item, "category").text = "3000"
@@ -75,7 +79,7 @@ def build_rss(results: list, host_url: str, offset: int = 0) -> str:
         
         # Enclosure containing output structure.
         # Since we use magnet redirects, `application/x-bittorrent` is the standard acceptable type for torznab
-        etree.SubElement(item, "enclosure", url=dl_url, length=size, type="application/x-bittorrent")
+        etree.SubElement(item, "enclosure", url=magnet_url, length=size, type="application/x-bittorrent")
         
         # Torznab Attributes
         etree.SubElement(item, f"{{{TORZNAB_NS}}}attr", name="category", value="3000")
