@@ -8,7 +8,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "http://audiobookbay.lu"
+BASE_URL = "https://audiobookbay.lu"
 ABB_COOKIE = os.environ.get("ABB_COOKIE", "")
 USER_AGENT = os.environ.get("ABB_USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
@@ -17,7 +17,7 @@ async def fetch_html(url: str, params: Optional[dict] = None) -> str:
     if ABB_COOKIE:
         headers["Cookie"] = ABB_COOKIE
         
-    async with httpx.AsyncClient(follow_redirects=True, verify=False) as client:
+    async with httpx.AsyncClient(http2=True, follow_redirects=True, verify=False, timeout=30.0) as client:
         response = await client.get(
             url, 
             params=params,
@@ -30,8 +30,13 @@ async def search_audiobooks(query: str) -> List[Dict]:
     """Scrapes audiobookbay for the given query."""
     
     # Audiobookbay search URL structure: /page/1?s=term
-    url = f"{BASE_URL}/page/1"
-    params = {"s": query} if query else {}
+    # If no query, use the root or audio-books list
+    if query:
+        url = f"{BASE_URL}/page/1"
+        params = {"s": query}
+    else:
+        url = f"{BASE_URL}/audio-books/page/1"
+        params = {}
     
     logger.debug(f"Fetching search results from {url} with params {params}")
     try:

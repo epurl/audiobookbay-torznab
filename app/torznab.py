@@ -32,7 +32,7 @@ def build_rss(results: list, host_url: str) -> str:
     
     etree.SubElement(channel, f"{{{ATOM_NS}}}link", rel="self", type="application/rss+xml")
     etree.SubElement(channel, "title").text = "Audiobookbay Indexer"
-    
+
     for res in results:
         item = etree.SubElement(channel, "item")
         
