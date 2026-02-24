@@ -7,6 +7,16 @@ from app.torznab import build_caps, build_rss
 
 app = FastAPI(title="Audiobookbay Torznab Indexer")
 
+@app.get("/")
+async def root():
+    """Root endpoint, useful for health checks."""
+    return {"message": "Audiobookbay Torznab Indexer is running", "api_endpoint": "/api"}
+
+@app.get("/favicon.ico")
+async def favicon():
+    """Ignore favicon requests."""
+    return Response(status_code=204)
+
 @app.get("/api")
 async def torznab_api(request: Request, t: str = "", q: str = "", author: str = "", title: str = ""):
     """Main Torznab endpoint for indexer queries."""
