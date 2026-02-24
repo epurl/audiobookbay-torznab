@@ -4,6 +4,9 @@ import re
 import urllib.parse
 from typing import List, Dict, Optional
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 BASE_URL = "http://audiobookbay.lu"
 ABB_COOKIE = os.environ.get("ABB_COOKIE", "")
@@ -30,10 +33,11 @@ async def search_audiobooks(query: str) -> List[Dict]:
     url = f"{BASE_URL}/page/1"
     params = {"s": query} if query else {}
     
+    logger.debug(f"Fetching search results from {url} with params {params}")
     try:
         html = await fetch_html(url, params)
     except Exception as e:
-        print(f"Error fetching search results: {e}")
+        logger.error(f"Error fetching search results for '{query}': {e}", exc_info=True)
         return []
 
     soup = BeautifulSoup(html, "lxml")
@@ -101,10 +105,11 @@ async def search_audiobooks(query: str) -> List[Dict]:
 
 async def get_magnet_link(detail_url: str) -> Optional[str]:
     """Fetches the detail page and extracts the InfoHash to build a magnet link."""
+    logger.debug(f"Fetching detail page to extract magnet link: {detail_url}")
     try:
         html = await fetch_html(detail_url)
     except Exception as e:
-        print(f"Error fetching detail page {detail_url}: {e}")
+        logger.error(f"Error fetching detail page {detail_url}: {e}", exc_info=True)
         return None
         
     soup = BeautifulSoup(html, "lxml")

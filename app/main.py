@@ -1,6 +1,14 @@
 from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import RedirectResponse
 import traceback
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 from app.scraper import search_audiobooks, get_magnet_link
 from app.torznab import build_caps, build_rss
@@ -28,6 +36,7 @@ async def torznab_api(request: Request, t: str = "", q: str = "", author: str = 
         
     # Handle Search Queries
     if t in ("search", "book"):
+        logger.info(f"Received search request - query: '{q}', author: '{author}', title: '{title}'")
         # Combine parameters into a generic search for audiobookbay
         query_parts = []
         if q:
@@ -40,10 +49,11 @@ async def torznab_api(request: Request, t: str = "", q: str = "", author: str = 
         search_query = " ".join(query_parts).strip()
         
         try:
+            logger.info(f"Searching AudiobookBay for: '{search_query}'")
             results = await search_audiobooks(search_query)
+            logger.info(f"Search returned {len(results)} results")
         except Exception as e:
-            print(f"Error during search: {e}")
-            traceback.print_exc()
+            logger.error(f"Error during search: {e}", exc_info=True)
             results = []
             
         host_url = f"{request.url.scheme}://{request.url.netloc}"
@@ -56,14 +66,18 @@ async def torznab_api(request: Request, t: str = "", q: str = "", author: str = 
 @app.get("/api/download")
 async def download_magnet(url: str):
     """Simulates downloading a torrent by fetching the detail page and redirecting to the extracted magnet link."""
+    logger.info(f"Download requested for URL: {url}")
     if not url:
+        logger.warning("Download requested without URL parameter")
         raise HTTPException(status_code=400, detail="Missing url parameter")
         
     magnet = await get_magnet_link(url)
     if not magnet:
+        logger.error(f"Failed to find magnet link for URL: {url}")
         raise HTTPException(status_code=404, detail="Could not find magnet link for this audiobook")
         
     # Redirect standard download cliens to the magnet link
+    logger.info(f"Successfully resolved magnet link for {url}, redirecting client.")
     return RedirectResponse(magnet)
 
 if __name__ == "__main__":
