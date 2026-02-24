@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 def build_caps() -> str:
     """Builds the capabilities XML response for Torznab client."""
     logger.debug("Building torznab capabilities XML")
-    root = etree.Element("torznab")
+    root = etree.Element("caps")
     
     server = etree.SubElement(root, "server", version="1.0", title="Audiobookbay Indexer", strapline="Audiobooks")
     
