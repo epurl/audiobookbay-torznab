@@ -1,7 +1,11 @@
-from fastapi import FastAPI, Request, Response, HTTPException
-from fastapi.responses import RedirectResponse
-import traceback
 import logging
+import traceback
+
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import RedirectResponse
+
+from app.scraper import get_magnet_link, search_audiobooks
+from app.torznab import build_caps, build_rss
 
 # Configure logging
 logging.basicConfig(
@@ -9,9 +13,6 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-from app.scraper import search_audiobooks, get_magnet_link
-from app.torznab import build_caps, build_rss
 
 app = FastAPI(title="Audiobookbay Torznab Indexer")
 
