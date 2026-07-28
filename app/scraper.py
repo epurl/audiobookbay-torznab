@@ -142,15 +142,6 @@ async def search_audiobooks(query: str, offset: int = 0, limit: int = 100) -> Li
     # Calculate how many items to skip from the first fetched page
     items_to_skip = offset % 9
     final_results = all_results[items_to_skip:items_to_skip + limit]
-    
-    # Fetch magnets concurrently
-    async def populate_magnet(res):
-        magnet = await get_magnet_link(res['link'], res['title'])
-        if magnet:
-            res['magnet_url'] = magnet
-            
-    if final_results:
-        await asyncio.gather(*[populate_magnet(r) for r in final_results])
         
     return final_results
 
