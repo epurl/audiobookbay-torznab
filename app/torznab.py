@@ -1,6 +1,8 @@
-from lxml import etree
 import datetime
 import logging
+import urllib.parse
+
+from lxml import etree
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +51,6 @@ def build_rss(results: list, host_url: str, offset: int = 0) -> str:
         description = res.get("description", "")
         etree.SubElement(item, "description").text = description
         
-        import urllib.parse
         encoded_title = urllib.parse.quote(title)
         dl_url = f"{host_url}/api/download?url={res.get('link', '')}&title={encoded_title}"
         
