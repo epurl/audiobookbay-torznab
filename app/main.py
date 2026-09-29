@@ -1,13 +1,17 @@
-from fastapi import FastAPI, Request, Response, HTTPException
-from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-import httpx
 import asyncio
-import traceback
 import logging
 import os
 import platform
-from urllib.parse import unquote
+
+import httpx
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+
+from app import auth, db
+from app.monitor import grab, run_monitor_loop, schedule_search
+from app.scraper import fetch_detail_info, search_audiobooks, search_for_book
+from app.torznab import build_caps, build_rss
 
 # Configure logging
 logging.basicConfig(
@@ -15,11 +19,6 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-from app.scraper import search_audiobooks, search_for_book, fetch_detail_info
-from app.torznab import build_caps, build_rss
-from app import db, auth
-from app.monitor import run_monitor_loop, schedule_search, grab
 
 app = FastAPI(title="Bayarr")
 app.middleware("http")(auth.auth_middleware)

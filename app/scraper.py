@@ -1,21 +1,19 @@
-import httpx
-from bs4 import BeautifulSoup
-import re
-import urllib.parse
-from typing import List, Dict, Optional
-import os
+import asyncio
 import logging
+import os
+import re
+import ssl
+import urllib.parse
+import urllib.request
+from typing import Dict, List, Optional
+
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://audiobookbay.lu"
 ABB_COOKIE = os.environ.get("ABB_COOKIE", "")
 USER_AGENT = os.environ.get("ABB_USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-
-import urllib.request
-import urllib.parse
-import ssl
-import asyncio
 
 async def fetch_html(url: str, params: Optional[dict] = None) -> str:
     """Fetches HTML using urllib to bypass Cloudflare's httpx blocking."""
