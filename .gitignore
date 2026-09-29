@@ -4,3 +4,7 @@ test.html
 container_logs.txt
 .gitignore
 decoded_logs.txt
+.env
+config/
+__pycache__/
+app/database.json
