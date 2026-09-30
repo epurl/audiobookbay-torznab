@@ -14,8 +14,31 @@ IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
 DISC_FOLDER_RE = re.compile(r'^(cd|disc|disk|part)\s*\d+', re.IGNORECASE)
 # Folders created by NAS software that never hold books
 SKIP_FOLDERS = {"@eadir", "#recycle", "$recycle.bin", ".trash", "lost+found"}
+# System folders that are never scanned, even if a scan is started above them
+SYSTEM_FOLDERS = {"/", "/proc", "/sys", "/dev", "/run", "/tmp", "/etc", "/usr", "/bin", "/sbin",
+                  "/lib", "/lib64", "/boot", "/var", "/opt", "/srv", "/root", "/app", "/config"}
+
+
+def is_system_folder(path):
+    return os.path.normpath(path).replace("\\", "/") in SYSTEM_FOLDERS
 
 DEFAULT_NAMING_FORMAT = "{Author} - {Series} {SeriesNumber} - {Title}"
+
+
+def display_name(text):
+    """A readable version of a file or folder name.
+
+    On Linux, names that aren't valid UTF-8 (typically Windows-1252 names on a share
+    mounted without iocharset=utf8, like "Babylon\x92s Ashes") arrive with undecodable
+    bytes kept as surrogates. Those are fine for opening files but not for showing or
+    searching; decode them as Windows-1252 instead."""
+    if not isinstance(text, str) or not any("\udc80" <= ch <= "\udcff" for ch in text):
+        return text
+    raw = text.encode("utf-8", "surrogateescape")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("cp1252", errors="replace")
 
 
 def format_sequence(seq):
@@ -170,6 +193,8 @@ def describe_files(path):
 
 def _make_candidate(path, name, cover="", parents=()):
     meta = read_abs_metadata(path) if os.path.isdir(path) else None
+    name = display_name(name)
+    parents = tuple(display_name(p) for p in parents)
     if parents:
         # Nested layouts: Author/Title or Author/Series/Title
         parsed = parse_folder_name(name, author=parents[0])
@@ -197,7 +222,8 @@ def scan_library(root):
     root = os.path.abspath(root)
     candidates = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d.lower() not in SKIP_FOLDERS)
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d.lower() not in SKIP_FOLDERS
+                             and not is_system_folder(os.path.join(dirpath, d)))
         has_audio = any(os.path.splitext(f)[1].lower() in AUDIO_EXTENSIONS for f in filenames)
         disc_dirs = [d for d in dirnames if DISC_FOLDER_RE.match(d)]
 

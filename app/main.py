@@ -1,11 +1,12 @@
 import asyncio
 import datetime
+import json
 import logging
 import os
 import platform
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import audible, audiobookshelf, auth, db, library
@@ -22,7 +23,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Bayarr")
+class SafeJSONResponse(JSONResponse):
+    """JSON with non-ASCII characters escaped, so file names that aren't valid UTF-8 (kept
+    as surrogates by Python) can be sent to the browser and back without crashing."""
+
+    def render(self, content) -> bytes:
+        return json.dumps(content, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
+
+
+app = FastAPI(title="Bayarr", default_response_class=SafeJSONResponse)
 app.middleware("http")(auth.auth_middleware)
 
 @app.on_event("startup")
@@ -268,7 +277,7 @@ async def api_book_files(book_id: str):
     return {
         "path": path,
         "exists": True,
-        "files": [{"name": os.path.relpath(f, base), "size_bytes": size} for f, size in files],
+        "files": [{"name": library.display_name(os.path.relpath(f, base)), "size_bytes": size} for f, size in files],
     }
 
 # --- Activity: queue and history ---
@@ -423,6 +432,9 @@ async def api_scan_library(request: Request):
     root = (data.get("path") or db.get_settings().get("root_folder") or "").strip()
     if not root or not os.path.isdir(root):
         raise HTTPException(status_code=400, detail=f"Folder not found: {root or '(none set)'}")
+    if library.is_system_folder(root) or library.is_system_folder(os.path.abspath(root)):
+        raise HTTPException(status_code=400, detail=f"{root} is a system folder. Choose the folder that holds "
+                                                    "your audiobooks, e.g. /audiobooks.")
 
     candidates = await asyncio.to_thread(library.scan_library, root)
     current = db.get_library()
@@ -516,6 +528,13 @@ async def api_send_to_client(request: Request):
     else:
         raise HTTPException(status_code=500, detail="Failed to send torrent to qBittorrent")
 
+@app.post("/api/browse")
+async def browse_directory_post(request: Request):
+    """Folder picker. The path comes in the JSON body rather than the URL, so folder names
+    that aren't valid UTF-8 survive the round trip."""
+    data = await request.json()
+    return await browse_directory(data.get("path") or "")
+
 @app.get("/api/browse")
 async def browse_directory(path: str = ""):
     if not path:
@@ -548,8 +567,10 @@ async def browse_directory(path: str = ""):
         
     return {
         "path": path,
+        "display_path": library.display_name(path),
         "parent": parent,
-        "dirs": sorted(dirs, key=lambda s: s.lower())
+        "dirs": [{"name": library.display_name(d), "path": os.path.join(path, d)}
+                 for d in sorted(dirs, key=lambda s: library.display_name(s).lower())],
     }
 
 @app.get("/api/search_audible")

@@ -1499,6 +1499,7 @@ function closeModal() {
 // -----------------
 let activeFolderInputId = null;
 let currentParentPath = null;
+let currentFolderRaw = '';
 
 const folderModal = document.getElementById('folderModal');
 const closeFolderModal = document.getElementById('closeFolderModal');
@@ -1525,7 +1526,8 @@ closeFolderModal.addEventListener('click', () => {
 
 document.getElementById('selectFolderBtn').addEventListener('click', () => {
     if (activeFolderInputId && currentFolderPath.value) {
-        document.getElementById(activeFolderInputId).value = currentFolderPath.value;
+        // The exact path, not the readable version, so it works on disk
+        document.getElementById(activeFolderInputId).value = currentFolderRaw || currentFolderPath.value;
     }
     folderModal.classList.remove('show');
     setTimeout(() => {
@@ -1542,28 +1544,27 @@ document.getElementById('folderUpBtn').addEventListener('click', () => {
 async function loadFolder(path) {
     folderList.innerHTML = '<div style="padding: 16px; text-align: center;">Loading...</div>';
     try {
-        const url = `/api/browse?path=${encodeURIComponent(path || "")}`;
-        const res = await fetch(url);
+        const res = await fetch('/api/browse', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: path || '' })
+        });
+        if (!res.ok) throw new Error(`the server returned ${res.status}`);
         const data = await res.json();
 
-        currentFolderPath.value = data.path;
+        currentFolderPath.value = data.display_path || data.path;
+        currentFolderRaw = data.path;
         currentParentPath = data.parent;
 
         folderList.innerHTML = '';
         if (data.dirs && data.dirs.length > 0) {
-            data.dirs.forEach(dirName => {
+            data.dirs.forEach(dir => {
                 const item = document.createElement('div');
                 item.className = 'folder-item';
                 // Simple SVG folder icon
                 const icon = `<svg class="folder-icon" viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>`;
-                item.innerHTML = `${icon}<span>${esc(dirName)}</span>`;
-
-                // When a folder is clicked, navigate into it. We append safely.
-                item.addEventListener('click', () => {
-                    const separator = data.path.includes('\\') ? '\\' : '/';
-                    const newPath = data.path.endsWith(separator) ? `${data.path}${dirName}` : `${data.path}${separator}${dirName}`;
-                    loadFolder(newPath);
-                });
+                item.innerHTML = `${icon}<span>${esc(dir.name)}</span>`;
+                item.addEventListener('click', () => loadFolder(dir.path));
                 folderList.appendChild(item);
             });
         } else {
