@@ -81,15 +81,19 @@ def _migrate_legacy_db():
 def _load_db():
     with _lock:
         _migrate_legacy_db()
-        if not os.path.exists(DB_FILE):
-            return {"library": [], "settings": dict(DEFAULT_SETTINGS)}
-        with open(DB_FILE, "r", encoding="utf-8") as f:
+        db = {}
+        if os.path.exists(DB_FILE):
             try:
-                db = json.load(f)
+                with open(DB_FILE, "r", encoding="utf-8") as f:
+                    db = json.load(f)
             except json.JSONDecodeError:
-                logger.error(f"{DB_FILE} is corrupt; starting with an empty database.")
-                return {"library": [], "settings": dict(DEFAULT_SETTINGS)}
-        # Ensure new keys exist
+                # Keep the damaged file for recovery instead of overwriting it on the next save
+                stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+                kept = os.path.join(CONFIG_DIR, f"database.corrupt-{stamp}.json")
+                os.replace(DB_FILE, kept)
+                logger.error(f"{DB_FILE} is corrupt; moved it to {kept} and started an empty database. "
+                             f"Restore a backup from {BACKUP_DIR} in Settings > Backup.")
+        # Fill in anything missing: a new install, a corrupt file, or an older database
         settings = db.setdefault("settings", {})
         for k, v in DEFAULT_SETTINGS.items():
             settings.setdefault(k, v)
