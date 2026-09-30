@@ -541,7 +541,7 @@ body {
 }
 
 .settings-hint {
-    font-size: 0.8rem;
+    font-size: 0.85rem;
     color: var(--text-muted);
     margin-top: 6px;
 }
@@ -632,12 +632,13 @@ body {
 }
 
 .library-toolbar .form-input {
-    flex: 1 1 260px;
+    flex: 0 1 460px;
+    min-width: 220px;
 }
 
 .library-stats {
     color: var(--text-muted);
-    font-size: 0.85rem;
+    font-size: 0.9rem;
     margin-left: auto;
 }
 
@@ -818,7 +819,7 @@ body {
 
 .muted {
     color: var(--text-muted);
-    font-size: 0.8rem;
+    font-size: 0.85rem;
 }
 
 .progress {
@@ -1097,9 +1098,22 @@ button {
 }
 
 .empty-state p {
-    max-width: 440px;
+    max-width: 480px;
     margin: 0 auto;
-    font-size: 0.9rem;
+    font-size: 0.95rem;
+}
+
+.empty-state .empty-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    margin-top: 20px;
+}
+
+/* Messages shown in place of a grid take the whole row, not one card's width */
+.results-grid > .empty-state,
+.results-grid > .no-results {
+    grid-column: 1 / -1;
 }
 
 /* Buttons */
@@ -1502,6 +1516,10 @@ button {
 
     .book-info {
         padding: 10px;
+    }
+
+    .library-toolbar .form-input {
+        flex: 1 1 100%;
     }
 
     .library-toolbar .form-select {

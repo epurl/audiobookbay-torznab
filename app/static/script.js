@@ -460,7 +460,16 @@ function renderLibrary() {
     stats.textContent = `${appLibrary.length} books${parts.length ? ' · ' + parts.join(' · ') : ''}`;
 
     if (appLibrary.length === 0) {
-        container.innerHTML = '<div class="no-results">Your library is empty. Add books from Search, or use Import Existing to bring in the audiobooks you already have.</div>';
+        container.innerHTML = `<div class="empty-state">
+            <h3>Your library is empty</h3>
+            <p>Bring in the audiobooks you already have, or find new ones on Audible.</p>
+            <div class="empty-actions">
+                <button class="primary-btn" data-empty-action="import">Import Existing</button>
+                <button class="secondary-btn" data-empty-action="search">Search</button>
+            </div>
+        </div>`;
+        container.querySelector('[data-empty-action="import"]').addEventListener('click', () => document.getElementById('openImportBtn').click());
+        container.querySelector('[data-empty-action="search"]').addEventListener('click', () => document.querySelector('[data-view="searchView"]').click());
         return;
     }
 
@@ -481,7 +490,16 @@ function renderLibrary() {
     updateBulkBar();
 
     if (books.length === 0) {
-        container.innerHTML = '<div class="no-results">No books match the filter.</div>';
+        container.innerHTML = `<div class="empty-state">
+            <h3>No books match</h3>
+            <p>Nothing in your library matches this filter.</p>
+            <div class="empty-actions"><button class="secondary-btn" data-empty-action="clear">Clear Filter</button></div>
+        </div>`;
+        container.querySelector('[data-empty-action="clear"]').addEventListener('click', () => {
+            document.getElementById('libFilterText').value = '';
+            document.getElementById('libFilterStatus').value = '';
+            renderLibrary();
+        });
         return;
     }
 
@@ -998,7 +1016,10 @@ async function renderSeries() {
     await Promise.all([fetchSeries(), fetchLibrary()]);
     const container = document.getElementById('seriesContainer');
     if (!appSeries.length) {
-        container.innerHTML = '<div class="no-results">No series yet.</div>';
+        container.innerHTML = `<div class="empty-state">
+            <h3>No series yet</h3>
+            <p>Use Monitor Series on a series in Search results, or in a book's details in the Library.</p>
+        </div>`;
         return;
     }
     const sorted = [...appSeries].sort((a, b) => normKey(a.title).localeCompare(normKey(b.title)));

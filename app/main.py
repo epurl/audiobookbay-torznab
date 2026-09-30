@@ -39,9 +39,15 @@ async def root():
     """Root endpoint, serves the main UI."""
     try:
         with open("app/static/index.html", "r", encoding="utf-8") as f:
-            return f.read()
+            page = f.read()
     except FileNotFoundError:
         return "UI not found. Please create app/static/index.html."
+    # Tag the CSS and JS with their modification time, so browsers fetch the new
+    # files after an update instead of reusing cached copies
+    for asset in ("style.css", "script.js"):
+        version = int(os.path.getmtime(os.path.join("app/static", asset)))
+        page = page.replace(f"/static/{asset}\"", f"/static/{asset}?v={version}\"")
+    return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
 
 @app.get("/favicon.ico")
 async def favicon():
