@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import logging
 import os
 import platform
@@ -8,9 +9,9 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import audible, audiobookshelf, auth, db, library
-from app.monitor import (auto_download_book, find_missing_books, grab, run_monitor_loop, schedule_search,
-                         schedule_searches, sync_series)
-from app.qbittorrent import get_torrents
+from app.monitor import (auto_download_book, find_missing_books, grab, match_job, run_monitor_loop, schedule_search,
+                         schedule_searches, start_match_job, sync_series)
+from app.qbittorrent import get_torrents, test_connection
 from app.scraper import fetch_detail_info, search_audiobooks, search_for_book
 from app.torznab import build_caps, build_rss
 
@@ -144,6 +145,60 @@ async def api_edit_book(book_id: str, request: Request):
             raise HTTPException(status_code=400, detail="Runtime must be a whole number of minutes")
     db.update_book(book_id, **fields)
     return {"success": True, "book": db.get_book(book_id)}
+
+@app.get("/api/library/{book_id}/match_candidates")
+async def api_match_candidates(book_id: str, q: str = ""):
+    """Audible books that might be this one, for choosing a match by hand."""
+    book = _get_book_or_404(book_id)
+    query = q.strip() or f"{(book.get('title') or '').split(':')[0]} {library.primary_author(book.get('authors'))}"
+    try:
+        return {"query": query, "candidates": await audible.match_candidates(query)}
+    except Exception as e:
+        logger.error(f"Audible search failed: {e}")
+        raise HTTPException(status_code=502, detail="Couldn't search Audible.")
+
+@app.post("/api/library/{book_id}/match")
+async def api_match_book(book_id: str, request: Request):
+    """Fills in a book's details from the chosen Audible edition."""
+    book = _get_book_or_404(book_id)
+    asin = (await request.json()).get("asin", "")
+    products = await audible.get_products([asin]) if asin else []
+    if not products:
+        raise HTTPException(status_code=404, detail="That book wasn't found on Audible.")
+    db.apply_audible_match(book_id, audible.product_to_book(products[0], prefer_series=book.get("series", "")))
+    db.add_history("matched", book, f"Matched to Audible {asin}")
+    return {"success": True, "book": db.get_book(book_id)}
+
+@app.post("/api/library/bulk")
+async def api_bulk(request: Request):
+    """Applies one action to many books: status, remove, or match (on Audible)."""
+    data = await request.json()
+    known = {b["id"] for b in db.get_library()}
+    ids = [i for i in data.get("ids", []) if i in known]
+    action = data.get("action")
+    if not ids:
+        raise HTTPException(status_code=400, detail="No books selected.")
+    if action == "status":
+        status = data.get("status")
+        if status not in db.STATUSES:
+            raise HTTPException(status_code=400, detail=f"Unknown status: {status}")
+        db.update_books({i: {"status": status} for i in ids})
+        if status == "Monitored":
+            schedule_searches([db.get_book(i) for i in ids])
+        return {"success": True, "count": len(ids)}
+    if action == "remove":
+        for i in ids:
+            db.remove_from_library(i)
+        return {"success": True, "count": len(ids)}
+    if action == "match":
+        if not start_match_job(ids):
+            raise HTTPException(status_code=409, detail="A match is already running.")
+        return {"success": True, "count": len(ids)}
+    raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
+
+@app.get("/api/library/match_status")
+async def api_match_status():
+    return dict(match_job)
 
 @app.post("/api/library/{book_id}/import_anyway")
 async def api_import_anyway(book_id: str):
@@ -294,6 +349,46 @@ async def api_remove_series(series_id: str):
     """Stops tracking a series. Its books stay in the library."""
     db.remove_series(series_id)
     return {"success": True}
+
+# --- qBittorrent ---
+
+@app.post("/api/qbittorrent/test")
+async def api_qbt_test(request: Request):
+    """Checks the qBittorrent login. A blank password uses the saved one."""
+    data = await request.json()
+    settings = db.get_settings()
+    host = (data.get("host") or settings.get("qbt_host") or "").strip()
+    if not host.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Enter the Web UI URL, starting with http:// or https://")
+    try:
+        version = await test_connection(host, data.get("user") or settings.get("qbt_user"),
+                                        data.get("password") or settings.get("qbt_pass"))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e) or "Couldn't connect to qBittorrent.")
+    return {"success": True, "version": version}
+
+# --- Backup ---
+
+@app.get("/api/backup")
+async def api_backup():
+    """Downloads the database (library, series, history and settings)."""
+    if not os.path.exists(db.DB_FILE):
+        raise HTTPException(status_code=404, detail="Nothing to back up yet.")
+    name = f"bayarr-backup-{datetime.date.today().isoformat()}.json"
+    return FileResponse(db.DB_FILE, media_type="application/json", filename=name)
+
+@app.post("/api/restore")
+async def api_restore(request: Request):
+    try:
+        data = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="That file isn't valid JSON.")
+    try:
+        count = db.restore(data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    logger.info(f"Database restored from a backup ({count} books)")
+    return {"success": True, "books": count}
 
 # --- Audiobookshelf ---
 

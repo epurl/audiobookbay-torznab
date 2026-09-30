@@ -14,7 +14,10 @@ services:
       - BAYARR_PASSWORD=${BAYARR_PASSWORD:-}
     volumes:
       - ./config:/config
-      # Paths for the Root Folder and Downloads Folder settings, for example:
+      # Your audiobooks and qBittorrent's downloads. For hardlinks (no duplicate space),
+      # mount one folder that contains both, and give qBittorrent the same mount, e.g.:
+      # - /mnt/data:/data     # Root Folder /data/audiobooks, downloads in /data/downloads
+      # Separate mounts also work, but imports are then copied:
       # - /path/to/audiobooks:/audiobooks
       # - /path/to/qbittorrent/downloads:/downloads
     restart: unless-stopped

@@ -20,6 +20,8 @@ CONFIG_DIR = os.environ.get(
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config"),
 )
 DB_FILE = os.path.join(CONFIG_DIR, "database.json")
+BACKUP_DIR = os.path.join(CONFIG_DIR, "backups")
+BACKUPS_KEPT = 7
 _LEGACY_DB_FILE = os.path.join(os.path.dirname(__file__), "database.json")
 
 _lock = threading.RLock()
@@ -36,6 +38,9 @@ DEFAULT_SETTINGS = {
     "downloads_folder": "",
     "naming_format": DEFAULT_NAMING_FORMAT,
     "rename_files": True,
+    "use_hardlinks": True,
+    "stall_hours": 6,  # 0 = never give up on a stalled download
+    "remove_stalled": True,
     "verify_runtime": True,
     "runtime_tolerance": 10,  # percent
     "write_metadata": True,
@@ -50,7 +55,8 @@ DEFAULT_SETTINGS = {
 EDITABLE_SETTINGS = {
     "language", "auto_match_narrator", "format_preference", "qbt_enabled",
     "qbt_host", "qbt_user", "root_folder", "downloads_folder", "naming_format",
-    "rename_files", "verify_runtime", "runtime_tolerance", "write_metadata",
+    "rename_files", "use_hardlinks", "stall_hours", "remove_stalled",
+    "verify_runtime", "runtime_tolerance", "write_metadata",
     "abs_url", "abs_library_id",
 }
 # Secrets: never sent to the browser, and a blank value from the UI keeps the stored one
@@ -202,6 +208,18 @@ def update_book(book_id, **fields):
         return False
 
 
+# Fields taken from Audible when a book is matched; status, path and files stay as they are
+AUDIBLE_FIELDS = ("title", "authors", "narrators", "asin", "series", "series_asin", "sequence", "runtime_min",
+                  "description", "publisher", "language", "release_date", "imageUrl")
+
+
+def apply_audible_match(book_id, audible_book):
+    fields = {k: audible_book.get(k) for k in AUDIBLE_FIELDS if audible_book.get(k)}
+    if fields.get("description"):
+        fields["description"] = _clean_description(fields["description"])
+    return update_book(book_id, **fields)
+
+
 def update_books(changes):
     """Applies {book_id: {field: value}} in a single write."""
     with _lock:
@@ -317,6 +335,11 @@ def update_settings(new_settings):
         for key in SECRET_SETTINGS:
             if new_settings.get(key):
                 settings[key] = new_settings[key]
+        if "stall_hours" in new_settings:
+            try:
+                settings["stall_hours"] = max(0, min(168, int(new_settings["stall_hours"])))
+            except (TypeError, ValueError):
+                settings["stall_hours"] = DEFAULT_SETTINGS["stall_hours"]
         if "runtime_tolerance" in new_settings:
             try:
                 settings["runtime_tolerance"] = max(1, min(50, int(new_settings["runtime_tolerance"])))
@@ -337,3 +360,54 @@ def set_auth_credentials(username, password_hash):
 def extract_infohash(magnet):
     match = re.search(r"btih:([0-9a-zA-Z]+)", magnet or "")
     return match.group(1).lower() if match else None
+
+
+# --- Backups -----------------------------------------------------------------
+
+def _prune_backups():
+    backups = sorted(f for f in os.listdir(BACKUP_DIR) if f.startswith("database-") and f.endswith(".json"))
+    for old in backups[:-BACKUPS_KEPT]:
+        os.remove(os.path.join(BACKUP_DIR, old))
+
+
+def backup_now(label=None):
+    """Copies database.json into the backups folder. Returns the backup's path or None."""
+    with _lock:
+        if not os.path.exists(DB_FILE):
+            return None
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        stamp = label or datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        path = os.path.join(BACKUP_DIR, f"database-{stamp}.json")
+        shutil.copy2(DB_FILE, path)
+        _prune_backups()
+        return path
+
+
+def daily_backup():
+    """Keeps one backup per day (the last 7 days)."""
+    today = datetime.date.today().isoformat()
+    if os.path.isdir(BACKUP_DIR) and any(f.startswith(f"database-{today}") for f in os.listdir(BACKUP_DIR)):
+        return None
+    return backup_now()
+
+
+def restore(data):
+    """Replaces the database with a backup. The current login is kept, so a restore can't
+    lock you out, and the current database is backed up first."""
+    if not isinstance(data, dict) or not isinstance(data.get("library"), list) or not isinstance(data.get("settings"), dict):
+        raise ValueError("This isn't a Bayarr backup (expected library and settings).")
+    if not all(isinstance(b, dict) and b.get("title") for b in data["library"]):
+        raise ValueError("The backup's library has entries without a title.")
+    with _lock:
+        backup_now(datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S") + "-before-restore")
+        current = _load_db()["settings"]
+        restored = {
+            "library": data["library"],
+            "settings": {**data["settings"],
+                         "auth_username": current.get("auth_username", ""),
+                         "auth_password_hash": current.get("auth_password_hash", "")},
+            "series": data.get("series") if isinstance(data.get("series"), list) else [],
+            "history": data.get("history") if isinstance(data.get("history"), list) else [],
+        }
+        _save_db(restored)
+    return len(restored["library"])

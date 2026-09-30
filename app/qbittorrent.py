@@ -94,3 +94,35 @@ async def get_torrents(host: str, username: str, password: str, hashes):
         return None
     finally:
         await client.aclose()
+
+
+async def test_connection(host: str, username: str, password: str):
+    """Logs in and returns qBittorrent's version, or raises with a readable message."""
+    async with httpx.AsyncClient(base_url=host, timeout=5.0) as client:
+        try:
+            login = await client.post("/api/v2/auth/login", data={"username": username, "password": password})
+        except httpx.HTTPError as e:
+            raise ConnectionError(f"Couldn't reach qBittorrent at {host} ({type(e).__name__}). Check the URL and that it's running.")
+        if login.status_code == 403:
+            raise ConnectionError("qBittorrent blocked this address after too many failed logins. Wait a while, or restart it.")
+        if login.text.strip() != "Ok.":
+            raise ConnectionError("qBittorrent rejected the username or password.")
+        version = await client.get("/api/v2/app/version")
+        version.raise_for_status()
+        return version.text.strip()
+
+
+async def delete_torrents(host: str, username: str, password: str, hashes, delete_files: bool) -> bool:
+    """Removes torrents from qBittorrent, optionally with their downloaded data."""
+    client = await login_qbittorrent(host, username, password)
+    if not client:
+        return False
+    try:
+        response = await client.post("/api/v2/torrents/delete", timeout=10.0,
+                                     data={"hashes": "|".join(hashes), "deleteFiles": "true" if delete_files else "false"})
+        return response.status_code == 200
+    except Exception as e:
+        logger.error(f"Error deleting torrents from qBittorrent: {e}")
+        return False
+    finally:
+        await client.aclose()

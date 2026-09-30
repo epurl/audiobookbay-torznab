@@ -14,58 +14,58 @@
         <!-- Sidebar Navigation -->
         <aside class="sidebar">
             <div class="sidebar-header">
-                <img src="/static/logo.png" alt="Bayarr Logo" style="width: 32px; height: 32px; border-radius: 6px;">
+                <img src="/static/logo.png" alt="" class="sidebar-logo-img">
                 <span class="logo-text">Bayarr</span>
             </div>
             <nav class="sidebar-nav">
-                <a href="#" class="nav-item active" data-view="searchView">
+                <button type="button" class="nav-item active" data-view="searchView">
                     <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
                     <span>Search</span>
-                </a>
-                <a href="#" class="nav-item" data-view="libraryView">
+                </button>
+                <button type="button" class="nav-item" data-view="libraryView">
                     <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
                     <span>Library</span>
-                </a>
-                <a href="#" class="nav-item" data-view="seriesView">
+                </button>
+                <button type="button" class="nav-item" data-view="seriesView">
                     <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
                     <span>Series</span>
-                </a>
-                <a href="#" class="nav-item" data-view="activityView">
+                </button>
+                <button type="button" class="nav-item" data-view="activityView">
                     <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
                     <span>Activity</span><span id="activityBadge" class="nav-badge" hidden></span>
-                </a>
-                <a href="#" class="nav-item" data-view="settingsView">
+                </button>
+                <button type="button" class="nav-item" data-view="settingsView">
                     <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
                     <span>Settings</span>
-                </a>
+                </button>
             </nav>
         </aside>
 
         <!-- Main Content -->
         <main class="main-content">
-            <header class="topbar">
+            <div class="content-wrapper" id="searchView">
                 <div class="search-container">
                     <svg class="search-icon" viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                    <input type="text" id="searchInput" placeholder="Search for audiobooks..." autocomplete="off">
-                    <button id="searchBtn" style="display:none;">Search</button>
+                    <input type="search" id="searchInput" placeholder="Search Audible by title, author or series…" autocomplete="off" aria-label="Search Audible">
+                    <button id="searchBtn" class="primary-btn">Search</button>
                 </div>
-            </header>
-
-            <div class="content-wrapper" id="searchView">
                 <div id="loader" class="loader hidden">
                     <div class="spinner"></div>
                 </div>
-                
                 <div id="resultsContainer" class="results-container">
-                    <!-- Results populated here -->
+                    <div class="empty-state">
+                        <h3>Find an audiobook</h3>
+                        <p>Search Audible, then add books to your library or monitor a whole series. Books you already have are marked In Library.</p>
+                    </div>
                 </div>
             </div>
 
             <!-- Library View -->
-            <div class="content-wrapper" id="libraryView" style="display: none;">
-                <div class="library-header">
+            <div class="content-wrapper" id="libraryView" hidden>
+                <div class="page-header">
                     <h2>Library</h2>
-                    <div class="library-actions">
+                    <div class="page-actions">
+                        <button id="selectModeBtn" class="secondary-btn">Select</button>
                         <button id="rescanBtn" class="secondary-btn" title="Refresh file info and find books whose files are gone">Rescan</button>
                         <button id="openImportBtn" class="primary-btn">Import Existing</button>
                     </div>
@@ -74,6 +74,8 @@
                     <input type="text" id="libFilterText" class="form-input" placeholder="Filter by title, author, series or narrator..." autocomplete="off">
                     <select id="libFilterStatus" class="form-select">
                         <option value="">All statuses</option>
+                        <option value="__wanted">Wanted (not on disk)</option>
+                        <option value="__unmatched">Not matched on Audible</option>
                         <option value="Monitored">Monitored</option><option value="Unmonitored">Unmonitored</option><option value="Unreleased">Unreleased</option><option value="Downloading">Downloading</option><option value="Downloaded">Downloaded</option><option value="Needs Review">Needs Review</option><option value="Imported">Imported</option><option value="Missing">Missing</option>
                     </select>
                     <select id="libSort" class="form-select">
@@ -84,7 +86,19 @@
                     </select>
                     <span id="libStats" class="library-stats"></span>
                 </div>
-                <div id="libraryLoader" class="loader">
+                <div class="bulk-bar" id="bulkBar" hidden>
+                    <span id="bulkCount">0 selected</span>
+                    <button class="link-btn" id="bulkSelectAll">Select all shown</button>
+                    <button class="link-btn" id="bulkClear">Clear</button>
+                    <span class="bulk-spacer"></span>
+                    <select id="bulkStatus" class="form-select" aria-label="Set status">
+                        <option value="">Set status…</option>
+                        <option value="Monitored">Monitored</option><option value="Unmonitored">Unmonitored</option><option value="Imported">Imported</option><option value="Missing">Missing</option>
+                    </select>
+                    <button class="secondary-btn" id="bulkMatch">Match on Audible</button>
+                    <button class="danger-btn" id="bulkRemove">Remove</button>
+                </div>
+                <div id="libraryLoader" class="loader hidden">
                     <div class="spinner"></div>
                 </div>
                 <div id="libraryContainer" class="results-grid">
@@ -92,190 +106,240 @@
                 </div>
             </div>
 
-            <!-- Settings View -->
             <!-- Series View -->
-            <div class="content-wrapper" id="seriesView" style="display: none;">
-                <div class="library-header">
+            <div class="content-wrapper" id="seriesView" hidden>
+                <div class="page-header">
                     <h2>Series</h2>
                 </div>
-                <p class="settings-hint" style="margin-bottom: 20px;">Monitored series pick up new books from Audible every 6 hours. Use <b>Monitor Series</b> on a series in Search, or on a book's details in the Library.</p>
+                <p class="page-intro">Monitored series pick up new books from Audible every 6 hours. Use <b>Monitor Series</b> on a series in Search, or on a book's details in the Library.</p>
                 <div id="seriesContainer"></div>
             </div>
 
             <!-- Activity View -->
-            <div class="content-wrapper" id="activityView" style="display: none;">
-                <div class="library-header">
+            <div class="content-wrapper" id="activityView" hidden>
+                <div class="page-header">
                     <h2>Activity</h2>
                 </div>
                 <h3 class="section-title">Queue</h3>
                 <div id="queueNotice" class="settings-hint"></div>
                 <div class="table-container activity-table">
                     <table class="data-table">
-                        <thead><tr><th>Book</th><th style="width: 150px;">Status</th><th style="width: 220px;">Progress</th><th style="width: 130px;">Speed / ETA</th><th style="width: 70px;">Seeds</th></tr></thead>
+                        <thead><tr><th>Book</th><th class="col-status">Status</th><th class="col-progress">Progress</th><th class="col-speed">Speed / ETA</th><th class="col-seeds">Seeds</th></tr></thead>
                         <tbody id="queueRows"></tbody>
                     </table>
                 </div>
                 <h3 class="section-title">History</h3>
                 <div class="table-container activity-table">
                     <table class="data-table">
-                        <thead><tr><th style="width: 160px;">When</th><th style="width: 130px;">Event</th><th style="width: 260px;">Book</th><th>Details</th></tr></thead>
+                        <thead><tr><th class="col-when">When</th><th class="col-event">Event</th><th class="col-book">Book</th><th>Details</th></tr></thead>
                         <tbody id="historyRows"></tbody>
                     </table>
                 </div>
             </div>
 
-            <div class="content-wrapper" id="settingsView" style="display: none;">
-                <h2 style="margin-bottom: 24px; font-weight: 500;">Settings</h2>
+            <div class="content-wrapper" id="settingsView" hidden>
+                <div class="page-header">
+                    <h2>Settings</h2>
+                </div>
+                <nav class="settings-tabs" role="tablist">
+                    <button class="settings-tab active" data-section="general" role="tab">General</button>
+                    <button class="settings-tab" data-section="media" role="tab">Media Management</button>
+                    <button class="settings-tab" data-section="client" role="tab">Download Client</button>
+                    <button class="settings-tab" data-section="connect" role="tab">Audiobookshelf</button>
+                    <button class="settings-tab" data-section="security" role="tab">Security</button>
+                    <button class="settings-tab" data-section="backup" role="tab">Backup</button>
+                </nav>
+
                 <div class="settings-form">
-                    <div class="settings-group">
-                        <label for="setLanguage">Preferred Language Filter</label>
-                        <select id="setLanguage" class="form-select">
-                            <option value="All">All</option>
-                            <option value="English">English</option>
-                        </select>
-                        <p class="settings-hint">The default language used when displaying manual search results.</p>
-                    </div>
-
-                    <div class="settings-group">
-                        <label for="setFormatPref">Audio Format</label>
-                        <select id="setFormatPref" class="form-select">
-                            <option value="prefer_m4b">Prefer M4B</option>
-                            <option value="m4b_only">M4B only</option>
-                            <option value="any">Any format</option>
-                        </select>
-                        <p class="settings-hint">How automatic downloads treat the file format. "M4B only" never grabs MP3 releases.</p>
-                    </div>
-                    
-                    <div class="settings-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="setAutoMatch">
-                            Smart Narrator Sorting
-                        </label>
-                        <p class="settings-hint">Automatically cross-reference the Audible narrator to float exact matches to the top.</p>
-                    </div>
-                    
-                    <hr style="border: none; border-top: 1px solid var(--border-color); margin: 32px 0;">
-                    
-                    <h3 style="margin-bottom: 16px; font-weight: 500;">Download Client</h3>
-                    
-                    <div class="settings-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="setQbtEnabled">
-                            Enable qBittorrent Integration
-                        </label>
-                        <p class="settings-hint">Send manual search results directly to qBittorrent WebUI.</p>
-                    </div>
-                    
-                    <div class="settings-group">
-                        <label for="setQbtHost">qBittorrent Host URL</label>
-                        <input type="text" id="setQbtHost" class="form-input" style="width: 100%; padding: 8px; border-radius: 4px; background: #1a1a1a; border: 1px solid var(--border-color); color: #fff;">
-                    </div>
-                    
-                    <div class="settings-group">
-                        <label for="setRootFolder">Root Folder</label>
-                        <div style="display: flex; gap: 8px;">
-                            <input type="text" id="setRootFolder" class="form-input" placeholder="e.g. /data/media/audiobooks" style="flex: 1; padding: 8px; border-radius: 4px; background: #1a1a1a; border: 1px solid var(--border-color); color: #fff;">
-                            <button type="button" class="primary-btn browse-btn" data-target="setRootFolder" style="padding: 0 16px;">Browse</button>
+                    <!-- General -->
+                    <section class="settings-section" data-section="general">
+                        <div class="settings-group">
+                            <label for="setLanguage">Language</label>
+                            <select id="setLanguage" class="form-select">
+                                <option value="All">All</option>
+                                <option value="English">English</option>
+                            </select>
+                            <p class="settings-hint">Releases in other languages are never grabbed automatically, and are hidden by default in Manual Search.</p>
                         </div>
-                        <p class="settings-hint">Bayarr will copy completed downloads into this directory.</p>
-                    </div>
-
-                    <div class="settings-group">
-                        <label for="setNamingFormat">Book Folder Format</label>
-                        <input type="text" id="setNamingFormat" class="form-input" style="width: 100%;">
-                        <p class="settings-hint">Folder name for new downloads inside the Root Folder. Tokens: {Author}, {Authors}, {Series}, {SeriesNumber}, {Title}, {Year}. Parts left empty (e.g. no series) are dropped.</p>
-                    </div>
-
-                    <div class="settings-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="setRenameFiles">
-                            Rename Audio Files
-                        </label>
-                        <p class="settings-hint">Name imported files after the book: "Title.m4b", or "Title - Part 01.mp3", "Part 02"... in disc and track order. When off, files keep their original names and subfolders.</p>
-                    </div>
-
-                    <div class="settings-group">
-                        <label for="setDownloadsFolder">Downloads Folder (Optional)</label>
-                        <div style="display: flex; gap: 8px;">
-                            <input type="text" id="setDownloadsFolder" class="form-input" placeholder="e.g. /data/downloads" style="flex: 1; padding: 8px; border-radius: 4px; background: #1a1a1a; border: 1px solid var(--border-color); color: #fff;">
-                            <button type="button" class="primary-btn browse-btn" data-target="setDownloadsFolder" style="padding: 0 16px;">Browse</button>
+                        <div class="settings-group">
+                            <label for="setFormatPref">Audio Format</label>
+                            <select id="setFormatPref" class="form-select">
+                                <option value="prefer_m4b">Prefer M4B</option>
+                                <option value="m4b_only">M4B only</option>
+                                <option value="any">Any format</option>
+                            </select>
+                            <p class="settings-hint">How automatic downloads treat the file format. "M4B only" never grabs MP3 releases.</p>
                         </div>
-                        <p class="settings-hint">If your qBittorrent container maps downloads differently than Bayarr, set Bayarr's path here to map it.</p>
-                    </div>
-                    
-                    <div style="display: flex; gap: 16px;">
-                        <div class="settings-group" style="flex: 1;">
-                            <label for="setQbtUser">Username</label>
-                            <input type="text" id="setQbtUser" class="form-input" style="width: 100%; padding: 8px; border-radius: 4px; background: #1a1a1a; border: 1px solid var(--border-color); color: #fff;">
+                        <div class="settings-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="setAutoMatch">
+                                Prefer Matching Narrator
+                            </label>
+                            <p class="settings-hint">Releases whose narrator matches Audible's are ranked first, in automatic downloads and in Manual Search.</p>
                         </div>
-                        <div class="settings-group" style="flex: 1;">
-                            <label for="setQbtPass">Password</label>
-                            <input type="password" id="setQbtPass" class="form-input" style="width: 100%; padding: 8px; border-radius: 4px; background: #1a1a1a; border: 1px solid var(--border-color); color: #fff;">
+                    </section>
+
+                    <!-- Media Management -->
+                    <section class="settings-section" data-section="media" hidden>
+                        <h3>Folders</h3>
+                        <div class="settings-group">
+                            <label for="setRootFolder">Root Folder</label>
+                            <div class="input-row">
+                                <input type="text" id="setRootFolder" class="form-input" placeholder="e.g. /audiobooks">
+                                <button type="button" class="secondary-btn browse-btn" data-target="setRootFolder">Browse</button>
+                            </div>
+                            <p class="settings-hint">Where downloaded books are imported to, and the default folder for Import Existing.</p>
                         </div>
-                    </div>
-
-                    <hr style="border: none; border-top: 1px solid var(--border-color); margin: 32px 0;">
-
-                    <h3 style="margin-bottom: 16px; font-weight: 500;">Download Checks</h3>
-                    <div class="settings-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="setVerifyRuntime">
-                            Check Length Before Importing
-                        </label>
-                        <p class="settings-hint">Compares the downloaded files' total length with Audible's runtime. Downloads that don't match wait in Activity for you to import or reject, instead of being imported. Books without an Audible runtime aren't checked.</p>
-                    </div>
-                    <div class="settings-group">
-                        <label for="setRuntimeTolerance">Allowed Difference (%)</label>
-                        <input type="number" id="setRuntimeTolerance" class="form-input" min="1" max="50" style="width: 100px;">
-                    </div>
-
-                    <hr style="border: none; border-top: 1px solid var(--border-color); margin: 32px 0;">
-
-                    <h3 style="margin-bottom: 16px; font-weight: 500;">Audiobookshelf</h3>
-                    <div class="settings-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="setWriteMetadata">
-                            Write metadata.json and Cover
-                        </label>
-                        <p class="settings-hint">Saves Audible's details and cover into each imported download, in Audiobookshelf's format, so it shows up with the right title, authors, narrators and series.</p>
-                    </div>
-                    <div class="settings-group">
-                        <label for="setAbsUrl">Server URL</label>
-                        <input type="text" id="setAbsUrl" class="form-input" placeholder="e.g. http://audiobookshelf:13378" style="width: 100%;">
-                    </div>
-                    <div class="settings-group">
-                        <label for="setAbsToken">API Token</label>
-                        <input type="password" id="setAbsToken" class="form-input" autocomplete="off" style="width: 100%;">
-                        <p class="settings-hint">In Audiobookshelf: Settings → Users → your user → API Token. Needs admin rights to start a scan.</p>
-                    </div>
-                    <div class="settings-group">
-                        <label for="setAbsLibrary">Library to Scan After Imports</label>
-                        <div style="display: flex; gap: 8px;">
-                            <select id="setAbsLibrary" class="form-select" style="flex: 1;"><option value="">Don't scan</option></select>
-                            <button type="button" id="absLoadBtn" class="secondary-btn">Test &amp; Load Libraries</button>
+                        <div class="settings-group">
+                            <label for="setNamingFormat">Book Folder Format</label>
+                            <input type="text" id="setNamingFormat" class="form-input full">
+                            <p class="settings-hint">Tokens: {Author}, {Authors}, {Series}, {SeriesNumber}, {Title}, {Year}. Parts left empty (e.g. no series) are dropped.</p>
                         </div>
-                        <p class="settings-hint" id="absStatus"></p>
-                    </div>
-
-                    <button id="saveSettingsBtn" class="primary-btn" style="margin-top: 16px;">Save Changes</button>
-                    <span id="settingsSaveStatus" style="margin-left: 16px; color: var(--success); display: none;">Saved!</span>
-
-                    <hr style="border: none; border-top: 1px solid var(--border-color); margin: 32px 0;">
-
-                    <h3 style="margin-bottom: 16px; font-weight: 500;">Security</h3>
-                    <p class="settings-hint" id="authHint" style="margin-bottom: 16px;">Set a login to access Bayarr from outside your local network. Until one is set, only local network addresses can connect.</p>
-                    <div style="display: flex; gap: 16px;">
-                        <div class="settings-group" style="flex: 1;">
-                            <label for="setAuthUser">Username</label>
-                            <input type="text" id="setAuthUser" class="form-input" autocomplete="username" style="width: 100%; padding: 8px; border-radius: 4px; background: #1a1a1a; border: 1px solid var(--border-color); color: #fff;">
+                        <div class="settings-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="setRenameFiles">
+                                Rename Audio Files
+                            </label>
+                            <p class="settings-hint">"Title.m4b", or "Title - Part 01.mp3", "Part 02"… in disc and track order. When off, files keep their original names and subfolders.</p>
                         </div>
-                        <div class="settings-group" style="flex: 1;">
-                            <label for="setAuthPass">New Password</label>
-                            <input type="password" id="setAuthPass" class="form-input" autocomplete="new-password" placeholder="At least 8 characters" style="width: 100%; padding: 8px; border-radius: 4px; background: #1a1a1a; border: 1px solid var(--border-color); color: #fff;">
+                        <div class="settings-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="setHardlinks">
+                                Use Hardlinks Instead of Copies
+                            </label>
+                            <p class="settings-hint">When the downloads and the Root Folder are on the same drive, imported files take no extra space, and qBittorrent keeps seeding. Falls back to copying when they're on different drives. In Docker, both must be inside the same mounted volume. Don't use Audiobookshelf's "embed metadata" tool on hardlinked books: it would change the files qBittorrent is seeding.</p>
                         </div>
-                    </div>
-                    <button id="saveAuthBtn" class="primary-btn" style="margin-top: 16px;">Save Login</button>
-                    <span id="authSaveStatus" style="margin-left: 16px; display: none;"></span>
+
+                        <h3>Download Checks</h3>
+                        <div class="settings-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="setVerifyRuntime">
+                                Check Length Before Importing
+                            </label>
+                            <p class="settings-hint">Compares the downloaded files' total length with Audible's runtime. Mismatches wait in Activity for you to import or reject. Books without an Audible runtime aren't checked.</p>
+                        </div>
+                        <div class="settings-group">
+                            <label for="setRuntimeTolerance">Allowed Difference (%)</label>
+                            <input type="number" id="setRuntimeTolerance" class="form-input narrow" min="1" max="50">
+                        </div>
+                    </section>
+
+                    <!-- Download Client -->
+                    <section class="settings-section" data-section="client" hidden>
+                        <div class="settings-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="setQbtEnabled">
+                                Enable qBittorrent
+                            </label>
+                            <p class="settings-hint">Needed for automatic downloads, Search Now, and sending releases from Manual Search.</p>
+                        </div>
+                        <div class="settings-group">
+                            <label for="setQbtHost">Web UI URL</label>
+                            <input type="text" id="setQbtHost" class="form-input full" placeholder="e.g. http://qbittorrent:8080">
+                        </div>
+                        <div class="field-pair">
+                            <div class="settings-group">
+                                <label for="setQbtUser">Username</label>
+                                <input type="text" id="setQbtUser" class="form-input full" autocomplete="off">
+                            </div>
+                            <div class="settings-group">
+                                <label for="setQbtPass">Password</label>
+                                <input type="password" id="setQbtPass" class="form-input full" autocomplete="off">
+                            </div>
+                        </div>
+                        <div class="settings-group">
+                            <button type="button" id="qbtTestBtn" class="secondary-btn">Test Connection</button>
+                            <p class="settings-hint" id="qbtStatus"></p>
+                        </div>
+                        <div class="settings-group">
+                            <label for="setDownloadsFolder">Downloads Folder (optional)</label>
+                            <div class="input-row">
+                                <input type="text" id="setDownloadsFolder" class="form-input" placeholder="e.g. /downloads/audiobooks">
+                                <button type="button" class="secondary-btn browse-btn" data-target="setDownloadsFolder">Browse</button>
+                            </div>
+                            <p class="settings-hint">Only needed when qBittorrent sees its downloads at a different path than Bayarr (e.g. separate Docker containers). Set it to Bayarr's path for qBittorrent's audiobooks save folder.</p>
+                        </div>
+
+                        <h3>Stalled Downloads</h3>
+                        <div class="settings-group">
+                            <label for="setStallHours">Give Up After (hours)</label>
+                            <input type="number" id="setStallHours" class="form-input narrow" min="0" max="168">
+                            <p class="settings-hint">A download with no progress (stalled, or stuck fetching metadata) for this long is rejected and the next-best release is grabbed. 0 turns this off.</p>
+                        </div>
+                        <div class="settings-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="setRemoveStalled">
+                                Remove Stalled Torrents from qBittorrent
+                            </label>
+                            <p class="settings-hint">Deletes the unfinished torrent and its partial files. Only affects torrents Bayarr added.</p>
+                        </div>
+                    </section>
+
+                    <!-- Audiobookshelf -->
+                    <section class="settings-section" data-section="connect" hidden>
+                        <div class="settings-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="setWriteMetadata">
+                                Write metadata.json and Cover
+                            </label>
+                            <p class="settings-hint">Saves Audible's details and cover into each imported download, in Audiobookshelf's format, so it shows up with the right title, authors, narrators and series.</p>
+                        </div>
+                        <div class="settings-group">
+                            <label for="setAbsUrl">Server URL</label>
+                            <input type="text" id="setAbsUrl" class="form-input full" placeholder="e.g. http://audiobookshelf:13378">
+                        </div>
+                        <div class="settings-group">
+                            <label for="setAbsToken">API Token</label>
+                            <input type="password" id="setAbsToken" class="form-input full" autocomplete="off">
+                            <p class="settings-hint">In Audiobookshelf: Settings → Users → your user → API Token. Needs admin rights to start a scan.</p>
+                        </div>
+                        <div class="settings-group">
+                            <label for="setAbsLibrary">Library to Scan After Imports</label>
+                            <div class="input-row">
+                                <select id="setAbsLibrary" class="form-select"><option value="">Don't scan</option></select>
+                                <button type="button" id="absLoadBtn" class="secondary-btn">Test &amp; Load Libraries</button>
+                            </div>
+                            <p class="settings-hint" id="absStatus"></p>
+                        </div>
+                    </section>
+
+                    <!-- Security (saved separately) -->
+                    <section class="settings-section" data-section="security" hidden>
+                        <p class="settings-hint" id="authHint">Set a login to access Bayarr from outside your local network. Until one is set, only local network addresses can connect.</p>
+                        <div class="field-pair">
+                            <div class="settings-group">
+                                <label for="setAuthUser">Username</label>
+                                <input type="text" id="setAuthUser" class="form-input full" autocomplete="username">
+                            </div>
+                            <div class="settings-group">
+                                <label for="setAuthPass">New Password</label>
+                                <input type="password" id="setAuthPass" class="form-input full" autocomplete="new-password" placeholder="At least 8 characters">
+                            </div>
+                        </div>
+                        <button id="saveAuthBtn" class="primary-btn">Save Login</button>
+                    </section>
+
+                    <!-- Backup -->
+                    <section class="settings-section" data-section="backup" hidden>
+                        <div class="settings-group">
+                            <label>Download Backup</label>
+                            <a href="/api/backup" class="secondary-btn button-link" download>Download database.json</a>
+                            <p class="settings-hint">Your library, series, history and settings. The file includes your qBittorrent password and Audiobookshelf token, so keep it private. Bayarr also keeps a daily copy of the last 7 days in its config folder, under backups.</p>
+                        </div>
+                        <div class="settings-group">
+                            <label for="restoreFile">Restore</label>
+                            <div class="input-row">
+                                <input type="file" id="restoreFile" class="form-input" accept=".json,application/json">
+                                <button type="button" id="restoreBtn" class="danger-btn">Restore</button>
+                            </div>
+                            <p class="settings-hint">Replaces everything with the backup. The current database is saved to the backups folder first. Your login stays as it is now.</p>
+                        </div>
+                    </section>
+                </div>
+
+                <div class="settings-savebar" id="settingsSaveBar">
+                    <span class="action-status" id="settingsSaveStatus"></span>
+                    <button id="saveSettingsBtn" class="primary-btn">Save Changes</button>
                 </div>
             </div>
         </main>
@@ -286,7 +350,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2>Manual Search</h2>
-                <span class="close-btn" id="modalClose">&times;</span>
+                <button type="button" class="close-btn" id="modalClose" aria-label="Close">&times;</button>
             </div>
             
             <div class="modal-info-panel">
@@ -341,7 +405,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2>Book Details</h2>
-                <span class="close-btn" id="closeBookModal">&times;</span>
+                <button type="button" class="close-btn" id="closeBookModal" aria-label="Close">&times;</button>
             </div>
             <div class="modal-info-panel">
                 <img id="bookCover" src="" alt="Cover" class="modal-cover">
@@ -364,16 +428,25 @@
                         <button class="danger-btn" id="bookReject">Reject &amp; Search Again</button>
                     </div>
                 </div>
+                <div class="match-panel" id="matchPanel" hidden>
+                    <div class="match-panel-header">
+                        <input type="search" id="matchQuery" class="form-input" aria-label="Search Audible">
+                        <button class="secondary-btn" id="matchSearchBtn">Search</button>
+                        <button class="link-btn" id="matchCloseBtn">Cancel</button>
+                    </div>
+                    <div id="matchResults" class="match-results"></div>
+                </div>
                 <div class="book-path" id="bookPath"></div>
                 <div class="table-container book-files">
                     <table class="data-table">
-                        <thead><tr><th>File</th><th style="width: 110px;">Size</th></tr></thead>
+                        <thead><tr><th>File</th><th class="col-size">Size</th></tr></thead>
                         <tbody id="bookFiles"></tbody>
                     </table>
                 </div>
                 <div class="modal-footer">
                     <button id="removeBookBtn" class="danger-btn">Remove</button>
                     <span id="bookStatusMsg" class="action-status"></span>
+                    <button id="matchBookBtn" class="secondary-btn">Match on Audible</button>
                     <button id="monitorSeriesBtn" class="secondary-btn">Monitor Series</button>
                     <button id="manualSearchBtn" class="secondary-btn">Manual Search</button>
                     <button id="searchNowBtn" class="secondary-btn">Search Now</button>
@@ -388,7 +461,7 @@
         <div class="modal-content import-content">
             <div class="modal-header">
                 <h2>Import Existing Library</h2>
-                <span class="close-btn" id="closeImportModal">&times;</span>
+                <button type="button" class="close-btn" id="closeImportModal" aria-label="Close">&times;</button>
             </div>
             <div class="import-toolbar">
                 <input type="text" id="importPath" class="form-input" placeholder="Folder to scan, e.g. /audiobooks">
@@ -402,7 +475,7 @@
                 <table class="data-table">
                     <thead>
                         <tr>
-                            <th style="width: 32px;"><input type="checkbox" id="importSelectAll" title="Select all new books"></th>
+                            <th class="col-check"><input type="checkbox" id="importSelectAll" title="Select all new books" aria-label="Select all new books"></th>
                             <th>Author</th>
                             <th>Series</th>
                             <th>Title</th>
@@ -423,44 +496,60 @@
     </div>
 
     <div id="seriesModal" class="modal">
-        <div class="modal-content" style="max-width: 520px;">
+        <div class="modal-content modal-small">
             <div class="modal-header">
                 <h2>Monitor Series</h2>
-                <span class="close-btn" id="closeSeriesModal">&times;</span>
+                <button type="button" class="close-btn" id="closeSeriesModal" aria-label="Close">&times;</button>
             </div>
-            <div style="padding: 24px;">
-                <p style="margin-bottom: 16px;">Add every book in <b id="seriesModalName"></b> to the library. Which books should be downloaded?</p>
+            <div class="modal-pad">
+                <p class="modal-lead">Add every book in <b id="seriesModalName"></b> to the library. Which books should be downloaded?</p>
                 <div class="series-choice">
                     <button class="primary-btn" data-mode="all">All books I don't have</button>
                     <button class="secondary-btn" data-mode="future">Only new releases</button>
                 </div>
                 <p class="settings-hint">Books you don't want are added as Unmonitored, so they still show where the gaps are. You can change any book later.</p>
-                <p class="action-status" id="seriesModalStatus" style="margin-top: 12px;"></p>
+                <p class="action-status" id="seriesModalStatus"></p>
             </div>
         </div>
     </div>
 
     <div id="folderModal" class="modal">
-        <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-content modal-medium">
             <div class="modal-header">
                 <h2>Select Folder</h2>
-                <span class="close-btn" id="closeFolderModal">&times;</span>
+                <button type="button" class="close-btn" id="closeFolderModal" aria-label="Close">&times;</button>
             </div>
-            
-            <div style="margin-bottom: 12px; display: flex; gap: 8px; align-items: center;">
-                <input type="text" id="currentFolderPath" class="form-input" style="flex: 1; padding: 8px; border-radius: 4px; background: #1a1a1a; border: 1px solid var(--border-color); color: #fff;" readonly>
-                <button id="folderUpBtn" class="primary-btn" style="padding: 8px 12px;">&#8593; Up</button>
+            <div class="modal-pad">
+                <div class="input-row">
+                    <input type="text" id="currentFolderPath" class="form-input" readonly aria-label="Current folder">
+                    <button id="folderUpBtn" class="secondary-btn">&#8593; Up</button>
+                </div>
+                <div id="folderList" class="folder-list"></div>
             </div>
-            
-            <div id="folderList" style="max-height: 300px; overflow-y: auto; background: #1a1a1a; border: 1px solid var(--border-color); border-radius: 4px; padding: 8px;">
-                <!-- Folder items injected here -->
-            </div>
-            
-            <div style="margin-top: 16px; text-align: right;">
-                <button id="selectFolderBtn" class="primary-btn">Select Current Folder</button>
+            <div class="modal-footer">
+                <span class="action-status"></span>
+                <button id="selectFolderBtn" class="primary-btn">Select This Folder</button>
             </div>
         </div>
     </div>
+
+    <!-- Confirm dialog -->
+    <div id="confirmModal" class="modal" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle">
+        <div class="modal-content modal-small">
+            <div class="modal-header">
+                <h2 id="confirmTitle">Are you sure?</h2>
+                <button type="button" class="close-btn" data-confirm="cancel" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-pad"><p id="confirmMessage" class="confirm-message"></p></div>
+            <div class="modal-footer">
+                <span class="action-status"></span>
+                <button class="secondary-btn" data-confirm="cancel">Cancel</button>
+                <button class="primary-btn" id="confirmOk" data-confirm="ok">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toasts" class="toasts" aria-live="polite"></div>
 
     <script src="/static/script.js"></script>
 </body>

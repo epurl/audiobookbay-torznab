@@ -40,26 +40,7 @@ body {
     flex-direction: column;
 }
 
-.sidebar-logo {
-    padding: 20px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    border-bottom: 1px solid var(--border-color);
-}
 
-.logo-icon {
-    background-color: var(--primary);
-    color: #fff;
-    width: 32px;
-    height: 32px;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: bold;
-    font-size: 14px;
-}
 
 .logo-text {
     font-size: 1.2rem;
@@ -86,9 +67,17 @@ body {
     border-left: 3px solid transparent;
 }
 
-.nav-item:hover {
-    background-color: var(--bg-hover);
-    color: var(--text-primary);
+/* Only on devices with a real pointer: on touch screens :hover sticks after a tap */
+@media (hover: hover) {
+    .nav-item:hover {
+        background-color: var(--bg-hover);
+        color: var(--text-primary);
+    }
+
+    .book-card:hover {
+        transform: translateY(-2px);
+        border-color: var(--primary);
+    }
 }
 
 .nav-item.active {
@@ -104,14 +93,6 @@ body {
     flex-direction: column;
 }
 
-.topbar {
-    height: 73px;
-    background-color: var(--bg-main);
-    border-bottom: 1px solid var(--border-color);
-    display: flex;
-    align-items: center;
-    padding: 0 24px;
-}
 
 .search-container {
     display: flex;
@@ -180,10 +161,6 @@ body {
     flex-direction: column;
 }
 
-.book-card:hover {
-    transform: translateY(-2px);
-    border-color: var(--primary);
-}
 
 .book-cover {
     width: 100%;
@@ -643,23 +620,8 @@ body {
 }
 
 /* Library */
-.library-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 16px;
-    margin-bottom: 16px;
-    flex-wrap: wrap;
-}
 
-.library-header h2 {
-    font-weight: 500;
-}
 
-.library-actions {
-    display: flex;
-    gap: 8px;
-}
 
 .library-toolbar {
     display: flex;
@@ -1024,4 +986,605 @@ body {
 
 .event {
     white-space: nowrap;
+}
+
+/* ================================================================
+   Layout polish (shared page structure, forms, dialogs, mobile)
+   ================================================================ */
+
+[hidden] {
+    display: none !important;
+}
+
+:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
+button {
+    font: inherit;
+}
+
+/* Sidebar stays in view on long pages */
+.sidebar {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    flex-shrink: 0;
+}
+
+.sidebar-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 20px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.sidebar-logo-img {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+}
+
+.nav-item {
+    background: none;
+    border-top: none;
+    border-right: none;
+    border-bottom: none;
+    text-align: left;
+    cursor: pointer;
+    width: 100%;
+}
+
+.main-content {
+    min-width: 0;
+}
+
+.content-wrapper {
+    padding: 24px 32px 48px;
+}
+
+/* Page headers */
+.page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+
+.page-header h2 {
+    font-weight: 500;
+    font-size: 1.5rem;
+}
+
+.page-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.page-intro {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin-bottom: 20px;
+}
+
+/* Search page */
+#searchView .search-container {
+    width: 100%;
+    max-width: 640px;
+    margin-bottom: 28px;
+    padding-right: 4px;
+}
+
+#searchView .search-container .primary-btn {
+    padding: 6px 16px;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 64px 24px;
+    color: var(--text-muted);
+}
+
+.empty-state h3 {
+    color: var(--text-primary);
+    font-weight: 500;
+    margin-bottom: 8px;
+}
+
+.empty-state p {
+    max-width: 440px;
+    margin: 0 auto;
+    font-size: 0.9rem;
+}
+
+/* Buttons */
+.link-btn {
+    background: none;
+    border: none;
+    color: var(--primary);
+    cursor: pointer;
+    padding: 4px 6px;
+    font-size: 0.85rem;
+}
+
+.link-btn:hover {
+    text-decoration: underline;
+}
+
+.button-link {
+    display: inline-block;
+    text-decoration: none;
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    padding: 0 4px;
+}
+
+/* Forms */
+.form-input.full {
+    width: 100%;
+}
+
+.form-input.narrow {
+    width: 100px;
+}
+
+.form-select {
+    font: inherit;
+    font-size: 0.9rem;
+}
+
+.input-row {
+    display: flex;
+    gap: 8px;
+}
+
+.input-row > .form-input,
+.input-row > .form-select {
+    flex: 1;
+    min-width: 0;
+}
+
+.field-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+/* Settings */
+.settings-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 24px;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.settings-tab {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    padding: 10px 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    font-weight: 500;
+}
+
+.settings-tab:hover {
+    color: var(--text-primary);
+}
+
+.settings-tab.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--primary);
+}
+
+.settings-form {
+    max-width: 720px;
+}
+
+.settings-section h3 {
+    font-size: 1rem;
+    font-weight: 500;
+    margin: 32px 0 16px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border-color);
+}
+
+.settings-section h3:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+.settings-section > .settings-hint:first-child {
+    margin: 0 0 20px;
+}
+
+.settings-savebar {
+    position: sticky;
+    bottom: 0;
+    max-width: 720px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 16px;
+    margin-top: 16px;
+    padding: 12px 24px;
+    background-color: var(--bg-dark);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.settings-savebar.dirty {
+    border-color: var(--primary);
+}
+
+/* Library bulk selection */
+.bulk-bar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 10px 16px;
+    margin-bottom: 16px;
+    background-color: var(--bg-dark);
+    border: 1px solid var(--primary);
+    border-radius: 4px;
+}
+
+.bulk-spacer {
+    flex: 1;
+}
+
+.bulk-bar .secondary-btn,
+.bulk-bar .danger-btn,
+.bulk-bar .form-select {
+    padding: 6px 12px;
+    font-size: 0.85rem;
+}
+
+.book-card .select-box {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    border: 2px solid #fff;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: none;
+}
+
+.selecting .book-card .select-box {
+    display: block;
+}
+
+.book-card.selected {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px var(--primary);
+}
+
+.book-card.selected .select-box {
+    background-color: var(--primary);
+    border-color: var(--primary);
+}
+
+.book-card.selected .select-box::after {
+    content: "";
+    position: absolute;
+    left: 5px;
+    top: 1px;
+    width: 6px;
+    height: 11px;
+    border: solid #fff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+
+.selecting .book-card:hover {
+    transform: none;
+}
+
+/* Audible match panel */
+.match-panel {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border-color);
+    background-color: var(--bg-dark);
+}
+
+.match-panel-header {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.match-panel-header .form-input {
+    flex: 1;
+}
+
+.match-results {
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.match-result {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 8px;
+    border-radius: 4px;
+}
+
+.match-result:hover {
+    background-color: var(--bg-hover);
+}
+
+.match-result img {
+    width: 48px;
+    height: 48px;
+    border-radius: 3px;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+.match-result .match-info {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.85rem;
+}
+
+.match-result .match-info b {
+    display: block;
+    font-weight: 500;
+}
+
+.match-result button {
+    padding: 4px 12px;
+    font-size: 0.8rem;
+}
+
+/* Dialog sizes and spacing */
+.modal-small {
+    max-width: 520px;
+}
+
+.modal-medium {
+    max-width: 640px;
+}
+
+.modal-pad {
+    padding: 20px 24px;
+}
+
+.modal-lead {
+    margin-bottom: 16px;
+}
+
+.confirm-message {
+    white-space: pre-line;
+}
+
+.folder-list {
+    max-height: 320px;
+    overflow-y: auto;
+    background: #1a1a1a;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 8px;
+    margin-top: 12px;
+}
+
+/* Table column widths */
+.col-check { width: 32px; }
+.col-size { width: 110px; }
+.col-status { width: 150px; }
+.col-progress { width: 220px; }
+.col-speed { width: 130px; }
+.col-seeds { width: 70px; }
+.col-when { width: 170px; }
+.col-event { width: 130px; }
+.col-book { width: 260px; }
+
+/* Toasts */
+.toasts {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: min(420px, calc(100vw - 32px));
+}
+
+.toast {
+    background-color: var(--bg-dark);
+    border: 1px solid var(--border-color);
+    border-left: 4px solid var(--primary);
+    border-radius: 4px;
+    padding: 12px 16px;
+    font-size: 0.9rem;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    animation: toast-in 0.2s ease;
+}
+
+.toast.ok { border-left-color: var(--success); }
+.toast.error { border-left-color: var(--error); }
+
+.toast.leaving {
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+@keyframes toast-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+}
+
+/* ================================================================
+   Phones and small tablets
+   ================================================================ */
+@media (max-width: 768px) {
+    .app-layout {
+        display: block;
+    }
+
+    /* Sidebar becomes a bottom tab bar */
+    .sidebar {
+        position: fixed;
+        top: auto;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        width: auto;
+        height: auto;
+        z-index: 900;
+        border-right: none;
+        border-top: 1px solid var(--border-color);
+        padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    .sidebar-header {
+        display: none;
+    }
+
+    .sidebar-nav {
+        flex-direction: row;
+        padding: 0;
+    }
+
+    .nav-item {
+        flex: 1;
+        flex-direction: column;
+        gap: 2px;
+        padding: 8px 2px;
+        font-size: 0.7rem;
+        border-left: none;
+        border-top: 2px solid transparent;
+        text-align: center;
+        position: relative;
+    }
+
+    .nav-item.active {
+        border-left-color: transparent;
+        border-top-color: var(--primary);
+    }
+
+    .nav-badge {
+        position: absolute;
+        top: 4px;
+        left: calc(50% + 6px);
+        margin: 0;
+    }
+
+    .content-wrapper {
+        padding: 16px 16px 96px;
+    }
+
+    .results-grid {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 12px;
+    }
+
+    .book-info {
+        padding: 10px;
+    }
+
+    .library-toolbar .form-select {
+        flex: 1 1 140px;
+    }
+
+    .library-stats {
+        margin-left: 0;
+        width: 100%;
+    }
+
+    .field-pair {
+        grid-template-columns: 1fr;
+        gap: 0;
+    }
+
+    .settings-savebar {
+        bottom: 72px;
+    }
+
+    .modal {
+        padding: 0;
+    }
+
+    .modal-content {
+        min-height: 100%;
+        border-radius: 0;
+        border: none;
+    }
+
+    .modal-info-panel,
+    .modal-pad,
+    .modal-footer,
+    .book-path,
+    .match-panel,
+    .review-banner {
+        padding-left: 16px;
+        padding-right: 16px;
+    }
+
+    .modal-cover {
+        width: 96px;
+        height: 96px;
+    }
+
+    .review-banner {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .import-toolbar {
+        flex-wrap: wrap;
+        padding: 16px 16px 0;
+    }
+
+    .import-toolbar .form-input {
+        flex-basis: 100%;
+    }
+
+    .series-progress {
+        max-width: none;
+    }
+
+    .series-card-actions {
+        margin-left: 0;
+        width: 100%;
+    }
+
+    .col-progress { width: 140px; }
+    .col-book { width: auto; }
+
+    .toasts {
+        right: 16px;
+        left: 16px;
+        bottom: 88px;
+        max-width: none;
+    }
+}
+
+.ok-text {
+    color: var(--success);
+}
+
+.error-text {
+    color: var(--error);
 }

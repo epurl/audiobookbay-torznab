@@ -26,7 +26,9 @@ It also still works as a plain **Torznab indexer** for AudiobookBay, so apps lik
   - Files are renamed to `Title.m4b`, or `Title - Part 01.mp3`, `Part 02`, … in disc and track order. The release's cover image comes along as `cover.jpg`.
 - **Existing library import:** scans the audiobooks you already have and adds them to the library. It reads Audiobookshelf's `metadata.json` when a folder has one, otherwise the folder name. Files are never moved or renamed.
 - **Library management:**
-  - Filter, sort and search the library.
+  - Filter, sort and search the library, including "Wanted" and "Not matched on Audible" filters.
+  - Select many books to change their status, match them on Audible, or remove them at once.
+  - Match books imported from folder names to their Audible edition, automatically or by picking from search results.
   - Edit a book's details and status.
   - See its files on disk, search for it on demand, or remove it (files are kept).
   - Books whose folder disappears are flagged as **Missing**.
@@ -70,18 +72,22 @@ A prebuilt image is also published to `ghcr.io/epurl/audiobookbay-torznab:latest
 
 ## First-time setup
 
-Open the **Settings** tab.
+Open **Settings**. It's split into sections; changes are saved with the **Save Changes** bar at the bottom (it turns orange when something is unsaved).
 
 1. **Security:** set a username and password. Until you do, Bayarr only accepts connections from local network addresses (`192.168.x.x`, `10.x.x.x`, `172.16-31.x.x`, localhost). Your browser will ask you to sign in after you save a login.
-2. **Download Client:** enable qBittorrent and enter its WebUI URL, username and password. From another container this is usually `http://qbittorrent:8080`.
-3. **Root Folder:** where imported books go, as Bayarr sees it (e.g. `/audiobooks`). Use **Browse** to pick it.
-4. **Book Folder Format:** how new downloads are named inside the Root Folder. The default is `{Author} - {Series} {SeriesNumber} - {Title}`, for example `Jim Butcher - The Dresden Files 4 - Summer Knight`. Books without a series drop that part: `Jaysea Lynn - For Whom the Belle Tolls`. Available tokens: `{Author}`, `{Authors}`, `{Series}`, `{SeriesNumber}`, `{Title}`, `{Year}`.
-5. **Rename Audio Files:** on by default. Downloaded files are renamed after the book: a single file becomes `Summer Knight.m4b`; several files become `Summer Knight - Part 01.mp3`, `Part 02`, … numbered in disc-then-track order (`CD1/01`, `CD1/02`, `CD2/01`, …). Turn it off to keep the release's own file names and subfolders.
-6. **Downloads Folder (optional):** only needed when qBittorrent and Bayarr see downloads at different paths. See below.
-7. **Audio Format:**
-   - *Prefer M4B* (default): grab M4B when there's a choice.
-   - *M4B only*: never grab anything else.
-   - *Any format*: no preference.
+2. **Download Client:**
+   - Enable qBittorrent and enter its Web UI URL, username and password. From another container this is usually `http://qbittorrent:8080`. **Test Connection** checks them before you save.
+   - **Downloads Folder (optional):** only needed when qBittorrent and Bayarr see downloads at different paths. See below.
+   - **Stalled Downloads:** a download with no progress for 6 hours (you can change this; 0 turns it off) is removed from qBittorrent along with its partial files, that release is never grabbed again for the book, and the next-best one is grabbed. A torrent you delete from qBittorrent yourself puts the book back to Monitored.
+3. **Media Management:**
+   - **Root Folder:** where imported books go, as Bayarr sees it (e.g. `/audiobooks`). Use **Browse** to pick it.
+   - **Book Folder Format:** how new downloads are named inside the Root Folder. The default is `{Author} - {Series} {SeriesNumber} - {Title}`, for example `Jim Butcher - The Dresden Files 4 - Summer Knight`. Books without a series drop that part: `Jaysea Lynn - For Whom the Belle Tolls`. Available tokens: `{Author}`, `{Authors}`, `{Series}`, `{SeriesNumber}`, `{Title}`, `{Year}`.
+   - **Rename Audio Files** (on by default): a single file becomes `Summer Knight.m4b`; several files become `Summer Knight - Part 01.mp3`, `Part 02`, … numbered in disc-then-track order (`CD1/01`, `CD1/02`, `CD2/01`, …). Turn it off to keep the release's own file names and subfolders.
+   - **Use Hardlinks** (on by default): when the downloads and the Root Folder are on the same drive, imported files are hardlinked instead of copied, so a seeding book doesn't take up space twice. If they're on different drives Bayarr copies instead. In Docker, hardlinks only work when both folders are inside **one** mounted volume (e.g. mount `/mnt/data` as `/data`, and use `/data/downloads` and `/data/audiobooks`). Don't use Audiobookshelf's "embed metadata" tool on hardlinked books: it would change the files qBittorrent is seeding.
+   - **Download Checks:** see [Download checks](#download-checks).
+4. **General:** preferred language, audio format (*Prefer M4B*, *M4B only* or *Any format*), and whether a matching narrator ranks releases higher.
+5. **Audiobookshelf:** see [Audiobookshelf](#audiobookshelf).
+6. **Backup:** download a backup of the database, or restore one. Bayarr also keeps a daily copy of the last 7 days in `config/backups`. A backup includes your qBittorrent password and Audiobookshelf token, so keep it private. Restoring keeps your current login, and saves the current database to `config/backups` first.
 
 ### Downloads Folder (remote path mapping)
 
@@ -122,12 +128,18 @@ The preview lists everything found before anything is imported. Each book is mar
 
 ## Managing the library
 
-- **Filter and sort:** filter by text or status; sort by author, title, series or date added.
+- **Filter and sort:** filter by text or status; sort by author, title, series or date added. **Wanted** shows books not on disk yet; **Not matched on Audible** shows books without an ASIN.
+- **Select:** click **Select**, pick books (or **Select all shown**), then set their status, match them on Audible, or remove them.
+- **Match on Audible:** books imported from folder names don't have Audible's details. Matching fills in the ASIN, runtime, narrators, series and description, which makes the download length check, series monitoring and "In Library" detection work for them.
+  - **For many books:** filter by *Not matched on Audible*, **Select all shown**, **Match on Audible**. This runs in the background and only accepts clear-cut matches: the title and first author must match, dramatized versions are skipped, and a matching series number wins. Books it isn't sure about are left for you.
+  - **For one book:** open it and click **Match on Audible** to search Audible and pick the right edition yourself.
+  - Your files, folder and status are never changed by a match.
 - **Book details:** click a book to:
   - edit its title, authors, narrators, series, number, ASIN or status
   - see its folder and audio files
   - use **Search Now**, which grabs the best release from AudiobookBay
   - use **Manual Search**, where you pick a release yourself
+  - use **Match on Audible**, to fill in its details from Audible
   - **Remove** it from Bayarr (files on disk are never deleted)
 - **Statuses:**
 
@@ -168,7 +180,7 @@ Books waiting for review show a badge on **Activity**. For each one you can:
 ## Activity
 
 - **Queue:** books on their way in, with progress, speed, time left and seeders from qBittorrent. Books waiting for review can be approved or rejected here.
-- **History:** the last 1000 events: grabbed, imported, needs review, approved, rejected, failed, missing, series additions and releases.
+- **History:** the last 1000 events: grabbed, imported, needs review, approved, rejected, stalled, failed, missing, matched, series additions and releases.
 
 ## Audiobookshelf
 
@@ -184,7 +196,7 @@ Under **Settings → Audiobookshelf**:
    - The language must match your setting.
    - All words of the main title must be in the release title.
    - Collections and box sets are skipped.
-   - Dramatized versions and releases you rejected before are skipped.
+   - Dramatized versions and releases rejected before (by you, or because they stalled) are skipped.
    - M4B and a matching narrator score higher.
 3. The magnet link goes to qBittorrent with the `audiobooks` category and a `bayarr-<title>` tag. The book becomes **Downloading**.
 4. Every minute Bayarr asks qBittorrent for finished torrents in that category. When its download finishes, the book becomes **Downloaded**. Its audio files (`.m4b`, `.mp3`, `.m4a`, `.flac`, `.ogg`, `.opus`, `.aac`) are then copied into a new folder inside the Root Folder, named using the Book Folder Format and renamed (unless Rename Audio Files is off). If the files fail a check, the book becomes **Needs Review** instead (see Download checks). Otherwise `metadata.json` and the cover are written, Audiobookshelf is asked to scan, and the book becomes **Imported**.

@@ -7,7 +7,7 @@ import shutil
 from . import audible, audiobookshelf, db
 from .library import build_folder_name, describe_files, find_match, plan_import_files, total_duration_min
 from .scraper import search_for_book, fetch_detail_info
-from .qbittorrent import send_to_qbittorrent, get_completed_torrents
+from .qbittorrent import delete_torrents, get_completed_torrents, get_torrents, send_to_qbittorrent
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,10 @@ async def run_monitor_loop():
 async def _search_loop():
     while True:
         try:
+            await asyncio.to_thread(db.daily_backup)
+        except Exception as e:
+            logger.error(f"Daily backup failed: {e}")
+        try:
             await check_library()
         except Exception as e:
             logger.error(f"Error in search loop: {e}", exc_info=True)
@@ -40,6 +44,7 @@ async def _import_loop():
         try:
             settings = db.get_settings()
             if settings.get("qbt_enabled"):
+                await check_active_downloads(settings)
                 await import_completed_downloads(settings)
         except Exception as e:
             logger.error(f"Error in import loop: {e}", exc_info=True)
@@ -310,6 +315,54 @@ def _map_content_path(torrent, downloads_folder):
     return os.path.join(downloads_folder, rel)
 
 
+# qBittorrent states where a download is making no progress
+STALLED_STATES = {"stalledDL", "metaDL", "error", "missingFiles"}
+
+
+async def check_active_downloads(settings):
+    """Watches downloads in progress: one with no progress for too long is rejected and
+    the next-best release is grabbed; one removed from qBittorrent goes back to Monitored."""
+    downloading = [b for b in db.get_library() if b.get("status") == "Downloading" and b.get("download_hash")]
+    if not downloading:
+        return
+    creds = (settings.get("qbt_host"), settings.get("qbt_user"), settings.get("qbt_pass"))
+    torrents = await get_torrents(*creds, [b["download_hash"] for b in downloading])
+    if torrents is None:
+        return  # qBittorrent unreachable: don't draw conclusions
+    by_hash = {t["hash"].lower(): t for t in torrents}
+    now = datetime.datetime.now()
+    stall_hours = settings.get("stall_hours", 6)
+
+    for book in downloading:
+        torrent = by_hash.get(book["download_hash"])
+        if torrent is None:
+            logger.info(f"{book['title']} was removed from qBittorrent; back to Monitored")
+            db.update_book(book["id"], status="Monitored", download_hash="", stalled_since="")
+            db.add_history("failed", book, "The torrent was removed from qBittorrent; the book is Monitored again")
+            continue
+
+        if torrent.get("state") not in STALLED_STATES or not stall_hours:
+            if book.get("stalled_since"):
+                db.update_book(book["id"], stalled_since="")
+            continue
+        if not book.get("stalled_since"):
+            db.update_book(book["id"], stalled_since=now.isoformat(timespec="seconds"))
+            continue
+        stalled_for = now - datetime.datetime.fromisoformat(book["stalled_since"])
+        if stalled_for < datetime.timedelta(hours=stall_hours):
+            continue
+
+        progress = round((torrent.get("progress") or 0) * 100)
+        logger.warning(f"Giving up on {book['title']}: stalled for {stall_hours}h at {progress}%")
+        if settings.get("remove_stalled", True):
+            await delete_torrents(*creds, [book["download_hash"]], delete_files=True)
+        blocklist = list(dict.fromkeys((book.get("blocklist") or []) + [book["download_hash"]]))
+        db.update_book(book["id"], status="Monitored", download_hash="", stalled_since="", blocklist=blocklist)
+        db.add_history("stalled", book, f"No progress for {stall_hours} hours (stuck at {progress}%, "
+                                        f"state {torrent.get('state')}); rejected, searching for another release")
+        schedule_search(db.get_book(book["id"]))
+
+
 def check_download(book, audio_files, settings):
     """Checks the downloaded files rather than trusting the AudiobookBay listing.
     Returns a reason to hold the book for review, or '' if it looks right."""
@@ -394,7 +447,7 @@ async def import_completed_downloads(settings):
         try:
             # Large copies run in a thread so the web UI stays responsive
             plan = audio + ([cover] if cover else [])
-            copied = await asyncio.to_thread(_copy_files, plan, dest_dir)
+            copied = await asyncio.to_thread(_copy_files, plan, dest_dir, settings.get("use_hardlinks", True))
             cover_name = cover[1] if cover else ""
             if settings.get("write_metadata", True):
                 cover_name = await audiobookshelf.download_cover(book.get("imageUrl", ""), dest_dir) or cover_name
@@ -413,18 +466,65 @@ async def import_completed_downloads(settings):
             db.add_history("failed", book, f"Audiobookshelf scan failed: {error}")
 
 
-def _copy_files(plan, dest_dir):
-    """Copies (never moves) files so the client keeps seeding. Each file is written under a
-    temporary name first, so an interrupted copy is redone on the next check rather than
-    being mistaken for a finished one. Returns the number of files copied."""
+def _copy_files(plan, dest_dir, hardlink=False):
+    """Hardlinks or copies (never moves) files so the client keeps seeding. A hardlink is
+    instant and takes no extra space, but only works on the same drive, so it falls back
+    to copying. Copies are written under a temporary name first, so an interrupted copy is
+    redone on the next check rather than mistaken for a finished one. Returns the number
+    of files added."""
     copied = 0
     for src, rel in plan:
         dest = os.path.join(dest_dir, rel)
         if os.path.exists(dest):
             continue
         os.makedirs(os.path.dirname(dest), exist_ok=True)
+        if hardlink:
+            try:
+                os.link(src, dest)
+                copied += 1
+                continue
+            except OSError as e:
+                # Usually a different drive; the rest of this book won't link either
+                logger.info(f"Can't hardlink into {dest_dir} ({e}); copying instead")
+                hardlink = False
         partial = dest + ".partial"
         shutil.copy2(src, partial)
         os.replace(partial, dest)
         copied += 1
     return copied
+
+
+# --- Matching library books to Audible --------------------------------------
+
+match_job = {"running": False, "total": 0, "done": 0, "matched": 0, "unsure": 0, "failed": 0}
+
+
+def start_match_job(book_ids):
+    """Matches books to Audible one at a time in the background. Returns False if a job is
+    already running."""
+    if match_job["running"]:
+        return False
+    match_job.update(running=True, total=len(book_ids), done=0, matched=0, unsure=0, failed=0)
+
+    async def run():
+        try:
+            for book_id in book_ids:
+                book = db.get_book(book_id)
+                try:
+                    found = await audible.auto_match(book) if book else None
+                    if found:
+                        db.apply_audible_match(book_id, found)
+                        match_job["matched"] += 1
+                    else:
+                        match_job["unsure"] += 1
+                except Exception as e:
+                    logger.warning(f"Audible match failed for {book.get('title') if book else book_id}: {e}")
+                    match_job["failed"] += 1
+                match_job["done"] += 1
+                await asyncio.sleep(0.3)  # Gentle on Audible's API
+            db.add_history("matched", None, f"Matched {match_job['matched']} of {match_job['total']} books on Audible"
+                                            f" ({match_job['unsure']} not clear-cut, {match_job['failed']} errors)")
+        finally:
+            match_job["running"] = False
+    _run_in_background(run())
+    return True

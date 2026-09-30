@@ -91,6 +91,65 @@ function setActionStatus(el, text, kind = '') {
     el.className = `action-status ${kind}`;
 }
 
+// Toast notifications for results of actions
+function toast(message, kind = '') {
+    const el = document.createElement('div');
+    el.className = `toast ${kind}`;
+    el.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+    el.textContent = message;
+    document.getElementById('toasts').appendChild(el);
+    setTimeout(() => {
+        el.classList.add('leaving');
+        setTimeout(() => el.remove(), 300);
+    }, kind === 'error' ? 7000 : 4000);
+}
+
+// A styled replacement for window.confirm(); resolves to true or false
+let confirmResolve = null;
+function confirmDialog(message, { title = 'Are you sure?', confirmText = 'OK', danger = false } = {}) {
+    const dialog = document.getElementById('confirmModal');
+    document.getElementById('confirmTitle').textContent = title;
+    document.getElementById('confirmMessage').textContent = message;
+    const ok = document.getElementById('confirmOk');
+    ok.textContent = confirmText;
+    ok.className = danger ? 'danger-btn' : 'primary-btn';
+    if (confirmResolve) confirmResolve(false);
+    showModal(dialog);
+    setTimeout(() => ok.focus(), 50);
+    return new Promise(resolve => { confirmResolve = resolve; });
+}
+
+function closeConfirm(result) {
+    hideModal(document.getElementById('confirmModal'));
+    if (confirmResolve) {
+        confirmResolve(result);
+        confirmResolve = null;
+    }
+}
+
+document.querySelectorAll('#confirmModal [data-confirm]').forEach(btn =>
+    btn.addEventListener('click', () => closeConfirm(btn.dataset.confirm === 'ok')));
+document.getElementById('confirmModal').addEventListener('click', (e) => {
+    if (e.target.id === 'confirmModal') closeConfirm(false);
+});
+
+// Escape closes the top-most open dialog
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const open = [...document.querySelectorAll('.modal.show')];
+    const top = open[open.length - 1];
+    if (!top) return;
+    if (top.id === 'confirmModal') closeConfirm(false);
+    else if (top.id === 'downloadModal') closeModal();
+    else hideModal(top);
+});
+
+async function postJSON(url, body = {}, method = 'POST') {
+    const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, data };
+}
+
 // Initialize
 initApp();
 
@@ -110,11 +169,11 @@ function setupNavigation() {
             e.preventDefault();
             navItems.forEach(n => n.classList.remove('active'));
             item.classList.add('active');
-            
+
             const targetViewId = item.getAttribute('data-view');
-            views.forEach(v => {
-                v.style.display = v.id === targetViewId ? 'block' : 'none';
-            });
+            views.forEach(v => { v.hidden = v.id !== targetViewId; });
+            document.querySelector('.main-content').scrollTop = 0;
+            window.scrollTo(0, 0);
 
             if (targetViewId === 'libraryView') {
                 renderLibrary();
@@ -137,7 +196,7 @@ async function fetchSettings() {
         const res = await fetch('/api/settings');
         const data = await res.json();
         appSettings = data.settings || appSettings;
-        
+
         // Sync UI
         document.getElementById('setLanguage').value = appSettings.language || "English";
         document.getElementById('setAutoMatch').checked = appSettings.auto_match_narrator ?? true;
@@ -147,6 +206,9 @@ async function fetchSettings() {
         document.getElementById('setDownloadsFolder').value = appSettings.downloads_folder || "";
         document.getElementById('setNamingFormat').value = appSettings.naming_format || "";
         document.getElementById('setRenameFiles').checked = appSettings.rename_files ?? true;
+        document.getElementById('setHardlinks').checked = appSettings.use_hardlinks ?? true;
+        document.getElementById('setStallHours').value = appSettings.stall_hours ?? 6;
+        document.getElementById('setRemoveStalled').checked = appSettings.remove_stalled ?? true;
         document.getElementById('setVerifyRuntime').checked = appSettings.verify_runtime ?? true;
         document.getElementById('setRuntimeTolerance').value = appSettings.runtime_tolerance ?? 10;
         document.getElementById('setWriteMetadata').checked = appSettings.write_metadata ?? true;
@@ -169,7 +231,7 @@ async function fetchSettings() {
             document.getElementById('saveAuthBtn').disabled = true;
             document.getElementById('authHint').textContent = "Login is set by the BAYARR_USERNAME / BAYARR_PASSWORD environment variables.";
         }
-        
+
         // Sync filter in modal
         langFilter.value = appSettings.language;
     } catch (err) {
@@ -200,6 +262,9 @@ function setupSettings() {
             downloads_folder: document.getElementById('setDownloadsFolder').value,
             naming_format: document.getElementById('setNamingFormat').value,
             rename_files: document.getElementById('setRenameFiles').checked,
+            use_hardlinks: document.getElementById('setHardlinks').checked,
+            stall_hours: parseInt(document.getElementById('setStallHours').value, 10) || 0,
+            remove_stalled: document.getElementById('setRemoveStalled').checked,
             verify_runtime: document.getElementById('setVerifyRuntime').checked,
             runtime_tolerance: parseInt(document.getElementById('setRuntimeTolerance').value, 10) || 10,
             write_metadata: document.getElementById('setWriteMetadata').checked,
@@ -209,7 +274,7 @@ function setupSettings() {
             qbt_user: document.getElementById('setQbtUser').value,
             qbt_pass: document.getElementById('setQbtPass').value
         };
-        
+
         try {
             const res = await fetch('/api/settings', {
                 method: 'POST',
@@ -224,13 +289,65 @@ function setupSettings() {
             document.getElementById('setQbtPass').value = "";
             document.getElementById('setAbsToken').value = "";
             langFilter.value = appSettings.language; // update modal sync
-            
-            const status = document.getElementById('settingsSaveStatus');
-            status.style.display = 'inline';
-            setTimeout(() => { status.style.display = 'none'; }, 2000);
+            await fetchSettings();
+            markSettingsClean();
+            toast('Settings saved', 'ok');
         } catch (err) {
             console.error(err);
+            toast('Could not save settings', 'error');
         }
+    });
+
+    // Sections
+    document.querySelectorAll('.settings-tab').forEach(tab =>
+        tab.addEventListener('click', () => showSettingsSection(tab.dataset.section)));
+
+    // Unsaved-changes hint on the save bar
+    document.querySelectorAll('.settings-section:not([data-section="security"]):not([data-section="backup"])').forEach(section => {
+        section.addEventListener('input', markSettingsDirty);
+        section.addEventListener('change', markSettingsDirty);
+    });
+
+    document.getElementById('qbtTestBtn').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        const status = document.getElementById('qbtStatus');
+        btn.disabled = true;
+        status.textContent = 'Connecting...';
+        const { ok, data } = await postJSON('/api/qbittorrent/test', {
+            host: document.getElementById('setQbtHost').value.trim(),
+            user: document.getElementById('setQbtUser').value,
+            password: document.getElementById('setQbtPass').value,
+        });
+        btn.disabled = false;
+        status.textContent = ok ? `Connected to qBittorrent ${data.version}.` : (data.detail || 'Connection failed');
+        status.className = `settings-hint ${ok ? 'ok-text' : 'error-text'}`;
+    });
+
+    document.getElementById('restoreBtn').addEventListener('click', async () => {
+        const file = document.getElementById('restoreFile').files[0];
+        if (!file) {
+            toast('Choose a backup file first', 'error');
+            return;
+        }
+        let data;
+        try {
+            data = JSON.parse(await file.text());
+        } catch (err) {
+            toast("That file isn't valid JSON", 'error');
+            return;
+        }
+        const books = Array.isArray(data.library) ? data.library.length : 0;
+        const confirmed = await confirmDialog(
+            `Replace your library, series, history and settings with this backup (${books} books)?\n\nThe current database is saved to the backups folder first. Your login stays as it is.`,
+            { title: 'Restore backup', confirmText: 'Restore', danger: true });
+        if (!confirmed) return;
+        const res = await postJSON('/api/restore', data);
+        if (!res.ok) {
+            toast(res.data.detail || 'Restore failed', 'error');
+            return;
+        }
+        toast(`Restored ${res.data.books} books. Reloading…`, 'ok');
+        setTimeout(() => location.reload(), 1200);
     });
 
     document.getElementById('absLoadBtn').addEventListener('click', async () => {
@@ -255,7 +372,6 @@ function setupSettings() {
     });
 
     document.getElementById('saveAuthBtn').addEventListener('click', async () => {
-        const status = document.getElementById('authSaveStatus');
         const res = await fetch('/api/auth', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -265,21 +381,36 @@ function setupSettings() {
             })
         });
         const data = await res.json().catch(() => ({}));
-        status.style.color = res.ok ? 'var(--success)' : '#e74c3c';
-        status.textContent = res.ok ? 'Saved! Your browser will ask you to sign in.' : (data.detail || 'Failed to save');
-        status.style.display = 'inline';
+        toast(res.ok ? 'Login saved. Your browser will ask you to sign in.' : (data.detail || 'Could not save the login'), res.ok ? 'ok' : 'error');
         document.getElementById('setAuthPass').value = "";
     });
 }
 
+function showSettingsSection(name) {
+    document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t.dataset.section === name));
+    document.querySelectorAll('.settings-section').forEach(sec => { sec.hidden = sec.dataset.section !== name; });
+    // Security and Backup have their own buttons
+    document.getElementById('settingsSaveBar').hidden = ['security', 'backup'].includes(name);
+}
+
+function markSettingsDirty() {
+    document.getElementById('settingsSaveBar').classList.add('dirty');
+    setActionStatus(document.getElementById('settingsSaveStatus'), 'Unsaved changes');
+}
+
+function markSettingsClean() {
+    document.getElementById('settingsSaveBar').classList.remove('dirty');
+    setActionStatus(document.getElementById('settingsSaveStatus'), '');
+}
+
 async function addToLibrary(e, bookData) {
     e.stopPropagation(); // prevent modal opening
-    
+
     // Optimistic UI update
     const prevText = e.target.textContent;
     e.target.textContent = "Adding...";
     e.target.disabled = true;
-    
+
     try {
         const res = await fetch('/api/library', {
             method: 'POST',
@@ -334,12 +465,20 @@ function renderLibrary() {
     }
 
     let books = appLibrary.filter(b => {
-        if (status && b.status !== status) return false;
+        if (status === '__wanted') {
+            if (!WANTED_STATUSES.includes(b.status)) return false;
+        } else if (status === '__unmatched') {
+            if (b.asin) return false;
+        } else if (status && b.status !== status) return false;
         if (!text) return true;
         return [b.title, b.authors, b.series, b.narrators].join(' ').toLowerCase().includes(text);
     });
     books.sort((a, b) => librarySortKey(a, sort).localeCompare(librarySortKey(b, sort)));
     if (sort === 'added') books.reverse();
+
+    shownBookIds = books.map(b => b.id);
+    container.classList.toggle('selecting', selectMode);
+    updateBulkBar();
 
     if (books.length === 0) {
         container.innerHTML = '<div class="no-results">No books match the filter.</div>';
@@ -353,9 +492,11 @@ function renderLibrary() {
         const bookStatus = book.status || 'Monitored';
         const series = seriesLabel(book);
 
+        card.classList.toggle('selected', selectedIds.has(book.id));
         card.innerHTML = `
+            <span class="select-box" aria-hidden="true"></span>
             <div class="library-status ${esc(statusClass(bookStatus))}">${esc(bookStatus)}</div>
-            <img src="${esc(coverUrl(book))}" alt="${esc(book.title)}" class="book-cover" loading="lazy">
+            <img src="${esc(coverUrl(book))}" alt="" class="book-cover" loading="lazy">
             <div class="book-info">
                 <div class="book-title" title="${esc(book.title)}">${esc(book.title)}</div>
                 ${series ? `<div class="book-series" title="${esc(series)}">${esc(series)}</div>` : ''}
@@ -364,20 +505,108 @@ function renderLibrary() {
             </div>
         `;
         card.querySelector('img').addEventListener('error', e => { e.target.src = PLACEHOLDER_COVER; }, { once: true });
-        card.addEventListener('click', () => openBookModal(book.id));
+        card.addEventListener('click', () => {
+            if (!selectMode) {
+                openBookModal(book.id);
+                return;
+            }
+            selectedIds.has(book.id) ? selectedIds.delete(book.id) : selectedIds.add(book.id);
+            card.classList.toggle('selected', selectedIds.has(book.id));
+            updateBulkBar();
+        });
         fragment.appendChild(card);
     });
     container.appendChild(fragment);
 }
 
+const WANTED_STATUSES = ['Monitored', 'Unreleased', 'Downloading', 'Downloaded', 'Needs Review', 'Missing'];
+let selectMode = false;
+const selectedIds = new Set();
+let shownBookIds = [];
+
+function updateBulkBar() {
+    document.getElementById('bulkBar').hidden = !selectMode;
+    document.getElementById('bulkCount').textContent = `${selectedIds.size} selected`;
+    ['bulkStatus', 'bulkMatch', 'bulkRemove'].forEach(id => { document.getElementById(id).disabled = selectedIds.size === 0; });
+    document.getElementById('selectModeBtn').textContent = selectMode ? 'Done' : 'Select';
+}
+
+function setSelectMode(on) {
+    selectMode = on;
+    if (!on) selectedIds.clear();
+    renderLibrary();
+}
+
+async function runBulk(action, extra = {}) {
+    const ids = [...selectedIds];
+    const { ok, data } = await postJSON('/api/library/bulk', { ids, action, ...extra });
+    if (!ok) {
+        toast(data.detail || 'That didn\'t work', 'error');
+        return false;
+    }
+    return data;
+}
+
+async function watchMatchJob() {
+    for (;;) {
+        await new Promise(r => setTimeout(r, 1500));
+        const job = await fetch('/api/library/match_status').then(r => r.json()).catch(() => null);
+        if (!job) return;
+        if (!job.running) {
+            await fetchLibrary();
+            renderLibrary();
+            const unsure = job.unsure ? ` ${job.unsure} weren't clear-cut; match those by hand from their details.` : '';
+            toast(`Matched ${job.matched} of ${job.total} books on Audible.${unsure}`, job.matched ? 'ok' : '');
+            return;
+        }
+    }
+}
+
 function setupLibrary() {
+    document.getElementById('selectModeBtn').addEventListener('click', () => setSelectMode(!selectMode));
+    document.getElementById('bulkSelectAll').addEventListener('click', () => {
+        shownBookIds.forEach(id => selectedIds.add(id));
+        renderLibrary();
+    });
+    document.getElementById('bulkClear').addEventListener('click', () => {
+        selectedIds.clear();
+        renderLibrary();
+    });
+    document.getElementById('bulkStatus').addEventListener('change', async (e) => {
+        const status = e.target.value;
+        e.target.value = '';
+        if (!status) return;
+        const data = await runBulk('status', { status });
+        if (!data) return;
+        toast(`${data.count} book${data.count === 1 ? '' : 's'} set to ${status}`, 'ok');
+        await fetchLibrary();
+        setSelectMode(false);
+    });
+    document.getElementById('bulkMatch').addEventListener('click', async () => {
+        const data = await runBulk('match');
+        if (!data) return;
+        toast(`Matching ${data.count} book${data.count === 1 ? '' : 's'} on Audible in the background…`);
+        setSelectMode(false);
+        watchMatchJob();
+    });
+    document.getElementById('bulkRemove').addEventListener('click', async () => {
+        const n = selectedIds.size;
+        const confirmed = await confirmDialog(`Remove ${n} book${n === 1 ? '' : 's'} from Bayarr?\n\nFiles on disk are not deleted.`,
+            { title: 'Remove books', confirmText: 'Remove', danger: true });
+        if (!confirmed) return;
+        const data = await runBulk('remove');
+        if (!data) return;
+        toast(`Removed ${data.count} book${data.count === 1 ? '' : 's'}`, 'ok');
+        await fetchLibrary();
+        setSelectMode(false);
+    });
+
     ['libFilterText', 'libFilterStatus', 'libSort'].forEach(id => {
         document.getElementById(id).addEventListener(id === 'libFilterText' ? 'input' : 'change', renderLibrary);
     });
 
     document.getElementById('rescanBtn').addEventListener('click', async (e) => {
         const btn = e.currentTarget;
-        const stats = document.getElementById('libStats');
         btn.disabled = true;
         btn.textContent = 'Rescanning...';
         try {
@@ -385,9 +614,10 @@ function setupLibrary() {
             const data = await res.json();
             await fetchLibrary();
             renderLibrary();
-            stats.textContent += ` — rescan: ${data.missing} newly missing, ${data.restored} found again`;
+            toast(`Rescan finished: ${data.missing} newly missing, ${data.restored} found again`, data.missing ? 'error' : 'ok');
         } catch (err) {
             console.error(err);
+            toast('Rescan failed', 'error');
         } finally {
             btn.disabled = false;
             btn.textContent = 'Rescan';
@@ -406,7 +636,8 @@ function showModal(el) {
 
 function hideModal(el) {
     el.classList.remove('show');
-    setTimeout(() => { el.style.display = 'none'; }, 200);
+    // Skip if it was reopened while fading out
+    setTimeout(() => { if (!el.classList.contains('show')) el.style.display = 'none'; }, 200);
 }
 
 // -----------------
@@ -436,6 +667,8 @@ async function openBookModal(bookId) {
     seriesBtn.hidden = !book.series;
     seriesBtn.disabled = Boolean(seriesTracked);
     seriesBtn.textContent = seriesTracked ? 'Series Monitored' : 'Monitor Series';
+    document.getElementById('matchPanel').hidden = true;
+    document.getElementById('matchBookBtn').textContent = book.asin ? 'Rematch on Audible' : 'Match on Audible';
     setActionStatus(document.getElementById('bookStatusMsg'), '');
     document.getElementById('searchNowBtn').disabled = !appSettings.qbt_enabled;
     document.getElementById('searchNowBtn').title = appSettings.qbt_enabled ? 'Search AudiobookBay and grab the best match' : 'Enable qBittorrent in Settings first';
@@ -512,6 +745,17 @@ function setupBookModal() {
         }
     });
 
+    document.getElementById('matchBookBtn').addEventListener('click', () => {
+        const book = appLibrary.find(b => b.id === currentBookId);
+        if (!book) return;
+        document.getElementById('matchPanel').hidden = false;
+        document.getElementById('matchQuery').value = `${String(book.title || '').split(':')[0]} ${primaryAuthor(book.authors)}`.trim();
+        searchMatches();
+    });
+    document.getElementById('matchSearchBtn').addEventListener('click', searchMatches);
+    document.getElementById('matchQuery').addEventListener('keypress', (e) => { if (e.key === 'Enter') searchMatches(); });
+    document.getElementById('matchCloseBtn').addEventListener('click', () => { document.getElementById('matchPanel').hidden = true; });
+
     document.getElementById('monitorSeriesBtn').addEventListener('click', () => {
         const book = appLibrary.find(b => b.id === currentBookId);
         if (book) openSeriesModal({ book_id: book.id, title: book.series });
@@ -529,16 +773,59 @@ function setupBookModal() {
 
     document.getElementById('removeBookBtn').addEventListener('click', async () => {
         const book = appLibrary.find(b => b.id === currentBookId);
-        if (!book || !confirm(`Remove "${book.title}" from Bayarr?\n\nFiles on disk are not deleted.`)) return;
+        if (!book) return;
+        const confirmed = await confirmDialog(`Remove "${book.title}" from Bayarr?\n\nFiles on disk are not deleted.`,
+            { title: 'Remove book', confirmText: 'Remove', danger: true });
+        if (!confirmed) return;
         const res = await fetch(`/api/library/${encodeURIComponent(currentBookId)}`, { method: 'DELETE' });
         if (res.ok) {
             await fetchLibrary();
             renderLibrary();
             hideModal(bookModal);
+            toast(`Removed "${book.title}"`, 'ok');
         } else {
             setActionStatus(msg, 'Remove failed', 'error');
         }
     });
+}
+
+async function searchMatches() {
+    const results = document.getElementById('matchResults');
+    const query = document.getElementById('matchQuery').value.trim();
+    results.innerHTML = '<div class="muted">Searching Audible…</div>';
+    const res = await fetch(`/api/library/${encodeURIComponent(currentBookId)}/match_candidates?q=${encodeURIComponent(query)}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        results.innerHTML = `<div class="muted">${esc(data.detail || 'Search failed')}</div>`;
+        return;
+    }
+    if (!data.candidates.length) {
+        results.innerHTML = '<div class="muted">No Audible results. Try fewer words.</div>';
+        return;
+    }
+    results.innerHTML = data.candidates.map((c, i) => {
+        const runtime = c.runtime_min ? `${Math.floor(c.runtime_min / 60)}h ${c.runtime_min % 60}m` : '';
+        const details = [c.authors, c.narrators && `read by ${c.narrators}`, seriesLabel(c), runtime, (c.release_date || '').slice(0, 4)].filter(Boolean).join(' · ');
+        return `<div class="match-result">
+            <img src="${esc(safeUrl(c.imageUrl, PLACEHOLDER_COVER))}" alt="">
+            <div class="match-info"><b>${esc(c.title)}</b><span class="muted">${esc(details)}</span></div>
+            <button class="primary-btn" data-index="${i}">Use This</button>
+        </div>`;
+    }).join('');
+    results.querySelectorAll('button[data-index]').forEach(btn => btn.addEventListener('click', async () => {
+        const chosen = data.candidates[btn.dataset.index];
+        btn.disabled = true;
+        const { ok, data: out } = await postJSON(`/api/library/${encodeURIComponent(currentBookId)}/match`, { asin: chosen.asin });
+        if (!ok) {
+            toast(out.detail || 'Match failed', 'error');
+            btn.disabled = false;
+            return;
+        }
+        await fetchLibrary();
+        renderLibrary();
+        await openBookModal(currentBookId);
+        toast(`Matched to "${chosen.title}" on Audible`, 'ok');
+    }));
 }
 
 // -----------------
@@ -664,18 +951,25 @@ function setupImportModal() {
 // -----------------
 async function reviewAction(bookId, action, msgEl) {
     const book = appLibrary.find(b => b.id === bookId);
-    if (action === 'reject' && !confirm(`Reject this download of "${book ? book.title : 'this book'}"?\n\nThe release won't be grabbed again for this book and a new search starts. The torrent stays in qBittorrent for you to remove.`)) return;
+    if (action === 'reject') {
+        const confirmed = await confirmDialog(
+            `Reject this download of "${book ? book.title : 'this book'}"?\n\nThe release won't be grabbed again for this book and a new search starts. The torrent stays in qBittorrent for you to remove.`,
+            { title: 'Reject download', confirmText: 'Reject', danger: true });
+        if (!confirmed) return;
+    }
     const res = await fetch(`/api/library/${encodeURIComponent(bookId)}/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     const data = await res.json().catch(() => ({}));
     await fetchLibrary();
     renderLibrary();
-    if (msgEl) {
+    if (!msgEl) {
+        toast(res.ok ? (action === 'reject' ? 'Rejected; searching for another release' : 'Approved; it will be imported within a minute') : (data.detail || 'Failed'), res.ok ? 'ok' : 'error');
+    } else {
         setActionStatus(msgEl, res.ok ? (action === 'reject' ? 'Rejected; searching for another release' : 'Will be imported within a minute') : (data.detail || 'Failed'), res.ok ? 'ok' : 'error');
         const book2 = appLibrary.find(b => b.id === bookId);
         document.getElementById('bookReview').hidden = !book2 || book2.status !== 'Needs Review';
         if (book2) document.getElementById('bookStatus').value = book2.status;
     }
-    if (document.getElementById('activityView').style.display === 'block') renderActivity();
+    if (!document.getElementById('activityView').hidden) renderActivity();
 }
 
 function updateActivityBadge() {
@@ -766,7 +1060,9 @@ async function renderSeries() {
             setTimeout(renderSeries, 1200);
         });
         card.querySelector('.series-remove').addEventListener('click', async () => {
-            if (!confirm(`Stop tracking "${series.title}"?\n\nIts books stay in your library.`)) return;
+            const confirmed = await confirmDialog(`Stop tracking "${series.title}"?\n\nIts books stay in your library.`,
+                { title: 'Remove series', confirmText: 'Remove', danger: true });
+            if (!confirmed) return;
             await fetch(`/api/series/${encodeURIComponent(series.id)}`, { method: 'DELETE' });
             renderSeries();
         });
@@ -910,7 +1206,7 @@ async function performSearch() {
 
 function renderResults(data) {
     resultsContainer.innerHTML = '';
-    
+
     if (!data.products || data.products.length === 0) {
         resultsContainer.innerHTML = '<div class="no-results">No audiobooks found on Audible.</div>';
         return;
@@ -958,7 +1254,7 @@ function renderResults(data) {
 function renderGroup(title, books) {
     const section = document.createElement('div');
     section.className = 'series-section';
-    
+
     const header = document.createElement('div');
     header.className = 'series-header series-group-header';
     const name = document.createElement('span');
@@ -978,21 +1274,21 @@ function renderGroup(title, books) {
 
     const grid = document.createElement('div');
     grid.className = 'results-grid';
-    
+
     books.forEach(book => {
         const releaseDate = book.release_date || "";
         const tracked = findInLibrary(book);
         const isTracked = Boolean(tracked);
         const card = document.createElement('div');
         card.className = 'book-card';
-        
+
         let addBtnHtml = '';
         if (isTracked) {
             addBtnHtml = `<div class="add-btn monitored-btn" style="pointer-events: none;">${esc(tracked.status === 'Imported' ? 'In Library' : tracked.status)}</div>`;
         } else {
             addBtnHtml = `<div class="add-btn">Add to Library</div>`;
         }
-        
+
         card.innerHTML = `
             <img src="${safeUrl(book.imageUrl, '')}" alt="${esc(book.title)}" class="book-cover">
             <div class="book-info">
@@ -1003,23 +1299,23 @@ function renderGroup(title, books) {
                 ${addBtnHtml}
             </div>
         `;
-        
+
         // Add event listener to the add button specifically
         const addBtn = card.querySelector('.add-btn');
         if (addBtn && !isTracked) {
             addBtn.addEventListener('click', (e) => addToLibrary(e, book));
         }
-        
+
         // Modal opens when clicking the card (but not the button)
         card.addEventListener('click', (e) => {
             if (!e.target.classList.contains('add-btn')) {
                 openModal(book);
             }
         });
-        
+
         grid.appendChild(card);
     });
-    
+
     section.appendChild(grid);
     resultsContainer.appendChild(section);
 }
@@ -1032,20 +1328,20 @@ async function openModal(book) {
     modalAuthor.textContent = author;
     modalNarrator.textContent = `Narrated by: ${narrators}`;
     modalCover.src = /^(https?:|\/)/i.test(coverUrl || '') ? coverUrl : '';
-    
+
     // Reset ABB results
     abbResults.innerHTML = '';
-    
+
     modal.style.display = 'flex';
     // Trigger reflow for animation
     void modal.offsetWidth;
     modal.classList.add('show');
-    
+
     modalLoader.style.display = 'flex';
-    
+
     // Clean up title for ABB search (remove subtitles after colon)
     let cleanTitle = title.split(':')[0].trim();
-    
+
     try {
         // Search ABB using Title and Author params
         const res = await fetch(`/api/search_abb?title=${encodeURIComponent(cleanTitle)}&author=${encodeURIComponent(author)}`);
@@ -1066,14 +1362,14 @@ langFilter.addEventListener('change', () => {
 
 function renderABBResults() {
     abbResults.innerHTML = '';
-    
+
     if (!currentABBData || currentABBData.length === 0) {
         abbResults.innerHTML = '<tr><td colspan="7" class="no-results">No downloads found.</td></tr>';
         return;
     }
 
     const filterVal = langFilter.value;
-    
+
     // Filter and score matches
     let displayData = currentABBData.map(res => {
         let score = 0;
@@ -1101,21 +1397,21 @@ function renderABBResults() {
         abbResults.innerHTML = '<tr><td colspan="7" class="no-results">No downloads match the selected language filter.</td></tr>';
         return;
     }
-    
+
     displayData.forEach(res => {
         const tr = document.createElement('tr');
         const magnetUrl = safeUrl(res.magnet_url || `/api/download?url=${encodeURIComponent(res.link)}&title=${encodeURIComponent(res.title)}`);
         const isM4b = (res.format || '').toUpperCase() === 'M4B';
-        
+
         let matchBadge = res.isMatch ? `<span class="badge match">Match</span>` : '';
         let narratorStyle = res.isMatch ? 'font-weight: 500; color: var(--success);' : '';
-        
+
         let actionsHtml = `
             <a href="${magnetUrl}" class="download-icon-btn" target="_blank" title="Manual Magnet Link">
                 <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
             </a>
         `;
-        
+
         if (appSettings.qbt_enabled) {
             actionsHtml = `
                 <div style="display: flex; gap: 8px;">
@@ -1126,7 +1422,7 @@ function renderABBResults() {
                 </div>
             `;
         }
-        
+
         tr.innerHTML = `
             <td>
                 <div style="font-weight: 500; margin-bottom: 4px;">${esc(res.title)}</div>
@@ -1141,16 +1437,16 @@ function renderABBResults() {
         `;
         abbResults.appendChild(tr);
     });
-    
+
     // Add listeners for send to client buttons
     document.querySelectorAll('.send-to-client-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {
             const button = e.currentTarget;
             const url = button.getAttribute('data-url');
-            
+
             button.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px;"></div>';
             button.disabled = true;
-            
+
             try {
                 const res = await fetch('/api/send_to_client', {
                     method: 'POST',
@@ -1228,10 +1524,10 @@ async function loadFolder(path) {
         const url = `/api/browse?path=${encodeURIComponent(path || "")}`;
         const res = await fetch(url);
         const data = await res.json();
-        
+
         currentFolderPath.value = data.path;
         currentParentPath = data.parent;
-        
+
         folderList.innerHTML = '';
         if (data.dirs && data.dirs.length > 0) {
             data.dirs.forEach(dirName => {
@@ -1240,7 +1536,7 @@ async function loadFolder(path) {
                 // Simple SVG folder icon
                 const icon = `<svg class="folder-icon" viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>`;
                 item.innerHTML = `${icon}<span>${esc(dirName)}</span>`;
-                
+
                 // When a folder is clicked, navigate into it. We append safely.
                 item.addEventListener('click', () => {
                     const separator = data.path.includes('\\') ? '\\' : '/';
