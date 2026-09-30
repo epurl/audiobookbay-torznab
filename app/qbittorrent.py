@@ -4,6 +4,12 @@ from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
 
+
+def _succeeded(response) -> bool:
+    """qBittorrent 4.x answers 200 "Ok.", newer versions 204 with no body; failures are
+    200 "Fails." or a 4xx status."""
+    return 200 <= response.status_code < 300 and response.text.strip() != "Fails."
+
 async def login_qbittorrent(host: str, username: str, password: str) -> Optional[httpx.AsyncClient]:
     """Authenticates with qBittorrent Web API and returns an authenticated httpx client."""
     client = httpx.AsyncClient(base_url=host)
@@ -11,7 +17,7 @@ async def login_qbittorrent(host: str, username: str, password: str) -> Optional
         data = {"username": username, "password": password}
         response = await client.post("/api/v2/auth/login", data=data, timeout=5.0)
         
-        if response.text.strip() == "Ok.":
+        if _succeeded(response):
             return client
         else:
             logger.error(f"qBittorrent login failed: {response.text}")
@@ -39,7 +45,7 @@ async def send_to_qbittorrent(host: str, username: str, password: str, magnet_ur
             
         response = await client.post("/api/v2/torrents/add", data=data, timeout=5.0)
         
-        if response.status_code == 200 and response.text.strip() == "Ok.":
+        if _succeeded(response):
             logger.info("Successfully added torrent to qBittorrent")
             return True
         else:
@@ -105,7 +111,7 @@ async def test_connection(host: str, username: str, password: str):
             raise ConnectionError(f"Couldn't reach qBittorrent at {host} ({type(e).__name__}). Check the URL and that it's running.")
         if login.status_code == 403:
             raise ConnectionError("qBittorrent blocked this address after too many failed logins. Wait a while, or restart it.")
-        if login.text.strip() != "Ok.":
+        if not _succeeded(login):
             raise ConnectionError("qBittorrent rejected the username or password.")
         version = await client.get("/api/v2/app/version")
         version.raise_for_status()
