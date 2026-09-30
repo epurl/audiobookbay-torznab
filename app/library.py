@@ -40,7 +40,7 @@ def primary_author(authors):
     return (authors or "").split(",")[0].split("&")[0].strip()
 
 
-# "The Expanse 3.5", "The Dresden Files Book 1", "Solo Leveling, Vol. 07", "Darth Bane #1"
+# "Series Name 3.5", "Series Name Book 1", "Series Name, Vol. 07", "Series Name #1"
 _SERIES_WITH_NUMBER = re.compile(
     r'^(?P<series>.+?)[\s,]*(?:book|vol\.?|volume|no\.?|#)?\s*(?P<seq>\d+(?:\.\d+)?)$', re.IGNORECASE)
 _BARE_NUMBER = re.compile(r'^(?:book|vol\.?|volume|no\.?|#)?\s*(\d+(?:\.\d+)?)$', re.IGNORECASE)
@@ -66,7 +66,7 @@ def parse_folder_name(name, author=None):
     for i in range(len(middle) - 1, -1, -1):
         bare = _BARE_NUMBER.match(middle[i])
         if bare and i > 0:
-            # "Prelude to Dune - #3": the number belongs to the part before it
+            # "Series Name - #3": the number belongs to the part before it
             info["series"], info["sequence"] = middle[i - 1], format_sequence(bare.group(1))
             return info
         with_number = _SERIES_WITH_NUMBER.match(middle[i])
@@ -114,7 +114,7 @@ def read_abs_metadata(folder):
         if isinstance(first, dict):
             series, sequence = first.get("name", ""), first.get("sequence", "")
         else:
-            # "The Expanse #3.5"
+            # "Series Name #3.5"
             series, _, sequence = str(first).rpartition(" #")
             if not series:
                 series, sequence = str(first), ""

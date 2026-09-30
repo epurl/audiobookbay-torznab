@@ -81,8 +81,8 @@ Open **Settings**. It's split into sections; changes are saved with the **Save C
    - **Stalled Downloads:** a download with no progress for 6 hours (you can change this; 0 turns it off) is removed from qBittorrent along with its partial files, that release is never grabbed again for the book, and the next-best one is grabbed. A torrent you delete from qBittorrent yourself puts the book back to Monitored.
 3. **Media Management:**
    - **Root Folder:** where imported books go, as Bayarr sees it (e.g. `/audiobooks`). Use **Browse** to pick it.
-   - **Book Folder Format:** how new downloads are named inside the Root Folder. The default is `{Author} - {Series} {SeriesNumber} - {Title}`, for example `Jim Butcher - The Dresden Files 4 - Summer Knight`. Books without a series drop that part: `Jaysea Lynn - For Whom the Belle Tolls`. Available tokens: `{Author}`, `{Authors}`, `{Series}`, `{SeriesNumber}`, `{Title}`, `{Year}`.
-   - **Rename Audio Files** (on by default): a single file becomes `Summer Knight.m4b`; several files become `Summer Knight - Part 01.mp3`, `Part 02`, … numbered in disc-then-track order (`CD1/01`, `CD1/02`, `CD2/01`, …). Turn it off to keep the release's own file names and subfolders.
+   - **Book Folder Format:** how new downloads are named inside the Root Folder. The default is `{Author} - {Series} {SeriesNumber} - {Title}`, for example `Jane Author - Series Name 4 - Book Title`. Books without a series drop that part: `Jane Author - Book Title`. Available tokens: `{Author}`, `{Authors}`, `{Series}`, `{SeriesNumber}`, `{Title}`, `{Year}`.
+   - **Rename Audio Files** (on by default): a single file becomes `Book Title.m4b`; several files become `Book Title - Part 01.mp3`, `Part 02`, … numbered in disc-then-track order (`CD1/01`, `CD1/02`, `CD2/01`, …). Turn it off to keep the release's own file names and subfolders.
    - **Use Hardlinks** (on by default): when the downloads and the Root Folder are on the same drive, imported files are hardlinked instead of copied, so a seeding book doesn't take up space twice. If they're on different drives Bayarr copies instead. In Docker, hardlinks only work when both folders are inside **one** mounted volume (e.g. mount `/mnt/data` as `/data`, and use `/data/downloads` and `/data/audiobooks`). Don't use Audiobookshelf's "embed metadata" tool on hardlinked books: it would change the files qBittorrent is seeding.
    - **Download Checks:** see [Download checks](#download-checks).
 4. **General:** preferred language, audio format (*Prefer M4B*, *M4B only* or *Any format*), and whether a matching narrator ranks releases higher.
@@ -112,12 +112,12 @@ Bayarr treats every folder that holds audio files as one book. Audio files in `C
 
 | Folder | Author | Series | # | Title |
 | --- | --- | --- | --- | --- |
-| `James S. A. Corey - The Expanse 3.5 - The Vital Abyss` | James S. A. Corey | The Expanse | 3.5 | The Vital Abyss |
-| `Jim Butcher - The Dresden Files Book 1 - Storm Front` | Jim Butcher | The Dresden Files | 1 | Storm Front |
-| `Frank Herbert - Dune - Prelude to Dune - #3 - House Corrino` | Frank Herbert | Prelude to Dune | 3 | House Corrino |
-| `Chugong - Solo Leveling, Vol. 07 - Solo Leveling, Book 07` | Chugong | Solo Leveling | 7 | Solo Leveling, Book 07 |
-| `Jaysea Lynn - For Whom the Belle Tolls` | Jaysea Lynn | | | For Whom the Belle Tolls |
-| `Brandon Sanderson/Mistborn 1 - The Final Empire` (nested) | Brandon Sanderson | Mistborn | 1 | The Final Empire |
+| `Jane Author - Series Name 3.5 - Book Title` | Jane Author | Series Name | 3.5 | Book Title |
+| `Jane Author - Series Name Book 1 - Book Title` | Jane Author | Series Name | 1 | Book Title |
+| `Jane Author - Universe - Series Name - #3 - Book Title` | Jane Author | Series Name | 3 | Book Title |
+| `Jane Author - Series Name, Vol. 07 - Book Title` | Jane Author | Series Name | 7 | Book Title |
+| `Jane Author - Book Title` | Jane Author | | | Book Title |
+| `Jane Author/Series Name 1 - Book Title` (nested) | Jane Author | Series Name | 1 | Book Title |
 
 The preview lists everything found before anything is imported. Each book is marked:
 - **New**: added to the library as **Imported**.

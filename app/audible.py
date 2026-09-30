@@ -47,7 +47,7 @@ _CONTRIBUTOR_ROLE = re.compile(r"\s-\s*(translator|editor|foreword|introduction|
 
 
 def _pick_series(product, prefer=""):
-    """A book can be in several series ("The Dune Sequence" and "Prelude to Dune");
+    """A book can be in several series (a whole "Universe" and its "Prequel Trilogy");
     keep the one matching what the library already has, else Audible's first."""
     all_series = product.get("series") or []
     if prefer:
@@ -132,7 +132,7 @@ async def match_candidates(query, limit=10):
 
 def _title_rank(want, title):
     """How well an Audible title matches a library title: 0 exact, 1 same main title,
-    2 same subtitle part ("Dune: House Corrino" for "House Corrino"), None otherwise."""
+    2 same subtitle part ("Universe: Book Title" for "Book Title"), None otherwise."""
     main, _, rest = title.partition(":")
     if normalize(title) == want:
         return 0
