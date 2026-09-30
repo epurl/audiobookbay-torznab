@@ -75,3 +75,22 @@ async def get_completed_torrents(host: str, username: str, password: str):
         return []
     finally:
         await client.aclose()
+
+async def get_torrents(host: str, username: str, password: str, hashes):
+    """Fetches the given torrents (for download progress). Returns None if qBittorrent can't be reached."""
+    if not hashes:
+        return []
+    client = await login_qbittorrent(host, username, password)
+    if not client:
+        return None
+    try:
+        response = await client.get("/api/v2/torrents/info", params={"hashes": "|".join(hashes)}, timeout=5.0)
+        if response.status_code == 200:
+            return response.json()
+        logger.error(f"qBittorrent get torrents failed: {response.status_code} - {response.text}")
+        return None
+    except Exception as e:
+        logger.error(f"Error fetching torrents from qBittorrent: {e}")
+        return None
+    finally:
+        await client.aclose()

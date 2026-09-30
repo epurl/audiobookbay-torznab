@@ -3,13 +3,14 @@ import logging
 import os
 import platform
 
-import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import auth, db
-from app.monitor import grab, run_monitor_loop, schedule_search
+from app import audible, audiobookshelf, auth, db, library
+from app.monitor import (auto_download_book, find_missing_books, grab, run_monitor_loop, schedule_search,
+                         schedule_searches, sync_series)
+from app.qbittorrent import get_torrents
 from app.scraper import fetch_detail_info, search_audiobooks, search_for_book
 from app.torznab import build_caps, build_rss
 
@@ -119,10 +120,246 @@ async def api_add_library(request: Request):
         schedule_search(book)
     return {"success": True, "status": book.get("status")}
 
-@app.delete("/api/library")
-async def api_remove_library(title: str):
-    db.remove_from_library(title)
+def _get_book_or_404(book_id: str):
+    book = db.get_book(book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    return book
+
+@app.patch("/api/library/{book_id}")
+async def api_edit_book(book_id: str, request: Request):
+    _get_book_or_404(book_id)
+    data = await request.json()
+    fields = {k: v for k, v in data.items() if k in db.EDITABLE_BOOK_FIELDS}
+    if "status" in fields and fields["status"] not in db.STATUSES:
+        raise HTTPException(status_code=400, detail=f"Unknown status: {fields['status']}")
+    if "title" in fields and not str(fields["title"]).strip():
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    if "sequence" in fields:
+        fields["sequence"] = library.format_sequence(fields["sequence"])
+    if "runtime_min" in fields:
+        try:
+            fields["runtime_min"] = max(0, int(fields["runtime_min"] or 0))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Runtime must be a whole number of minutes")
+    db.update_book(book_id, **fields)
+    return {"success": True, "book": db.get_book(book_id)}
+
+@app.post("/api/library/{book_id}/import_anyway")
+async def api_import_anyway(book_id: str):
+    """Imports a download that was held for review; the next import check picks it up."""
+    book = _get_book_or_404(book_id)
+    if book.get("status") != "Needs Review":
+        raise HTTPException(status_code=400, detail="This book isn't waiting for review.")
+    db.update_book(book_id, status="Downloaded", skip_verify=True)
+    db.add_history("approved", book, "Import approved despite the check")
     return {"success": True}
+
+@app.post("/api/library/{book_id}/reject")
+async def api_reject_download(book_id: str):
+    """Rejects the downloaded release: it won't be grabbed again for this book, and the
+    search starts over. The torrent itself is left in qBittorrent."""
+    book = _get_book_or_404(book_id)
+    if not book.get("download_hash"):
+        raise HTTPException(status_code=400, detail="This book has no download to reject.")
+    blocklist = list(dict.fromkeys((book.get("blocklist") or []) + [book["download_hash"]]))
+    db.update_book(book_id, status="Monitored", blocklist=blocklist, download_hash="", review_reason="", skip_verify=False)
+    db.add_history("rejected", book, f"Rejected release {book.get('release_title') or book['download_hash']}; searching again")
+    schedule_search(db.get_book(book_id))
+    return {"success": True}
+
+@app.delete("/api/library/{book_id}")
+async def api_remove_library(book_id: str):
+    """Removes a book from Bayarr. Files on disk are never deleted."""
+    _get_book_or_404(book_id)
+    db.remove_from_library(book_id)
+    return {"success": True}
+
+@app.post("/api/library/{book_id}/search")
+async def api_search_book(book_id: str):
+    """Searches AudiobookBay for one book now and grabs the best match."""
+    book = _get_book_or_404(book_id)
+    settings = db.get_settings()
+    if not settings.get("qbt_enabled"):
+        raise HTTPException(status_code=400, detail="Download client is not enabled in settings.")
+    grabbed = await auto_download_book(book, settings)
+    return {"success": True, "grabbed": bool(grabbed)}
+
+@app.get("/api/library/{book_id}/cover")
+async def api_book_cover(book_id: str):
+    book = _get_book_or_404(book_id)
+    path, cover = book.get("path"), book.get("cover")
+    if not path or not cover or os.path.basename(cover) != cover:
+        raise HTTPException(status_code=404, detail="No cover")
+    full = os.path.join(path, cover)
+    if os.path.splitext(full)[1].lower() not in library.IMAGE_EXTENSIONS or not os.path.isfile(full):
+        raise HTTPException(status_code=404, detail="No cover")
+    return FileResponse(full, headers={"Cache-Control": "max-age=86400"})
+
+@app.get("/api/library/{book_id}/files")
+async def api_book_files(book_id: str):
+    book = _get_book_or_404(book_id)
+    path = book.get("path")
+    if not path or not os.path.exists(path):
+        return {"path": path, "exists": False, "files": []}
+    files = await asyncio.to_thread(library.audio_files, path)
+    base = path if os.path.isdir(path) else os.path.dirname(path)
+    return {
+        "path": path,
+        "exists": True,
+        "files": [{"name": os.path.relpath(f, base), "size_bytes": size} for f, size in files],
+    }
+
+# --- Activity: queue and history ---
+
+@app.get("/api/queue")
+async def api_queue():
+    """Books on their way in, with live progress from qBittorrent."""
+    books = [b for b in db.get_library() if b.get("status") in ("Downloading", "Downloaded", "Needs Review")]
+    settings = db.get_settings()
+    torrents, reachable = {}, True
+    hashes = [b["download_hash"] for b in books if b.get("download_hash")]
+    if settings.get("qbt_enabled") and hashes:
+        info = await get_torrents(settings.get("qbt_host"), settings.get("qbt_user"), settings.get("qbt_pass"), hashes)
+        reachable = info is not None
+        torrents = {t["hash"].lower(): t for t in info or []}
+    queue = []
+    for b in books:
+        t = torrents.get(b.get("download_hash") or "", {})
+        queue.append({
+            "id": b["id"], "title": b.get("title"), "authors": b.get("authors"), "status": b.get("status"),
+            "release_title": b.get("release_title", ""), "review_reason": b.get("review_reason", ""),
+            "progress": t.get("progress"), "state": t.get("state"), "size_bytes": t.get("size"),
+            "dlspeed": t.get("dlspeed"), "eta": t.get("eta"), "seeds": t.get("num_seeds"),
+            "in_client": bool(t),
+        })
+    return {"queue": queue, "client_reachable": reachable}
+
+@app.get("/api/history")
+async def api_history(limit: int = 200):
+    return {"history": db.get_history(max(1, min(limit, db.HISTORY_LIMIT)))}
+
+# --- Series ---
+
+@app.get("/api/series")
+async def api_series():
+    return {"series": db.get_series_list()}
+
+@app.post("/api/series")
+async def api_add_series(request: Request):
+    """Monitors an Audible series, given its ASIN or a library book that belongs to it."""
+    data = await request.json()
+    mode = data.get("mode") if data.get("mode") in ("all", "future") else "all"
+    asin, title, author = data.get("series_asin"), data.get("title", ""), data.get("author", "")
+    if data.get("book_id"):
+        book = _get_book_or_404(data["book_id"])
+        author = library.primary_author(book.get("authors"))
+        asin, title = book.get("series_asin"), book.get("series", "")
+        if not asin:
+            # Books imported from folders have no Audible series id; look the book up
+            asin, found_title = await audible.find_series_for_book(book.get("title", ""), author)
+            title = title or found_title or ""
+    if not asin:
+        raise HTTPException(status_code=404, detail="Couldn't find this series on Audible.")
+
+    series = db.add_series(asin, title, author, mode)
+    try:
+        added = await sync_series(series, db.get_settings())
+    except Exception as e:
+        logger.error(f"Series sync failed: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail="Couldn't load the series from Audible.")
+    schedule_searches([b for b in added if b["status"] == "Monitored"])
+    return {"success": True, "series": db.get_series(series["id"]), "added": len(added)}
+
+@app.patch("/api/series/{series_id}")
+async def api_edit_series(series_id: str, request: Request):
+    if not db.get_series(series_id):
+        raise HTTPException(status_code=404, detail="Series not found")
+    data = await request.json()
+    fields = {k: data[k] for k in ("monitored", "mode") if k in data}
+    db.update_series(series_id, **fields)
+    return {"success": True}
+
+@app.post("/api/series/{series_id}/sync")
+async def api_sync_series(series_id: str):
+    series = db.get_series(series_id)
+    if not series:
+        raise HTTPException(status_code=404, detail="Series not found")
+    added = await sync_series(series, db.get_settings())
+    schedule_searches([b for b in added if b["status"] == "Monitored"])
+    return {"success": True, "added": len(added)}
+
+@app.delete("/api/series/{series_id}")
+async def api_remove_series(series_id: str):
+    """Stops tracking a series. Its books stay in the library."""
+    db.remove_series(series_id)
+    return {"success": True}
+
+# --- Audiobookshelf ---
+
+@app.post("/api/audiobookshelf/libraries")
+async def api_abs_libraries(request: Request):
+    """Tests the connection and lists book libraries. A blank token uses the saved one."""
+    data = await request.json()
+    settings = db.get_settings()
+    url = (data.get("url") or settings.get("abs_url") or "").strip()
+    token = data.get("token") or settings.get("abs_token")
+    if not url.startswith(("http://", "https://")) or not token:
+        raise HTTPException(status_code=400, detail="Enter the Audiobookshelf URL and API token.")
+    try:
+        return {"libraries": await audiobookshelf.list_libraries(url, token)}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Couldn't connect to Audiobookshelf: {e}")
+
+# Results of the last scan, keyed by folder path. Imports may only use these, so the
+# browser can't make Bayarr record arbitrary paths.
+_last_scan = {}
+
+@app.post("/api/library/scan")
+async def api_scan_library(request: Request):
+    """Scans a folder for existing books and reports which ones are new."""
+    data = await request.json()
+    root = (data.get("path") or db.get_settings().get("root_folder") or "").strip()
+    if not root or not os.path.isdir(root):
+        raise HTTPException(status_code=400, detail=f"Folder not found: {root or '(none set)'}")
+
+    candidates = await asyncio.to_thread(library.scan_library, root)
+    current = db.get_library()
+    _last_scan.clear()
+    for c in candidates:
+        match = library.find_match(current, c)
+        if not match:
+            c["state"] = "new"
+        elif library.same_path(match.get("path"), c["path"]) and match.get("status") in ("Imported", "Missing"):
+            c["state"] = "in_library"
+        else:
+            c["state"] = "link"  # Tracked (e.g. Monitored) but not yet linked to these files
+        c["match_title"] = match.get("title") if match else ""
+        _last_scan[c["path"]] = c
+    logger.info(f"Library scan of {root}: {len(candidates)} books found")
+    return {"root": root, "books": candidates}
+
+@app.post("/api/library/import")
+async def api_import_library(request: Request):
+    data = await request.json()
+    chosen = [_last_scan[p] for p in data.get("paths", []) if p in _last_scan]
+    if not chosen:
+        raise HTTPException(status_code=400, detail="Nothing to import; scan the folder again.")
+    fields = ("title", "authors", "narrators", "series", "sequence", "asin", "release_date",
+              "description", "path", "cover", "file_count", "size_bytes", "format")
+    added, linked = db.import_books([{k: c.get(k, "") for k in fields} for c in chosen])
+    return {"success": True, "added": added, "linked": linked}
+
+@app.post("/api/library/rescan")
+async def api_rescan_library():
+    """Refreshes file info for books on disk and flags ones whose files are gone."""
+    missing, restored = await asyncio.to_thread(find_missing_books)
+
+    def refresh():
+        return {b["id"]: library.describe_files(b["path"]) for b in db.get_library()
+                if b.get("status") == "Imported" and b.get("path")}
+    db.update_books(await asyncio.to_thread(refresh))
+    return {"success": True, "missing": missing, "restored": restored}
 
 @app.get("/api/settings")
 async def api_get_settings():
@@ -172,8 +409,8 @@ async def api_send_to_client(request: Request):
         raise HTTPException(status_code=404, detail="Failed to fetch magnet link")
         
     # A manual grab tracks the book so it gets imported when the download finishes
-    db.add_to_library(book)
-    if await grab(title, magnet, settings):
+    entry = db.add_to_library(book)
+    if await grab(entry, magnet, settings):
         return {"success": True}
     else:
         raise HTTPException(status_code=500, detail="Failed to send torrent to qBittorrent")
@@ -219,21 +456,11 @@ async def search_audible(title: str = ""):
     """Proxies search request to Audible API."""
     if not title:
         return {"products": []}
-    
-    url = "https://api.audible.com/1.0/catalog/products"
-    params = {
-        "title": title,
-        "response_groups": "product_plan_details,product_desc,contributors,product_attrs,media,product_extended_attrs,series",
-        "image_sizes": "500"
-    }
-    async with httpx.AsyncClient() as client:
-        try:
-            res = await client.get(url, params=params, timeout=10.0)
-            res.raise_for_status()
-            return res.json()
-        except Exception as e:
-            logger.error(f"Error fetching from Audible: {e}")
-            raise HTTPException(status_code=500, detail="Failed to fetch from Audible")
+    try:
+        return await audible.search(title=title)
+    except Exception as e:
+        logger.error(f"Error fetching from Audible: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch from Audible")
 
 @app.get("/api/search_abb")
 async def search_abb(title: str = "", author: str = ""):

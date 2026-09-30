@@ -20,6 +20,8 @@ let currentAudibleNarrator = '';
 let currentModalBook = null;
 let appSettings = { language: "English", auto_match_narrator: true };
 let appLibrary = [];
+let appSeries = [];
+let activityTimer = null;
 
 // Escape text before inserting it into HTML (titles etc. come from third-party sites)
 function esc(value) {
@@ -34,15 +36,72 @@ function safeUrl(url, fallback = '#') {
     return /^(https?:|magnet:|\/)/i.test(value) ? esc(value) : fallback;
 }
 
+const PLACEHOLDER_COVER = '/static/placeholder.svg';
+
+// Same matching rules as the server: ASIN, or title (before any subtitle) + first author
+function normKey(text) {
+    return String(text || '').toLowerCase().replace(/^(the|a|an)\s+/, '').replace(/[^a-z0-9]+/g, '');
+}
+
+function primaryAuthor(authors) {
+    return String(authors || '').split(',')[0].split('&')[0].trim();
+}
+
+function findInLibrary(book) {
+    if (book.asin) {
+        const byAsin = appLibrary.find(b => b.asin && b.asin === book.asin);
+        if (byAsin) return byAsin;
+    }
+    const titleKey = normKey(String(book.title || '').split(':')[0]);
+    const authorKey = normKey(primaryAuthor(book.authors));
+    return appLibrary.find(b => normKey(String(b.title || '').split(':')[0]) === titleKey
+        && normKey(primaryAuthor(b.authors)) === authorKey);
+}
+
+function coverUrl(book) {
+    if (book.id && book.path && book.cover) return `/api/library/${encodeURIComponent(book.id)}/cover`;
+    return /^(https?:|\/)/i.test(book.imageUrl || '') ? book.imageUrl : PLACEHOLDER_COVER;
+}
+
+function statusClass(status) {
+    return `status-${String(status || '').toLowerCase().replace(/\s+/g, '-')}`;
+}
+
+function formatDuration(seconds) {
+    if (seconds == null || seconds < 0 || seconds >= 8640000) return '';
+    const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60);
+    return h ? `${h}h ${m}m` : `${m}m`;
+}
+
+function seriesLabel(book) {
+    if (!book.series) return '';
+    return book.sequence ? `${book.series} #${book.sequence}` : book.series;
+}
+
+function formatSize(bytes) {
+    if (!bytes) return '';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let i = 0, value = bytes;
+    while (value >= 1024 && i < units.length - 1) { value /= 1024; i++; }
+    return `${value.toFixed(i >= 3 ? 2 : 0)} ${units[i]}`;
+}
+
+function setActionStatus(el, text, kind = '') {
+    el.textContent = text;
+    el.className = `action-status ${kind}`;
+}
+
 // Initialize
 initApp();
 
 async function initApp() {
     await fetchSettings();
-    await fetchLibrary();
+    await Promise.all([fetchLibrary(), fetchSeries()]);
     // Setup listeners
     setupNavigation();
     setupSettings();
+    setupLibrary();
+    setupSeriesModal();
 }
 
 function setupNavigation() {
@@ -59,6 +118,14 @@ function setupNavigation() {
 
             if (targetViewId === 'libraryView') {
                 renderLibrary();
+            }
+            if (targetViewId === 'seriesView') {
+                renderSeries();
+            }
+            clearInterval(activityTimer);
+            if (targetViewId === 'activityView') {
+                renderActivity();
+                activityTimer = setInterval(renderActivity, 5000);
             }
         });
     });
@@ -78,6 +145,19 @@ async function fetchSettings() {
         document.getElementById('setQbtHost').value = appSettings.qbt_host || "http://localhost:8080";
         document.getElementById('setRootFolder').value = appSettings.root_folder || "";
         document.getElementById('setDownloadsFolder').value = appSettings.downloads_folder || "";
+        document.getElementById('setNamingFormat').value = appSettings.naming_format || "";
+        document.getElementById('setRenameFiles').checked = appSettings.rename_files ?? true;
+        document.getElementById('setVerifyRuntime').checked = appSettings.verify_runtime ?? true;
+        document.getElementById('setRuntimeTolerance').value = appSettings.runtime_tolerance ?? 10;
+        document.getElementById('setWriteMetadata').checked = appSettings.write_metadata ?? true;
+        document.getElementById('setAbsUrl').value = appSettings.abs_url || "";
+        document.getElementById('setAbsToken').value = "";
+        document.getElementById('setAbsToken').placeholder = appSettings.abs_token_set ? "Unchanged" : "";
+        const absSelect = document.getElementById('setAbsLibrary');
+        if (appSettings.abs_library_id && ![...absSelect.options].some(o => o.value === appSettings.abs_library_id)) {
+            absSelect.add(new Option(`Saved library (${appSettings.abs_library_id})`, appSettings.abs_library_id));
+        }
+        absSelect.value = appSettings.abs_library_id || "";
         document.getElementById('setQbtUser').value = appSettings.qbt_user || "admin";
         document.getElementById('setQbtPass').value = "";
         document.getElementById('setQbtPass').placeholder = appSettings.qbt_pass_set ? "Unchanged" : "";
@@ -102,6 +182,7 @@ async function fetchLibrary() {
         const res = await fetch('/api/library');
         const data = await res.json();
         appLibrary = data.library || [];
+        updateActivityBadge();
     } catch (err) {
         console.error("Failed to load library", err);
     }
@@ -117,6 +198,14 @@ function setupSettings() {
             qbt_host: document.getElementById('setQbtHost').value,
             root_folder: document.getElementById('setRootFolder').value,
             downloads_folder: document.getElementById('setDownloadsFolder').value,
+            naming_format: document.getElementById('setNamingFormat').value,
+            rename_files: document.getElementById('setRenameFiles').checked,
+            verify_runtime: document.getElementById('setVerifyRuntime').checked,
+            runtime_tolerance: parseInt(document.getElementById('setRuntimeTolerance').value, 10) || 10,
+            write_metadata: document.getElementById('setWriteMetadata').checked,
+            abs_url: document.getElementById('setAbsUrl').value.trim(),
+            abs_token: document.getElementById('setAbsToken').value,
+            abs_library_id: document.getElementById('setAbsLibrary').value,
             qbt_user: document.getElementById('setQbtUser').value,
             qbt_pass: document.getElementById('setQbtPass').value
         };
@@ -128,9 +217,12 @@ function setupSettings() {
                 body: JSON.stringify(newSettings)
             });
             if (!res.ok) throw new Error(`Save failed (${res.status})`);
+            if (newSettings.abs_token) appSettings.abs_token_set = true;
             delete newSettings.qbt_pass;
+            delete newSettings.abs_token;
             appSettings = { ...appSettings, ...newSettings };
             document.getElementById('setQbtPass').value = "";
+            document.getElementById('setAbsToken').value = "";
             langFilter.value = appSettings.language; // update modal sync
             
             const status = document.getElementById('settingsSaveStatus');
@@ -139,6 +231,27 @@ function setupSettings() {
         } catch (err) {
             console.error(err);
         }
+    });
+
+    document.getElementById('absLoadBtn').addEventListener('click', async () => {
+        const status = document.getElementById('absStatus');
+        const select = document.getElementById('setAbsLibrary');
+        status.textContent = 'Connecting...';
+        const res = await fetch('/api/audiobookshelf/libraries', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: document.getElementById('setAbsUrl').value.trim(), token: document.getElementById('setAbsToken').value })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            status.textContent = data.detail || 'Connection failed';
+            return;
+        }
+        const current = select.value;
+        select.innerHTML = '<option value="">Don\'t scan</option>';
+        data.libraries.forEach(lib => select.add(new Option(lib.name, lib.id)));
+        select.value = data.libraries.some(l => l.id === current) ? current : (data.libraries[0]?.id || '');
+        status.textContent = `Connected: ${data.libraries.length} book librar${data.libraries.length === 1 ? 'y' : 'ies'} found. Save to keep the choice.`;
     });
 
     document.getElementById('saveAuthBtn').addEventListener('click', async () => {
@@ -185,43 +298,584 @@ async function addToLibrary(e, bookData) {
     }
 }
 
+const STATUS_ORDER = ['Missing', 'Downloading', 'Downloaded', 'Monitored', 'Unreleased', 'Unmonitored', 'Imported'];
+
+function librarySortKey(book, sort) {
+    const seq = parseFloat(book.sequence);
+    const seqKey = isNaN(seq) ? '9999' : String(seq.toFixed(2)).padStart(8, '0');
+    const title = normKey(book.title);
+    switch (sort) {
+        case 'title': return title;
+        case 'series': return `${book.series ? normKey(book.series) : '~'}|${seqKey}|${title}`;
+        case 'added': return book.added || '';
+        default: return `${normKey(primaryAuthor(book.authors)) || '~'}|${normKey(book.series)}|${seqKey}|${title}`;
+    }
+}
+
 function renderLibrary() {
     const container = document.getElementById('libraryContainer');
     const loader = document.getElementById('libraryLoader');
-    
-    loader.style.display = 'flex';
+    const stats = document.getElementById('libStats');
+    const text = document.getElementById('libFilterText').value.trim().toLowerCase();
+    const status = document.getElementById('libFilterStatus').value;
+    const sort = document.getElementById('libSort').value;
+
+    loader.style.display = 'none';
     container.innerHTML = '';
-    
+
+    const counts = {};
+    appLibrary.forEach(b => { counts[b.status] = (counts[b.status] || 0) + 1; });
+    const parts = STATUS_ORDER.filter(st => counts[st]).map(st => `${counts[st]} ${st.toLowerCase()}`);
+    stats.textContent = `${appLibrary.length} books${parts.length ? ' · ' + parts.join(' · ') : ''}`;
+
     if (appLibrary.length === 0) {
-        container.innerHTML = '<div class="no-results">Your library is empty.</div>';
-        loader.style.display = 'none';
+        container.innerHTML = '<div class="no-results">Your library is empty. Add books from Search, or use Import Existing to bring in the audiobooks you already have.</div>';
         return;
     }
-    
-    appLibrary.forEach(book => {
+
+    let books = appLibrary.filter(b => {
+        if (status && b.status !== status) return false;
+        if (!text) return true;
+        return [b.title, b.authors, b.series, b.narrators].join(' ').toLowerCase().includes(text);
+    });
+    books.sort((a, b) => librarySortKey(a, sort).localeCompare(librarySortKey(b, sort)));
+    if (sort === 'added') books.reverse();
+
+    if (books.length === 0) {
+        container.innerHTML = '<div class="no-results">No books match the filter.</div>';
+        return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    books.forEach(book => {
         const card = document.createElement('div');
         card.className = 'book-card';
-        
-        const status = book.status || 'Monitored';
-        const statusClass = `status-${status.toLowerCase()}`;
-        const releaseDate = book.release_date ? `Release: ${book.release_date}` : '';
-        
+        const bookStatus = book.status || 'Monitored';
+        const series = seriesLabel(book);
+
         card.innerHTML = `
-            <div class="library-status ${esc(statusClass)}">${esc(status)}</div>
-            <img src="${safeUrl(book.imageUrl, '')}" alt="${esc(book.title)}" class="book-cover">
+            <div class="library-status ${esc(statusClass(bookStatus))}">${esc(bookStatus)}</div>
+            <img src="${esc(coverUrl(book))}" alt="${esc(book.title)}" class="book-cover" loading="lazy">
             <div class="book-info">
                 <div class="book-title" title="${esc(book.title)}">${esc(book.title)}</div>
+                ${series ? `<div class="book-series" title="${esc(series)}">${esc(series)}</div>` : ''}
                 <div class="book-author">${esc(book.authors)}</div>
-                <div class="book-narrator">Narrated by: ${esc(book.narrators)}</div>
-                ${releaseDate ? `<div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px;">${esc(releaseDate)}</div>` : ''}
+                ${book.narrators ? `<div class="book-narrator">Narrated by: ${esc(book.narrators)}</div>` : ''}
             </div>
         `;
-        
-        card.addEventListener('click', () => openModal(book));
+        card.querySelector('img').addEventListener('error', e => { e.target.src = PLACEHOLDER_COVER; }, { once: true });
+        card.addEventListener('click', () => openBookModal(book.id));
+        fragment.appendChild(card);
+    });
+    container.appendChild(fragment);
+}
+
+function setupLibrary() {
+    ['libFilterText', 'libFilterStatus', 'libSort'].forEach(id => {
+        document.getElementById(id).addEventListener(id === 'libFilterText' ? 'input' : 'change', renderLibrary);
+    });
+
+    document.getElementById('rescanBtn').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        const stats = document.getElementById('libStats');
+        btn.disabled = true;
+        btn.textContent = 'Rescanning...';
+        try {
+            const res = await fetch('/api/library/rescan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            const data = await res.json();
+            await fetchLibrary();
+            renderLibrary();
+            stats.textContent += ` — rescan: ${data.missing} newly missing, ${data.restored} found again`;
+        } catch (err) {
+            console.error(err);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Rescan';
+        }
+    });
+
+    setupBookModal();
+    setupImportModal();
+}
+
+function showModal(el) {
+    el.style.display = 'flex';
+    void el.offsetWidth;
+    el.classList.add('show');
+}
+
+function hideModal(el) {
+    el.classList.remove('show');
+    setTimeout(() => { el.style.display = 'none'; }, 200);
+}
+
+// -----------------
+// BOOK DETAILS MODAL
+// -----------------
+let currentBookId = null;
+const bookModal = document.getElementById('bookModal');
+const BOOK_FIELDS = { bookTitle: 'title', bookAuthors: 'authors', bookNarrators: 'narrators', bookSeries: 'series', bookSequence: 'sequence', bookStatus: 'status', bookAsin: 'asin', bookRuntime: 'runtime_min' };
+
+async function openBookModal(bookId) {
+    const book = appLibrary.find(b => b.id === bookId);
+    if (!book) return;
+    currentBookId = bookId;
+
+    const cover = document.getElementById('bookCover');
+    cover.src = coverUrl(book);
+    cover.onerror = () => { cover.onerror = null; cover.src = PLACEHOLDER_COVER; };
+    for (const [elId, key] of Object.entries(BOOK_FIELDS)) {
+        document.getElementById(elId).value = book[key] || '';
+    }
+    document.getElementById('bookStatus').value = book.status || 'Monitored';
+    const review = document.getElementById('bookReview');
+    review.hidden = book.status !== 'Needs Review';
+    document.getElementById('bookReviewReason').textContent = book.review_reason || '';
+    const seriesBtn = document.getElementById('monitorSeriesBtn');
+    const seriesTracked = book.series_asin && appSeries.some(sr => sr.asin === book.series_asin && sr.monitored);
+    seriesBtn.hidden = !book.series;
+    seriesBtn.disabled = Boolean(seriesTracked);
+    seriesBtn.textContent = seriesTracked ? 'Series Monitored' : 'Monitor Series';
+    setActionStatus(document.getElementById('bookStatusMsg'), '');
+    document.getElementById('searchNowBtn').disabled = !appSettings.qbt_enabled;
+    document.getElementById('searchNowBtn').title = appSettings.qbt_enabled ? 'Search AudiobookBay and grab the best match' : 'Enable qBittorrent in Settings first';
+
+    const pathEl = document.getElementById('bookPath');
+    const filesEl = document.getElementById('bookFiles');
+    pathEl.textContent = book.path ? `Location: ${book.path}` : 'Not on disk yet.';
+    filesEl.innerHTML = '';
+    showModal(bookModal);
+
+    if (!book.path) return;
+    filesEl.innerHTML = '<tr><td colspan="2" class="no-results">Loading files...</td></tr>';
+    try {
+        const res = await fetch(`/api/library/${encodeURIComponent(bookId)}/files`);
+        const data = await res.json();
+        if (!data.exists) {
+            filesEl.innerHTML = '<tr><td colspan="2" class="no-results">This folder no longer exists.</td></tr>';
+            return;
+        }
+        const total = data.files.reduce((sum, f) => sum + f.size_bytes, 0);
+        pathEl.textContent = `Location: ${data.path} — ${data.files.length} audio file${data.files.length === 1 ? '' : 's'}, ${formatSize(total)}`;
+        filesEl.innerHTML = data.files.length
+            ? data.files.map(f => `<tr><td>${esc(f.name)}</td><td>${esc(formatSize(f.size_bytes))}</td></tr>`).join('')
+            : '<tr><td colspan="2" class="no-results">No audio files found.</td></tr>';
+    } catch (err) {
+        filesEl.innerHTML = '<tr><td colspan="2" class="no-results">Could not load files.</td></tr>';
+    }
+}
+
+function setupBookModal() {
+    const msg = document.getElementById('bookStatusMsg');
+    document.getElementById('closeBookModal').addEventListener('click', () => hideModal(bookModal));
+    bookModal.addEventListener('click', (e) => { if (e.target === bookModal) hideModal(bookModal); });
+
+    document.getElementById('saveBookBtn').addEventListener('click', async () => {
+        const changes = {};
+        for (const [elId, key] of Object.entries(BOOK_FIELDS)) {
+            changes[key] = document.getElementById(elId).value.trim();
+        }
+        const res = await fetch(`/api/library/${encodeURIComponent(currentBookId)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(changes)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            setActionStatus(msg, data.detail || 'Save failed', 'error');
+            return;
+        }
+        await fetchLibrary();
+        renderLibrary();
+        setActionStatus(msg, 'Saved', 'ok');
+    });
+
+    document.getElementById('searchNowBtn').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        setActionStatus(msg, 'Searching AudiobookBay...');
+        try {
+            const res = await fetch(`/api/library/${encodeURIComponent(currentBookId)}/search`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                setActionStatus(msg, data.detail || 'Search failed', 'error');
+            } else if (data.grabbed) {
+                setActionStatus(msg, 'Found a match and sent it to qBittorrent', 'ok');
+                await fetchLibrary();
+                renderLibrary();
+                document.getElementById('bookStatus').value = 'Downloading';
+            } else {
+                setActionStatus(msg, 'No suitable release found. Try Manual Search.', 'error');
+            }
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    document.getElementById('monitorSeriesBtn').addEventListener('click', () => {
+        const book = appLibrary.find(b => b.id === currentBookId);
+        if (book) openSeriesModal({ book_id: book.id, title: book.series });
+    });
+
+    document.getElementById('bookImportAnyway').addEventListener('click', () => reviewAction(currentBookId, 'import_anyway', msg));
+    document.getElementById('bookReject').addEventListener('click', () => reviewAction(currentBookId, 'reject', msg));
+
+    document.getElementById('manualSearchBtn').addEventListener('click', () => {
+        const book = appLibrary.find(b => b.id === currentBookId);
+        if (!book) return;
+        hideModal(bookModal);
+        openModal({ ...book, imageUrl: coverUrl(book) });
+    });
+
+    document.getElementById('removeBookBtn').addEventListener('click', async () => {
+        const book = appLibrary.find(b => b.id === currentBookId);
+        if (!book || !confirm(`Remove "${book.title}" from Bayarr?\n\nFiles on disk are not deleted.`)) return;
+        const res = await fetch(`/api/library/${encodeURIComponent(currentBookId)}`, { method: 'DELETE' });
+        if (res.ok) {
+            await fetchLibrary();
+            renderLibrary();
+            hideModal(bookModal);
+        } else {
+            setActionStatus(msg, 'Remove failed', 'error');
+        }
+    });
+}
+
+// -----------------
+// IMPORT EXISTING LIBRARY
+// -----------------
+const importModal = document.getElementById('importModal');
+let importBooks = [];
+
+const IMPORT_STATES = {
+    new: ['new', 'New'],
+    link: ['link', 'Link to library'],
+    in_library: ['owned', 'In library'],
+};
+
+function renderImportResults() {
+    const tbody = document.getElementById('importResults');
+    const summary = document.getElementById('importSummary');
+    const counts = { new: 0, link: 0, in_library: 0 };
+    importBooks.forEach(b => counts[b.state]++);
+    summary.textContent = `${importBooks.length} books found: ${counts.new} new, ${counts.link} already tracked (will be linked to their files), ${counts.in_library} already imported.`;
+
+    tbody.innerHTML = importBooks.map((b, i) => {
+        const [badgeClass, label] = IMPORT_STATES[b.state];
+        const hint = b.state === 'link' ? ` title="Will link to '${esc(b.match_title)}'"` : '';
+        return `<tr>
+            <td><input type="checkbox" class="import-check" data-index="${i}" ${b.state === 'in_library' ? 'disabled' : 'checked'}></td>
+            <td>${esc(b.authors || '—')}</td>
+            <td>${esc(seriesLabel(b))}</td>
+            <td>${esc(b.title)}</td>
+            <td>${esc(b.format)}</td>
+            <td>${esc(formatSize(b.size_bytes))}</td>
+            <td>${esc(b.source)}</td>
+            <td><span class="badge ${badgeClass}"${hint}>${esc(label)}</span></td>
+        </tr>`;
+    }).join('') || '<tr><td colspan="8" class="no-results">No audiobooks found in this folder.</td></tr>';
+
+    tbody.querySelectorAll('.import-check').forEach(cb => cb.addEventListener('change', updateImportButton));
+    document.getElementById('importSelectAll').checked = counts.new + counts.link > 0;
+    updateImportButton();
+}
+
+function selectedImportPaths() {
+    return [...document.querySelectorAll('.import-check:checked')].map(cb => importBooks[cb.dataset.index].path);
+}
+
+function updateImportButton() {
+    const n = selectedImportPaths().length;
+    const btn = document.getElementById('importSelectedBtn');
+    btn.disabled = n === 0;
+    btn.textContent = n ? `Import ${n} Book${n === 1 ? '' : 's'}` : 'Import Selected';
+}
+
+async function scanForImport() {
+    const loader = document.getElementById('importLoader');
+    const msg = document.getElementById('importStatusMsg');
+    const path = document.getElementById('importPath').value.trim();
+    importBooks = [];
+    document.getElementById('importResults').innerHTML = '';
+    document.getElementById('importSummary').textContent = '';
+    setActionStatus(msg, '');
+    updateImportButton();
+    loader.classList.remove('hidden');
+    try {
+        const res = await fetch('/api/library/scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            setActionStatus(msg, data.detail || 'Scan failed', 'error');
+            return;
+        }
+        document.getElementById('importPath').value = data.root;
+        importBooks = data.books;
+        renderImportResults();
+    } finally {
+        loader.classList.add('hidden');
+    }
+}
+
+function setupImportModal() {
+    document.getElementById('openImportBtn').addEventListener('click', () => {
+        const pathInput = document.getElementById('importPath');
+        if (!pathInput.value) pathInput.value = appSettings.root_folder || '';
+        showModal(importModal);
+    });
+    document.getElementById('closeImportModal').addEventListener('click', () => hideModal(importModal));
+    importModal.addEventListener('click', (e) => { if (e.target === importModal) hideModal(importModal); });
+    document.getElementById('scanBtn').addEventListener('click', scanForImport);
+    document.getElementById('importPath').addEventListener('keypress', (e) => { if (e.key === 'Enter') scanForImport(); });
+
+    document.getElementById('importSelectAll').addEventListener('change', (e) => {
+        document.querySelectorAll('.import-check:not(:disabled)').forEach(cb => { cb.checked = e.target.checked; });
+        updateImportButton();
+    });
+
+    document.getElementById('importSelectedBtn').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        const msg = document.getElementById('importStatusMsg');
+        btn.disabled = true;
+        setActionStatus(msg, 'Importing...');
+        const res = await fetch('/api/library/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paths: selectedImportPaths() })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            setActionStatus(msg, data.detail || 'Import failed', 'error');
+            btn.disabled = false;
+            return;
+        }
+        await fetchLibrary();
+        renderLibrary();
+        await scanForImport();
+        setActionStatus(msg, `Imported ${data.added} new book${data.added === 1 ? '' : 's'}${data.linked ? `, linked ${data.linked} tracked book${data.linked === 1 ? '' : 's'} to their files` : ''}.`, 'ok');
+    });
+}
+
+// -----------------
+// NEEDS REVIEW ACTIONS
+// -----------------
+async function reviewAction(bookId, action, msgEl) {
+    const book = appLibrary.find(b => b.id === bookId);
+    if (action === 'reject' && !confirm(`Reject this download of "${book ? book.title : 'this book'}"?\n\nThe release won't be grabbed again for this book and a new search starts. The torrent stays in qBittorrent for you to remove.`)) return;
+    const res = await fetch(`/api/library/${encodeURIComponent(bookId)}/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const data = await res.json().catch(() => ({}));
+    await fetchLibrary();
+    renderLibrary();
+    if (msgEl) {
+        setActionStatus(msgEl, res.ok ? (action === 'reject' ? 'Rejected; searching for another release' : 'Will be imported within a minute') : (data.detail || 'Failed'), res.ok ? 'ok' : 'error');
+        const book2 = appLibrary.find(b => b.id === bookId);
+        document.getElementById('bookReview').hidden = !book2 || book2.status !== 'Needs Review';
+        if (book2) document.getElementById('bookStatus').value = book2.status;
+    }
+    if (document.getElementById('activityView').style.display === 'block') renderActivity();
+}
+
+function updateActivityBadge() {
+    const badge = document.getElementById('activityBadge');
+    const n = appLibrary.filter(b => b.status === 'Needs Review').length;
+    badge.hidden = n === 0;
+    badge.textContent = n;
+    badge.title = `${n} download${n === 1 ? '' : 's'} need${n === 1 ? 's' : ''} review`;
+}
+
+// -----------------
+// SERIES
+// -----------------
+async function fetchSeries() {
+    try {
+        const res = await fetch('/api/series');
+        appSeries = (await res.json()).series || [];
+    } catch (err) {
+        console.error('Failed to load series', err);
+    }
+}
+
+const openSeriesCards = new Set();
+
+async function renderSeries() {
+    await Promise.all([fetchSeries(), fetchLibrary()]);
+    const container = document.getElementById('seriesContainer');
+    if (!appSeries.length) {
+        container.innerHTML = '<div class="no-results">No series yet.</div>';
+        return;
+    }
+    const sorted = [...appSeries].sort((a, b) => normKey(a.title).localeCompare(normKey(b.title)));
+    container.innerHTML = '';
+    sorted.forEach(series => {
+        const books = appLibrary.filter(b => b.series_asin === series.asin)
+            .sort((a, b) => (parseFloat(a.sequence) || 999) - (parseFloat(b.sequence) || 999));
+        const owned = books.filter(b => b.status === 'Imported').length;
+        const wanted = books.filter(b => ['Monitored', 'Unreleased', 'Downloading', 'Downloaded', 'Needs Review', 'Missing'].includes(b.status)).length;
+        const pct = books.length ? Math.round(owned / books.length * 100) : 0;
+
+        const card = document.createElement('div');
+        card.className = 'series-card';
+        card.innerHTML = `
+            <div class="series-card-header">
+                <div>
+                    <h3>${esc(series.title)}</h3>
+                    <div class="muted">${esc(series.author || '')}${series.mode === 'future' ? ' · new releases only' : ''}</div>
+                </div>
+                <div class="series-progress">
+                    <div class="progress"><div class="progress-bar" style="width: ${pct}%"></div></div>
+                    <div class="muted">${owned} of ${books.length} on disk${wanted ? ` · ${wanted} wanted` : ''}</div>
+                </div>
+                <div class="series-card-actions">
+                    <label class="checkbox-label muted"><input type="checkbox" class="series-monitored" ${series.monitored ? 'checked' : ''}> Monitored</label>
+                    <button class="secondary-btn series-sync">Sync</button>
+                    <button class="danger-btn series-remove">Remove</button>
+                </div>
+            </div>
+            <div class="series-books" ${openSeriesCards.has(series.id) ? '' : 'hidden'}>
+                ${books.map(b => `
+                    <div class="series-book" data-id="${esc(b.id)}">
+                        <span class="seq">${esc(b.sequence ? '#' + b.sequence : '')}</span>
+                        <span class="name">${esc(b.title)}<span class="muted">${b.release_date ? ' · ' + esc(b.release_date.slice(0, 4)) : ''}</span></span>
+                        <span class="library-status ${esc(statusClass(b.status))}">${esc(b.status)}</span>
+                    </div>`).join('') || '<div class="no-results">No books yet. Click Sync.</div>'}
+            </div>`;
+
+        const list = card.querySelector('.series-books');
+        card.querySelector('.series-card-header').addEventListener('click', (e) => {
+            if (e.target.closest('.series-card-actions')) return;
+            list.hidden = !list.hidden;
+            list.hidden ? openSeriesCards.delete(series.id) : openSeriesCards.add(series.id);
+        });
+        card.querySelectorAll('.series-book').forEach(row => row.addEventListener('click', () => openBookModal(row.dataset.id)));
+        card.querySelector('.series-monitored').addEventListener('change', async (e) => {
+            await fetch(`/api/series/${encodeURIComponent(series.id)}`, {
+                method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monitored: e.target.checked })
+            });
+            await fetchSeries();
+        });
+        card.querySelector('.series-sync').addEventListener('click', async (e) => {
+            const btn = e.currentTarget;
+            btn.disabled = true;
+            btn.textContent = 'Syncing...';
+            const res = await fetch(`/api/series/${encodeURIComponent(series.id)}/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            const data = await res.json().catch(() => ({}));
+            btn.textContent = res.ok ? `+${data.added} new` : 'Failed';
+            setTimeout(renderSeries, 1200);
+        });
+        card.querySelector('.series-remove').addEventListener('click', async () => {
+            if (!confirm(`Stop tracking "${series.title}"?\n\nIts books stay in your library.`)) return;
+            await fetch(`/api/series/${encodeURIComponent(series.id)}`, { method: 'DELETE' });
+            renderSeries();
+        });
         container.appendChild(card);
     });
-    
-    loader.style.display = 'none';
+}
+
+// Monitor-series dialog
+const seriesModal = document.getElementById('seriesModal');
+let pendingSeries = null;
+
+function openSeriesModal(target) {
+    pendingSeries = target;
+    document.getElementById('seriesModalName').textContent = target.title || 'this series';
+    setActionStatus(document.getElementById('seriesModalStatus'), '');
+    seriesModal.querySelectorAll('[data-mode]').forEach(b => { b.disabled = false; });
+    showModal(seriesModal);
+}
+
+function setupSeriesModal() {
+    document.getElementById('closeSeriesModal').addEventListener('click', () => hideModal(seriesModal));
+    seriesModal.addEventListener('click', (e) => { if (e.target === seriesModal) hideModal(seriesModal); });
+    seriesModal.querySelectorAll('[data-mode]').forEach(btn => btn.addEventListener('click', async () => {
+        const status = document.getElementById('seriesModalStatus');
+        seriesModal.querySelectorAll('[data-mode]').forEach(b => { b.disabled = true; });
+        setActionStatus(status, 'Loading the series from Audible...');
+        const res = await fetch('/api/series', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...pendingSeries, mode: btn.dataset.mode })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            setActionStatus(status, data.detail || 'Failed', 'error');
+            seriesModal.querySelectorAll('[data-mode]').forEach(b => { b.disabled = false; });
+            return;
+        }
+        await Promise.all([fetchLibrary(), fetchSeries()]);
+        setActionStatus(status, `Monitoring ${data.series.title}: added ${data.added} book${data.added === 1 ? '' : 's'}.`, 'ok');
+        const btnInModal = document.getElementById('monitorSeriesBtn');
+        btnInModal.disabled = true;
+        btnInModal.textContent = 'Series Monitored';
+        document.querySelectorAll('.series-group-header button').forEach(b => {
+            if (b.previousSibling && b.previousSibling.textContent === pendingSeries.title) { b.disabled = true; b.textContent = 'Series Monitored'; }
+        });
+        renderLibrary();
+        setTimeout(() => hideModal(seriesModal), 1500);
+    }));
+}
+
+// -----------------
+// ACTIVITY: QUEUE AND HISTORY
+// -----------------
+const EVENT_LABELS = {
+    grabbed: 'Grabbed', imported: 'Imported', needs_review: 'Needs review', approved: 'Approved',
+    rejected: 'Rejected', failed: 'Failed', missing: 'Missing', series: 'Series', released: 'Released',
+};
+
+async function renderActivity() {
+    let queueData, historyData;
+    try {
+        [queueData, historyData] = await Promise.all([
+            fetch('/api/queue').then(r => r.json()),
+            fetch('/api/history?limit=200').then(r => r.json()),
+        ]);
+    } catch (err) {
+        console.error('Failed to load activity', err);
+        return;
+    }
+
+    const notice = document.getElementById('queueNotice');
+    notice.textContent = !appSettings.qbt_enabled ? 'qBittorrent is not enabled in Settings, so live progress is unavailable.'
+        : (!queueData.client_reachable ? "Can't reach qBittorrent; showing the last known state." : '');
+
+    const qRows = document.getElementById('queueRows');
+    qRows.innerHTML = queueData.queue.map(q => {
+        const pct = q.progress != null ? Math.round(q.progress * 100) : null;
+        const actions = q.status === 'Needs Review' ? `
+            <div class="muted" style="margin-top: 6px;">${esc(q.review_reason)}</div>
+            <div class="row-actions">
+                <button class="secondary-btn" data-action="import_anyway" data-id="${esc(q.id)}">Import Anyway</button>
+                <button class="danger-btn" data-action="reject" data-id="${esc(q.id)}">Reject &amp; Search Again</button>
+            </div>` : '';
+        return `<tr>
+            <td><a href="#" class="queue-book" data-id="${esc(q.id)}">${esc(q.title)}</a>
+                <div class="muted">${esc(q.release_title || q.authors || '')}</div>${actions}</td>
+            <td><span class="library-status ${esc(statusClass(q.status))}" style="position: static; box-shadow: none;">${esc(q.status)}</span>
+                ${q.state ? `<div class="muted" style="margin-top: 4px;">${esc(q.state)}</div>` : ''}</td>
+            <td>${pct != null ? `<div class="progress"><div class="progress-bar" style="width: ${pct}%"></div></div>
+                <div class="muted">${pct}%${q.size_bytes ? ' of ' + esc(formatSize(q.size_bytes)) : ''}</div>` : '<span class="muted">—</span>'}</td>
+            <td>${q.dlspeed ? esc(formatSize(q.dlspeed)) + '/s' : ''}<div class="muted">${esc(q.progress < 1 ? formatDuration(q.eta) : '')}</div></td>
+            <td>${q.seeds != null ? esc(q.seeds) : ''}</td>
+        </tr>`;
+    }).join('') || '<tr><td colspan="5" class="no-results">Nothing downloading.</td></tr>';
+
+    qRows.querySelectorAll('[data-action]').forEach(btn => btn.addEventListener('click', () => reviewAction(btn.dataset.id, btn.dataset.action)));
+    qRows.querySelectorAll('.queue-book').forEach(a => a.addEventListener('click', (e) => { e.preventDefault(); openBookModal(a.dataset.id); }));
+
+    document.getElementById('historyRows').innerHTML = historyData.history.map(h => `
+        <tr>
+            <td class="muted">${esc(new Date(h.time).toLocaleString())}</td>
+            <td><span class="event event-${esc(h.event)}">${esc(EVENT_LABELS[h.event] || h.event)}</span></td>
+            <td>${esc(h.title)}</td>
+            <td class="muted">${esc(h.message)}</td>
+        </tr>`).join('') || '<tr><td colspan="4" class="no-results">Nothing has happened yet.</td></tr>';
+
+    if (queueData.queue.some(q => q.status === 'Needs Review') !== appLibrary.some(b => b.status === 'Needs Review')) {
+        await fetchLibrary();
+    }
 }
 
 // Listeners
@@ -270,14 +924,20 @@ function renderResults(data) {
             title: product.title,
             authors: product.authors ? product.authors.map(a => a.name).join(', ') : 'Unknown Author',
             narrators: product.narrators ? product.narrators.map(n => n.name).join(', ') : 'Unknown Narrator',
-            imageUrl: product.product_images && product.product_images[500] ? product.product_images[500] : '/static/images/placeholder.jpg',
-            release_date: product.release_date || product.issue_date || ""
+            imageUrl: product.product_images && product.product_images[500] ? product.product_images[500] : PLACEHOLDER_COVER,
+            release_date: product.release_date || product.issue_date || "",
+            asin: product.asin || "",
+            runtime_min: product.runtime_length_min || 0,
+            description: product.publisher_summary || "",
+            publisher: product.publisher_name || "",
+            language: product.language ? product.language[0].toUpperCase() + product.language.slice(1) : ""
         };
 
         if (product.series && product.series.length > 0) {
             const seriesTitle = product.series[0].title;
-            const seq = parseFloat(product.series[0].sequence) || 999;
-            bookData.sequence = seq;
+            bookData.series = seriesTitle;
+            bookData.series_asin = product.series[0].asin || "";
+            bookData.sequence = product.series[0].sequence || "";
             if (!groups[seriesTitle]) groups[seriesTitle] = [];
             groups[seriesTitle].push(bookData);
         } else {
@@ -286,7 +946,7 @@ function renderResults(data) {
     });
 
     for (const [seriesTitle, books] of Object.entries(groups)) {
-        books.sort((a, b) => a.sequence - b.sequence);
+        books.sort((a, b) => (parseFloat(a.sequence) || 999) - (parseFloat(b.sequence) || 999));
         renderGroup(seriesTitle, books);
     }
 
@@ -300,8 +960,20 @@ function renderGroup(title, books) {
     section.className = 'series-section';
     
     const header = document.createElement('div');
-    header.className = 'series-header';
-    header.textContent = title;
+    header.className = 'series-header series-group-header';
+    const name = document.createElement('span');
+    name.textContent = title;
+    header.appendChild(name);
+    const seriesAsin = books[0] && books[0].series_asin;
+    if (seriesAsin) {
+        const tracked = appSeries.find(sr => sr.asin === seriesAsin && sr.monitored);
+        const btn = document.createElement('button');
+        btn.className = 'secondary-btn';
+        btn.textContent = tracked ? 'Series Monitored' : 'Monitor Series';
+        btn.disabled = Boolean(tracked);
+        btn.addEventListener('click', () => openSeriesModal({ series_asin: seriesAsin, title, author: primaryAuthor(books[0].authors) }));
+        header.appendChild(btn);
+    }
     section.appendChild(header);
 
     const grid = document.createElement('div');
@@ -309,13 +981,14 @@ function renderGroup(title, books) {
     
     books.forEach(book => {
         const releaseDate = book.release_date || "";
-        const isTracked = appLibrary.some(b => b.title === book.title);
+        const tracked = findInLibrary(book);
+        const isTracked = Boolean(tracked);
         const card = document.createElement('div');
         card.className = 'book-card';
         
         let addBtnHtml = '';
         if (isTracked) {
-            addBtnHtml = `<div class="add-btn monitored-btn" style="pointer-events: none;">Monitored</div>`;
+            addBtnHtml = `<div class="add-btn monitored-btn" style="pointer-events: none;">${esc(tracked.status === 'Imported' ? 'In Library' : tracked.status)}</div>`;
         } else {
             addBtnHtml = `<div class="add-btn">Add to Library</div>`;
         }
