@@ -6,7 +6,8 @@ import re
 
 logger = logging.getLogger(__name__)
 
-AUDIO_EXTENSIONS = {'.mp3', '.m4b', '.m4a', '.flac', '.ogg', '.opus', '.aac', '.wma'}
+# .mp4 and .mka are audio-only containers some releases use (e.g. "001 Author (2020) Title.mp4")
+AUDIO_EXTENSIONS = {'.mp3', '.m4b', '.m4a', '.mp4', '.flac', '.ogg', '.opus', '.aac', '.wma', '.mka'}
 COVER_NAMES = ["cover.jpg", "cover.jpeg", "cover.png", "folder.jpg", "folder.png"]
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
 
