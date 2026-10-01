@@ -242,6 +242,15 @@ def evaluate(book, result, settings, blocklist=None):
         score -= 40
         what = f"Books {ranges[0][0]}-{ranges[0][1]}" if ranges else ", ".join(sorted(bundle_words - {"range"})) or "several books"
         problems.append(f"Box set or collection ({what})")
+    elif "series" in body_set and not numbers and "series" not in title_all | series_words:
+        # "Author - Name Series": often the whole series. Too big for one book settles it.
+        runtime, size = book.get("runtime_min") or 0, result.get("size_bytes") or 0
+        if runtime and size and size * 8 / 1000 / (runtime * 60) > 160:
+            score -= 40
+            problems.append("Looks like the whole series (\"Series\", no book number, too big for one book)")
+        else:
+            score -= 10
+            reasons.append("Says \"Series\" without a book number: may be several books")
 
     # --- Edition: narrated, dramatized or abridged, matched both ways ---
     wanted = book.get("edition") if book.get("edition") in editions.EDITIONS else         (editions.classify_fields(book) or {}).get("edition", editions.NARRATED)

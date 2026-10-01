@@ -5,7 +5,7 @@ import os
 import shutil
 from . import archives, audible, audiobookshelf, book_search, convert, db, editions, indexers, release_match, scraper
 from .library import (audio_files, build_folder_name, describe_files, find_match, plan_import_files,
-                      read_abs_metadata, total_duration_min)
+                      read_abs_metadata, series_entries, series_key, titles_match, total_duration_min)
 from .qbittorrent import delete_torrents, get_completed_torrents, get_torrents, send_to_qbittorrent, send_torrent_file
 
 logger = logging.getLogger(__name__)
@@ -505,12 +505,31 @@ async def _import_download(book, content_path, staging, settings, root_folder):
             _hold_for_review(book, f"There are no audio files in {os.path.basename(packed[0])}.")
             return False
 
+    others = []
     if not book.get("skip_verify"):
         reason = await asyncio.to_thread(check_download, book, [src for src, _ in audio], settings, source)
         if reason:
-            _hold_for_review(book, reason)
-            return False
+            # A pack of several books ("Series 01 - Title", "Series 02 - ..."): just this book's files
+            picked = await _pick_from_pack(book, source, settings)
+            if not picked:
+                _hold_for_review(book, reason)
+                return False
+            audio, cover, others = picked
 
+    note = " (unpacked from an archive)" if unpacked else ""
+    if others:
+        note += f" (one book of a pack of {len(others) + 1})"
+    if not await _place_book(book, audio, cover, settings, root_folder, unpacked, note):
+        return False
+    # The pack's other books: imported too when they're in the library but not on disk yet
+    for group in others:
+        await _import_pack_sibling(book, group, source, settings, root_folder, unpacked)
+    return True
+
+
+async def _place_book(book, audio, cover, settings, root_folder, unpacked=False, note=""):
+    """Copies a book's planned files into its folder and marks it Imported."""
+    title = book.get("title", "").strip()
     dest_dir = os.path.join(root_folder, build_folder_name(settings.get("naming_format"), book))
     logger.info(f"Importing {title} into {dest_dir}")
     try:
@@ -527,7 +546,7 @@ async def _import_download(book, content_path, staging, settings, root_folder):
         db.update_book(book["id"], status="Imported", path=dest_dir, cover=cover_name,
                        review_reason="", skip_verify=False, **describe_files(dest_dir))
         detail = f"{len(audio)} file{'s' if len(audio) != 1 else ''} into {dest_dir}"
-        db.add_history("imported", book, detail + (" (unpacked from an archive)" if unpacked else ""))
+        db.add_history("imported", book, detail + note)
         # Settings > Media Management: convert downloads that aren't a single M4B
         if settings.get("auto_convert_m4b") and convert.available():
             added, _ = convert.enqueue([book["id"]], source="auto")
@@ -538,6 +557,74 @@ async def _import_download(book, content_path, staging, settings, root_folder):
         db.add_history("failed", book, f"Import failed: {e}")
         return False
     return True
+
+
+def _pack_number(book, series_name=""):
+    """The book's number in the series (the named one, else its main series), e.g. "1"."""
+    entries = series_entries(book)
+    if series_name:
+        entries = [e for e in entries if series_key(e.get("name")) == series_key(series_name)] or entries
+    return release_match._number(entries[0].get("sequence")) if entries else ""
+
+
+def _group_for(book, groups, series_name=""):
+    """The group of a pack that is this book: the same title, else the same number."""
+    by_title = [g for g in groups if g["title"] and titles_match(g["title"], book.get("title"))]
+    if len(by_title) == 1:
+        return by_title[0]
+    number = _pack_number(book, series_name)
+    by_number = [g for g in groups if number and release_match._number(g["number"]) == number]
+    return by_number[0] if len(by_number) == 1 else None
+
+
+def _plan_args(book, settings):
+    return (book.get("title", "").strip(), settings.get("rename_files", True), book.get("runtime_min") or 0,
+            settings.get("runtime_tolerance", 10))
+
+
+async def _pick_from_pack(book, source, settings):
+    """When a download holds several books, this book's files: (audio, cover, the other
+    groups), or None if it isn't a pack, the book isn't in it, or its files don't check out
+    either (the length has to match Audible's, so a wrong pick is held for review)."""
+    if os.path.isfile(source) or not book.get("runtime_min"):
+        return None
+    from .splitter import detect_books  # The splitter imports this module
+    groups = await asyncio.to_thread(detect_books, source)
+    if len(groups) < 2:
+        return None
+    group = _group_for(book, groups)
+    if not group:
+        return None
+    audio, cover = await asyncio.to_thread(plan_import_files, source, *_plan_args(book, settings), group["files"])
+    if not audio or await asyncio.to_thread(check_download, book, [src for src, _ in audio], settings, source):
+        return None
+    logger.info(f"{book.get('title')}: the download holds {len(groups)} books; importing book {group['number']}")
+    return audio, cover, [g for g in groups if g is not group]
+
+
+async def _import_pack_sibling(book, group, source, settings, root_folder, unpacked):
+    """Imports another book of a pack if it's in the library (same series) and not on disk
+    yet. Nothing is held for review: this book wasn't what was grabbed."""
+    series = {series_key(e.get("name")): e.get("name") for e in series_entries(book) if e.get("name")}
+    for other in db.get_library():
+        if other["id"] == book["id"] or other.get("path") or other.get("status") not in ("Monitored", "Missing"):
+            continue
+        shared = [name for key, name in series.items()
+                  if any(series_key(e.get("name")) == key for e in series_entries(other))]
+        if not shared or _group_for(other, [group], shared[0]) is not group:
+            continue
+        if editions.edition_of(other) != editions.edition_of(book):
+            continue
+        audio, cover = await asyncio.to_thread(plan_import_files, source, *_plan_args(other, settings), group["files"])
+        if not audio:
+            return
+        reason = await asyncio.to_thread(check_download, other, [src for src, _ in audio], settings, source)
+        if reason:
+            logger.info(f"Not importing {other.get('title')} from the pack of {book.get('title')}: {reason}")
+            return
+        await _place_book(other, audio, cover, settings, root_folder, unpacked,
+                          f" (from the pack downloaded for {book.get('title')})")
+        return
 
 
 def _copy_files(plan, dest_dir, hardlink=False):

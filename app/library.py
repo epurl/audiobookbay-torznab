@@ -497,7 +497,7 @@ def safe_filename(text):
     return re.sub(r'[\\/:*?"<>|]', "", text or "").strip(" .")
 
 
-def plan_import_files(content_path, title, rename=True, expected_min=0, tolerance=10):
+def plan_import_files(content_path, title, rename=True, expected_min=0, tolerance=10, only=None):
     """Decides where a download's files go inside the book folder.
 
     Returns (audio, cover): audio is a list of (source, relative destination) in play order,
@@ -505,6 +505,7 @@ def plan_import_files(content_path, title, rename=True, expected_min=0, toleranc
     'Title.ext' or 'Title - Part 01.ext'; with it off they keep their names and subfolders,
     so files that share a name on different discs don't collide. When the download has
     the same audio in several encodings, only one copy is planned (see pick_one_copy).
+    With only (relative paths), just those audio files are planned: one book of a pack.
     """
     if os.path.isfile(content_path):
         base = os.path.dirname(content_path)
@@ -524,6 +525,9 @@ def plan_import_files(content_path, title, rename=True, expected_min=0, toleranc
                 elif ext in IMAGE_EXTENSIONS:
                     image_rels.append(rel)
 
+    if only is not None:
+        wanted = {os.path.normpath(r) for r in only}
+        audio_rels = [r for r in audio_rels if os.path.normpath(r) in wanted]
     audio_rels = pick_one_copy(base, audio_rels, expected_min, tolerance)
     audio_rels.sort(key=_natural_key)
     stem = safe_filename((title or "").split(":")[0]) or "Audiobook"

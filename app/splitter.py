@@ -25,7 +25,25 @@ _PART_MARK = re.compile(r"[\s._\-(\[]*(?:part|pt|disc|disk|cd)[\s._-]*\d+|[\s._\
 
 
 def _clean(text):
-    return re.sub(r"\s+", " ", re.sub(r"[._]+", " ", text or "")).strip(" -_[]()")
+    return re.sub(r"\s+", " ", re.sub(r"[._]+", " ", text or "")).strip(" -_[](),")
+
+
+def _numbered_after_shared_name(rels):
+    """Keys for packs named "Author - Series 01 - Title, Part 1.m4b": the number right after
+    the name every file starts with. None unless every file has one."""
+    stems = [os.path.splitext(os.path.basename(r))[0] for r in rels]
+    prefix = os.path.commonprefix(stems).rstrip("0123456789")
+    if len(stems) < 2 or not prefix.strip():
+        return None
+    keys = []
+    for stem in stems:
+        m = re.match(r"0*(\d{1,3}(?:\.\d)?)(?=[\s._\-,)\]]|$)", stem[len(prefix):])
+        if not m:
+            return None
+        rest = stem[len(prefix) + m.end():]
+        cut = _PART_MARK.search(rest)
+        keys.append((m.group(1), _clean(rest[:cut.start()] if cut else rest)))
+    return keys
 
 
 def _group_key(rel):
@@ -49,13 +67,16 @@ def _group_key(rel):
 def detect_books(folder):
     """The books in a folder: [{"number", "title", "files": [relative paths], "size"}], in
     order. Fewer than two means it isn't a collection (or its files don't say)."""
-    groups = {}
-    for path, size in audio_files(folder):
-        rel = os.path.relpath(path, folder)
-        key = _group_key(rel)
-        if key is None:
+    files = [(os.path.relpath(path, folder), size) for path, size in audio_files(folder)]
+    keys = [_group_key(rel) for rel, _ in files]
+    if None in keys:
+        keys = _numbered_after_shared_name([rel for rel, _ in files])
+        if keys is None:
             return []  # Some files don't say which book they belong to: don't guess
-        number, title = key
+        if len({number for number, _ in keys}) > 1 and not all(title for _, title in keys):
+            return []  # "Book Title 01.mp3, 02.mp3...": tracks of one book, not books
+    groups = {}
+    for (rel, size), (number, title) in zip(files, keys):
         group = groups.setdefault(number, {"number": number, "title": title, "files": [], "size": 0})
         group["files"].append(rel)
         group["size"] += size
