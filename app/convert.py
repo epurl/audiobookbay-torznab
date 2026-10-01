@@ -11,6 +11,7 @@ import datetime
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 
@@ -101,7 +102,7 @@ def build(book, files, durations, cover, out_path, workdir, encode=False):
         f.write("\n".join(lines) + "\n")
 
     copy = not encode and all(os.path.splitext(p)[1].lower() in AAC_CONTAINERS for p in files)
-    cmd = [ffmpeg_path(), "-hide_banner", "-nostdin", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+    cmd = [ffmpeg_path(), "-hide_banner", "-nostdin", "-nostats", "-loglevel", "warning", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
            "-i", meta_path]
     if cover:
         cmd += ["-i", cover]
@@ -139,26 +140,25 @@ async def _run(book):
     cover = os.path.join(folder, book["cover"]) if book.get("cover") and os.path.isfile(os.path.join(folder, book["cover"])) else ""
     cmd, copied = build(book, files, durations, cover, partial, workdir)
     logger.info(f"Converting {book.get('title')} to M4B ({'copying' if copied else 're-encoding'} {len(files)} files)")
-    code, errors = await _ffmpeg(cmd, total_ms)
-    if _cancelled:
-        if os.path.exists(partial):
-            os.remove(partial)
-        raise RuntimeError("Cancelled")
-    if code != 0 and copied:
-        # AAC files with different settings can't be joined as they are: encode instead
-        logger.info(f"Copying the audio failed ({errors[-1] if errors else code}); re-encoding")
-        cmd, _ = build(book, files, durations, cover, partial, workdir, encode=True)
+    try:
         code, errors = await _ffmpeg(cmd, total_ms)
-    if code != 0 or not os.path.isfile(partial):
+        if _cancelled:
+            raise RuntimeError("Cancelled")
+        if code != 0 and copied:
+            # AAC files with different settings can't be joined as they are: encode instead
+            logger.info(f"Copying the audio failed ({errors[-1] if errors else code}); re-encoding")
+            cmd, _ = build(book, files, durations, cover, partial, workdir, encode=True)
+            code, errors = await _ffmpeg(cmd, total_ms)
+        if code != 0 or not os.path.isfile(partial):
+            raise RuntimeError("ffmpeg failed: " + (errors[-1] if errors else f"exit code {code}"))
+        # Nothing is switched over unless the new file checks out
+        problem = await verify(partial, sum(durations), len(files))
+        if problem:
+            raise RuntimeError(f"{problem}; the original files are unchanged")
+    except BaseException:
         if os.path.exists(partial):
             os.remove(partial)
-        raise RuntimeError("ffmpeg failed: " + (errors[-1] if errors else f"exit code {code}"))
-
-    # Nothing is switched over unless the new file checks out
-    problem = await verify(partial, sum(durations), len(files))
-    if problem:
-        os.remove(partial)
-        raise RuntimeError(f"{problem}; the original files are unchanged")
+        raise
     for f in files:
         os.rename(f, f + ORIGINAL_SUFFIX)
     os.replace(partial, out)
@@ -204,6 +204,23 @@ async def verify(path, expected_min, files):
     return ""
 
 
+async def _lines(stream):
+    """A process's output line by line, split on newlines or carriage returns (ffmpeg redraws
+    its status line with \\r), with no limit on how long a line gets."""
+    buffer = b""
+    while True:
+        chunk = await stream.read(65536)
+        if not chunk:
+            break
+        *lines, buffer = re.split(rb"[\r\n]", buffer + chunk)
+        buffer = buffer[-65536:]
+        for line in lines:
+            if line.strip():
+                yield line.decode(errors="ignore").strip()
+    if buffer.strip():
+        yield buffer.decode(errors="ignore").strip()
+
+
 async def _ffmpeg(cmd, total_ms):
     """Runs ffmpeg, following its progress. Returns (exit code, last error lines)."""
     global _proc
@@ -212,18 +229,24 @@ async def _ffmpeg(cmd, total_ms):
     errors = []
 
     async def read_progress():
-        async for line in proc.stdout:
-            key, _, value = line.decode(errors="ignore").strip().partition("=")
+        async for line in _lines(proc.stdout):
+            key, _, value = line.partition("=")
             if key == "out_time_ms" and value.isdigit() and total_ms:
                 job["progress"] = min(0.99, int(value) / 1000 / total_ms)
 
     async def read_errors():
-        async for line in proc.stderr:
-            errors.append(line.decode(errors="ignore").strip())
+        async for line in _lines(proc.stderr):
+            errors.append(line)
             del errors[:-20]
 
-    await asyncio.gather(read_progress(), read_errors())
-    return await proc.wait(), errors
+    try:
+        await asyncio.gather(read_progress(), read_errors())
+        return await proc.wait(), errors
+    finally:
+        # Never leave ffmpeg running (and writing) after something went wrong here
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
 
 
 # --- The queue ----------------------------------------------------------------
