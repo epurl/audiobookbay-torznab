@@ -312,6 +312,9 @@ def evaluate(book, result, settings, blocklist=None):
             score -= 5
             reasons.append("Size is unusual for the book's length")
 
+    # --- Your release preferences ---
+    score += _apply_preferences(result, raw, book, settings, reasons, problems)
+
     # --- Language ---
     pref_lang = (settings.get("language") or "All").lower()
     lang = (result.get("language") or "").lower()
@@ -382,3 +385,62 @@ def choose_best(book, results, settings):
         return None
     best = order([merged for _, merged in acceptable], settings)[0]
     return next(res for res, merged in acceptable if merged is best)
+
+
+def _setting_list(value):
+    return [v.strip() for v in str(value or "").split(",") if v.strip()]
+
+
+def _name_in(name, text_words):
+    """A person's name in a list of names: their surname alone is enough when it's distinctive."""
+    words = tokens(name)
+    if not words:
+        return False
+    return all(w in text_words for w in words) or (len(words) > 1 and len(words[-1]) > 3 and words[-1] in text_words
+                                                  and words[0][0] in {w[0] for w in text_words})
+
+
+def _apply_preferences(result, raw, book, settings, reasons, problems):
+    """Release preferences from Settings: words, uploaders, narrators, bitrate and size.
+    Adds to reasons and problems; returns the change to the score."""
+    change = 0
+    text = " " + " ".join(tokens(" ".join([raw] + list(result.get("keywords") or []) + list(result.get("categories") or [])))) + " "
+    for word in _setting_list(settings.get("blocked_words")):
+        if f" {' '.join(tokens(word))} " in text:
+            problems.append(f'Contains "{word}" (blocked in Settings)')
+    bonus = 0
+    for word in _setting_list(settings.get("preferred_words")):
+        if f" {' '.join(tokens(word))} " in text:
+            bonus += 10
+            reasons.append(f'Has "{word}"')
+    change += min(bonus, 20)
+
+    uploader = (result.get("uploader") or "").strip()
+    if uploader and uploader.lower() in {u.lower() for u in _setting_list(settings.get("blocked_uploaders"))}:
+        problems.append(f"Shared by {uploader} (blocked in Settings)")
+
+    narrators = result.get("narrators") or []
+    narrator_text = ", ".join(narrators) if narrators else (result.get("abb_narrator") or "")
+    if narrator_text and narrator_text != "Unknown":
+        words = set(tokens(narrator_text))
+        if any(_name_in(n, words) for n in _setting_list(settings.get("pref_narrators"))):
+            change += 15
+            reasons.append("A narrator you prefer")
+        if any(_name_in(n, words) for n in _setting_list(settings.get("avoid_narrators"))):
+            change -= 25
+            reasons.append("A narrator you avoid")
+
+    min_bitrate = settings.get("min_bitrate") or 0
+    if min_bitrate:
+        stated = _bitrate(result.get("bitrate"))
+        size, runtime = result.get("size_bytes") or 0, book.get("runtime_min") or 0
+        implied = size * 8 / 1000 / (runtime * 60) if size and runtime else 0
+        # The stated bitrate, else the one the size implies (with some leeway)
+        if (stated and stated < min_bitrate) or (not stated and implied and implied < min_bitrate * 0.85):
+            problems.append(f"{round(stated or implied)} kbps, below your minimum of {min_bitrate}")
+
+    max_gb = settings.get("max_size_gb") or 0
+    size = result.get("size_bytes") or 0
+    if max_gb and size > max_gb * 1024 ** 3:
+        problems.append(f"{size / 1024 ** 3:.1f} GB, over your maximum of {max_gb:g} GB")
+    return change

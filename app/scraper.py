@@ -165,6 +165,7 @@ _FIELDS = {
     "size": r"(?:Combined File Size|File Size|Size):\s*([\d.,]+\s*[KMGT]Bs?)",
     "posted": r"Posted:\s*(\d{1,2} [A-Za-z]{3,9} \d{4})",
     "language": r"Language:\s*([A-Za-z]+)",
+    "uploader": r"Shared by:\s*([^\s|]+)",
 }
 
 
@@ -258,6 +259,7 @@ def _parse_listing(post):
         "categories": categories,
         "keywords": keywords,
         "posted": parse_date(_field(text, "posted")),
+        "uploader": _field(text, "uploader"),
         "cover": (image.get("src") or "") if image else "",
     }
 

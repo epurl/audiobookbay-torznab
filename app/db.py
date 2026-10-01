@@ -47,6 +47,14 @@ DEFAULT_SETTINGS = {
     "runtime_tolerance": 10,  # percent
     "write_metadata": True,
     "edition_preference": "narrated",  # narrated | dramatized | both: what series monitoring adds
+    # Release preferences (scoring of releases); comma-separated lists, 0 = off
+    "pref_narrators": "",
+    "avoid_narrators": "",
+    "preferred_words": "",
+    "blocked_words": "",
+    "blocked_uploaders": "",
+    "min_bitrate": 0,     # kbps
+    "max_size_gb": 0,
     "abs_url": "",
     "abs_token": "",
     "abs_library_id": "",
@@ -60,6 +68,8 @@ EDITABLE_SETTINGS = {
     "qbt_host", "qbt_user", "root_folder", "downloads_folder", "naming_format",
     "rename_files", "use_hardlinks", "stall_hours", "remove_stalled",
     "verify_runtime", "runtime_tolerance", "write_metadata", "edition_preference",
+    "pref_narrators", "avoid_narrators", "preferred_words", "blocked_words", "blocked_uploaders",
+    "min_bitrate", "max_size_gb",
     "abs_url", "abs_library_id",
 }
 # Secrets: never sent to the browser, and a blank value from the UI keeps the stored one
@@ -475,6 +485,11 @@ def update_settings(new_settings):
                 settings["stall_hours"] = max(0, min(168, int(new_settings["stall_hours"])))
             except (TypeError, ValueError):
                 settings["stall_hours"] = DEFAULT_SETTINGS["stall_hours"]
+        for key, kind, top in (("min_bitrate", int, 1000), ("max_size_gb", float, 1000)):
+            try:
+                settings[key] = max(0, min(top, kind(settings.get(key) or 0)))
+            except (TypeError, ValueError):
+                settings[key] = 0
         if settings.get("edition_preference") not in ("narrated", "dramatized", "both"):
             settings["edition_preference"] = DEFAULT_SETTINGS["edition_preference"]
         if "runtime_tolerance" in new_settings:

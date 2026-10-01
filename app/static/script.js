@@ -284,6 +284,13 @@ async function fetchSettings() {
         document.getElementById('setVerifyRuntime').checked = appSettings.verify_runtime ?? true;
         document.getElementById('setRuntimeTolerance').value = appSettings.runtime_tolerance ?? 10;
         document.getElementById('setWriteMetadata').checked = appSettings.write_metadata ?? true;
+        document.getElementById('setPrefNarrators').value = appSettings.pref_narrators || '';
+        document.getElementById('setAvoidNarrators').value = appSettings.avoid_narrators || '';
+        document.getElementById('setPreferredWords').value = appSettings.preferred_words || '';
+        document.getElementById('setBlockedWords').value = appSettings.blocked_words || '';
+        document.getElementById('setBlockedUploaders').value = appSettings.blocked_uploaders || '';
+        document.getElementById('setMinBitrate').value = appSettings.min_bitrate || 0;
+        document.getElementById('setMaxSize').value = appSettings.max_size_gb || 0;
         document.getElementById('setAbsUrl').value = appSettings.abs_url || "";
         document.getElementById('setAbsToken').value = "";
         document.getElementById('setAbsToken').placeholder = appSettings.abs_token_set ? "Unchanged" : "";
@@ -342,6 +349,13 @@ function setupSettings() {
             verify_runtime: document.getElementById('setVerifyRuntime').checked,
             runtime_tolerance: parseInt(document.getElementById('setRuntimeTolerance').value, 10) || 10,
             write_metadata: document.getElementById('setWriteMetadata').checked,
+            pref_narrators: document.getElementById('setPrefNarrators').value.trim(),
+            avoid_narrators: document.getElementById('setAvoidNarrators').value.trim(),
+            preferred_words: document.getElementById('setPreferredWords').value.trim(),
+            blocked_words: document.getElementById('setBlockedWords').value.trim(),
+            blocked_uploaders: document.getElementById('setBlockedUploaders').value.trim(),
+            min_bitrate: parseInt(document.getElementById('setMinBitrate').value, 10) || 0,
+            max_size_gb: parseFloat(document.getElementById('setMaxSize').value) || 0,
             abs_url: document.getElementById('setAbsUrl').value.trim(),
             abs_token: document.getElementById('setAbsToken').value,
             abs_library_id: document.getElementById('setAbsLibrary').value,
