@@ -2,11 +2,11 @@
 belongs to and Audible's full list of books for each series."""
 import asyncio
 import logging
-from collections import Counter
+from collections import Counter, defaultdict
 
 from app import audible, db
 from app.editions import DRAMATIZED, NARRATED, edition_of
-from app.library import normalize, primary_author, series_entries, series_key, title_key
+from app.library import normalize, primary_author, series_entries, series_key, title_keys
 
 logger = logging.getLogger(__name__)
 
@@ -29,22 +29,17 @@ class LibraryIndex:
 
     def __init__(self, library):
         self.by_asin = {b["asin"]: b for b in library if b.get("asin")}
-        self.by_title = {}
+        self.by_full = defaultdict(list)  # whole title -> books
+        self.by_part = defaultdict(list)  # whole title, main title or subtitle part -> books
         for b in library:
-            title = title_key(b.get("title"))
-            for author in self._authors(b):
-                self.by_title.setdefault((title, author, edition_of(b)), b)
+            full, keys = title_keys(b.get("title"))
+            self.by_full[full].append(b)
+            for key in keys:
+                self.by_part[key].append(b)
 
     @staticmethod
     def _authors(book):
-        return [normalize(a) for a in (book.get("authors") or "").split(",") if normalize(a)] or [""]
-
-    def _by_title(self, title, book):
-        for author in self._authors(book):
-            found = self.by_title.get((title_key(title), author, edition_of(book)))
-            if found:
-                return found
-        return None
+        return {normalize(a) for a in (book.get("authors") or "").split(",") if normalize(a)} or {""}
 
     def find(self, book):
         # Editions sold in parts: your copy may have any part's ASIN
@@ -52,14 +47,13 @@ class LibraryIndex:
             found = self.by_asin.get(asin)
             if found:
                 return found
-        title = book.get("title") or ""
-        found = self._by_title(title, book)
-        if found:
-            return found
-        # Audible titles can carry the series name: "Universe: Book Title"
-        if ":" in title:
-            return self._by_title(title.partition(":")[2], book)
-        return None
+        full, keys = title_keys(book.get("title"))
+        authors, edition = self._authors(book), edition_of(book)
+        fits = lambda b: edition_of(b) == edition and self._authors(b) & authors
+        # The exact title first, then this title with or without a subtitle ("Universe: Title")
+        candidates = self.by_full.get(full, []) + self.by_part.get(full, []) + \
+            [b for key in keys for b in self.by_full.get(key, [])]
+        return next((b for b in candidates if fits(b)), None)
 
 
 def build_groups():

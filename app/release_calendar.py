@@ -51,9 +51,13 @@ def _save(data):
     os.replace(tmp, CACHE_FILE)
 
 
+# Raised when the way the list is built changes, so saved lists are rebuilt
+CACHE_VERSION = 2
+
+
 def is_stale():
     fetched = _load().get("fetched")
-    if not fetched:
+    if not fetched or _load().get("version") != CACHE_VERSION:
         return True
     return datetime.datetime.now() - datetime.datetime.fromisoformat(fetched) > MAX_AGE
 
@@ -130,8 +134,10 @@ async def build():
 
     genres = await _top_level_genres()
     authors = _library_authors()
-    steps = [("bestsellers", page) for page in range(1, BESTSELLER_PAGES + 1)] + \
-            [("genre", (g, page)) for g in genres for page in range(1, GENRE_PAGES + 1)] +             [("author", a) for a in authors]
+    # Audible numbers result pages from 0
+    steps = ([("bestsellers", page) for page in range(BESTSELLER_PAGES)]
+             + [("genre", (g, page)) for g in genres for page in range(GENRE_PAGES)]
+             + [("author", a) for a in authors])
     refresh_job.update(total=len(steps), done=0, failed=0)
 
     for kind, arg in steps:
@@ -140,7 +146,7 @@ async def build():
                 for i, product in enumerate(await _products({"products_sort_by": "BestSellers", "page": arg})):
                     item = keep(product)
                     if item:
-                        rank = (arg - 1) * 50 + i + 1
+                        rank = arg * 50 + i + 1
                         item["rank"] = min(item["rank"] or rank, rank)
             elif kind == "genre":
                 (name, genre_id), page = arg
@@ -148,7 +154,7 @@ async def build():
                                                              "page": page})):
                     item = keep(product)
                     if item and name in item["genres"]:
-                        rank = (page - 1) * 50 + i + 1
+                        rank = page * 50 + i + 1
                         item["genre_rank"] = min(item["genre_rank"] or rank, rank)
             else:
                 want = normalize(arg)
@@ -163,6 +169,7 @@ async def build():
         await asyncio.sleep(0.3)  # Gentle on Audible's API
 
     data = {
+        "version": CACHE_VERSION,
         "fetched": datetime.datetime.now().isoformat(timespec="seconds"),
         "items": sorted(items.values(), key=lambda x: (x["release_date"], x["rank"] or 9999)),
         "genres": [name for name, _ in genres],

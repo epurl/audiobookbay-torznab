@@ -13,7 +13,7 @@ import re
 from app import audible, audiobookshelf, db, editions, series_index
 from app.monitor import _copy_files  # Hardlinks, falling back to copies
 from app.library import (DISC_FOLDER_RE, _natural_key, audio_files, build_folder_name, describe_files,
-                         series_entries, series_key, title_key)
+                         series_entries, series_key, titles_match)
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ def _match(group, catalog, edition):
     same_edition = [e for e in entries if editions.edition_of(e) == edition]
     for candidates in (same_edition, entries):
         found = next((e for e in candidates if e.get("catalog_sequence") == group["number"]), None) \
-            or next((e for e in candidates if group["title"] and title_key(e.get("title")) == title_key(group["title"])), None)
+            or next((e for e in candidates if group["title"] and titles_match(e.get("title"), group["title"])), None)
         if found:
             return found
     return None

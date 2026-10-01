@@ -70,13 +70,21 @@ function editionBadge(book) {
     return badge + check;
 }
 
-// The main title for matching, like the server's: no bracketed tags, edition words or
-// subtitle ("Title (Dramatized Adaptation)", "Title Graphic Audio")
-function titleKey(title) {
+// Title matching, like the server's: without bracketed tags or edition words, the same
+// book's title is equal, or is the other's main title or subtitle part ("Storm Front" /
+// "Storm Front: Dresden Files, Book 1"), but "Series: One" and "Series: Two" differ
+function titleKeys(title) {
     const plain = String(title || '').replace(/\s*[([][^)\]]*[)\]]/g, '')
         .replace(/\b(dramati[sz]ed|adaptation|graphic\s?audio|full[\s-]?cast|(un)?abridged)\b/gi, '')
         .trim().replace(/^-+|-+$/g, '').trim() || String(title || '');
-    return normKey(plain.split(':')[0]);
+    const [main, ...rest] = plain.split(':');
+    const full = normKey(plain);
+    return { full, keys: [full, normKey(main.trim()), normKey(rest.join(':').trim())].filter(Boolean) };
+}
+
+function titlesMatch(a, b) {
+    const ka = titleKeys(a), kb = titleKeys(b);
+    return Boolean(ka.full && kb.full) && (kb.keys.includes(ka.full) || ka.keys.includes(kb.full));
 }
 
 function authorKeyList(authors) {
@@ -91,11 +99,11 @@ function findInLibrary(book) {
     }
     // Title (before any subtitle) and any shared author, in the same edition: books don't
     // always list their authors in the same order, and a dramatized version is its own book
-    const key = titleKey(book.title);
     const authorKeys = authorKeyList(book.authors);
     const edition = editionOf(book);
-    return appLibrary.find(b => titleKey(b.title) === key && editionOf(b) === edition
-        && authorKeyList(b.authors).some(a => authorKeys.includes(a)));
+    const same = appLibrary.filter(b => editionOf(b) === edition && authorKeyList(b.authors).some(a => authorKeys.includes(a)));
+    const full = titleKeys(book.title).full;
+    return same.find(b => titleKeys(b.title).full === full) || same.find(b => titlesMatch(b.title, book.title));
 }
 
 function coverUrl(book) {

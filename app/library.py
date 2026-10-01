@@ -132,12 +132,30 @@ _EDITION_TAG = re.compile(r"\s*[\(\[][^\)\]]*(?:dramati[sz]|adaptation|full[\s-]
                           re.IGNORECASE)
 
 
-def title_key(title):
-    """A title for matching: the main title, without bracketed tags, edition words or a
-    subtitle: "Storm Front (Dramatized Adaptation): Series, Book 1" -> "stormfront"."""
+def title_keys(title):
+    """(whole title, {whole title, the part before a colon, the part after it}), without
+    bracketed tags or edition words: "Storm Front (Dramatized Adaptation): Series, Book 1"
+    -> ("stormfrontseriesbook1", {"stormfrontseriesbook1", "stormfront", "seriesbook1"})."""
     plain = re.sub(r"\s*[\(\[][^\)\]]*[\)\]]", "", title or "")
     plain = _EDITION_WORDS.sub("", plain).strip(" -") or (title or "")
-    return normalize(plain.split(":")[0])
+    main, _, rest = plain.partition(":")
+    full = normalize(plain)
+    return full, {k for k in (full, normalize(main.strip()), normalize(rest.strip())) if k}
+
+
+def title_key(title):
+    """The whole title for grouping: "Series: Title" and "Series: Other Title" differ."""
+    return title_keys(title)[0]
+
+
+def titles_match(a, b):
+    """The same book's title: equal, or one is the other's main title or subtitle part
+    ("Storm Front" / "Storm Front: The Dresden Files, Book 1", "The Final Empire" /
+    "Mistborn: The Final Empire"), but not two books of a series ("Series: One" /
+    "Series: Two")."""
+    full_a, keys_a = title_keys(a)
+    full_b, keys_b = title_keys(b)
+    return bool(full_a and full_b) and (full_a in keys_b or full_b in keys_a)
 
 
 def primary_author(authors):
@@ -362,16 +380,15 @@ def find_match(library, book):
         for entry in library:
             if entry.get("asin") == asin:
                 return entry
-    key = title_key(book.get("title"))
+    title = book.get("title")
     authors = author_keys(book.get("authors"))
     edition = edition_of(book)
-    if not key:
+    if not title_key(title):
         return None
-    for entry in library:
-        if (title_key(entry.get("title")) == key
-                and author_keys(entry.get("authors")) & authors and edition_of(entry) == edition):
-            return entry
-    return None
+    same = [e for e in library if author_keys(e.get("authors")) & authors and edition_of(e) == edition]
+    # The exact title first, then a title that's this one with or without its subtitle
+    return next((e for e in same if title_key(e.get("title")) == title_key(title)), None) or \
+        next((e for e in same if titles_match(e.get("title"), title)), None)
 
 
 def find_import_match(library, book):
