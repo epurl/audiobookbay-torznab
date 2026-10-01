@@ -12,6 +12,7 @@ An audiobook manager in the style of Sonarr and Radarr, built around AudiobookBa
 - **Existing library:** import the audiobooks you already have, from Audiobookshelf's `metadata.json` or folder names. Files are never moved.
 - **Series:** a Sonarr-style page with every series, Audible's full book list and what you're missing. Monitor a series to get the books you pick and every new release.
 - **Editions:** narrated, dramatized (full cast, GraphicAudio) and abridged editions are told apart, matched, searched for and imported separately.
+- **Authors:** an author's page with all their books; follow an author to get their new releases automatically.
 - **Calendar:** your books on their release dates, coloured by status like Sonarr's calendar, plus trending Audible releases filtered by trend and genre.
 - **Activity:** live download queue and history. **Audiobookshelf:** metadata, covers and library scans.
 
@@ -127,6 +128,10 @@ The **Series** page lists every series your books are in. A book can be in sever
 Open a series to see every book Audible lists, in order. Books you don't have show an **Add** button. Duplicate editions are merged, and dramatized versions are listed only when there's no regular one.
 
 **Monitor Series** lets you tick which missing books to add. Monitored series are checked every 6 hours, and new releases are added automatically. Books you didn't pick aren't added again.
+
+## Authors
+
+Click an author's name (in a book's details, Search results, a series page or the Calendar) to see every book Audible lists for them, newest first, with what you have. **Follow Author** lets you tick the books to add now (upcoming ones are ticked); after that their new books are added automatically, checked every 6 hours in the editions your **Editions** setting asks for. **Followed Authors** (on the Series page) lists them; each can be paused, synced now or unfollowed (books stay in your library).
 
 ## Calendar
 

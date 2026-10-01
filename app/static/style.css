@@ -2731,3 +2731,58 @@ tr.clickable {
     border: 1px solid var(--border-color);
     color: var(--text-muted);
 }
+
+/* Authors */
+.edition-upcoming {
+    color: #60a5fa;
+}
+
+.authors-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 10px;
+}
+
+.author-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px;
+    text-align: left;
+    font: inherit;
+    color: var(--text-primary);
+    background-color: var(--bg-dark);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.author-card img {
+    width: 56px;
+    height: 56px;
+    object-fit: cover;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+.author-card-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    font-size: 0.85rem;
+}
+
+.author-link {
+    color: inherit;
+    text-align: left;
+    padding: 0;
+}
+
+@media (hover: hover) {
+    .author-link:hover,
+    .author-card:hover {
+        color: var(--primary);
+        border-color: var(--primary);
+    }
+}

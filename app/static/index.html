@@ -133,6 +133,7 @@
                             <button class="secondary-btn" data-series-view="posters" title="Posters">Posters</button>
                             <button class="secondary-btn" data-series-view="table" title="Table">Table</button>
                         </div>
+                        <button id="followedAuthorsBtn" class="secondary-btn" title="Authors whose new books are added automatically">Followed Authors</button>
                         <button id="seriesRefreshBtn" class="secondary-btn" title="Look up every series on Audible again">Refresh</button>
                     </div>
                 </div>
@@ -161,6 +162,19 @@
             <div class="content-wrapper" id="seriesDetailView" hidden>
                 <button class="link-btn back-link" id="seriesBackBtn">&larr; Series</button>
                 <div id="seriesDetail"></div>
+            </div>
+
+            <!-- Author page and followed authors -->
+            <div class="content-wrapper" id="authorView" hidden>
+                <button class="link-btn back-link" id="authorBackBtn">&larr; Back</button>
+                <div id="authorDetail"></div>
+            </div>
+            <div class="content-wrapper" id="authorsView" hidden>
+                <div class="page-header">
+                    <h2>Followed Authors</h2>
+                </div>
+                <p class="settings-hint">New books by these authors are added automatically (checked every 6 hours, in the editions your settings ask for). Open an author from a book's details, a series page or Search to follow them.</p>
+                <div id="authorsList" class="authors-list"></div>
             </div>
 
             <!-- Calendar View -->
@@ -686,6 +700,27 @@
     </div>
 
     <!-- Import Existing Library Modal -->
+    <div id="authorModal" class="modal">
+        <div class="modal-content modal-medium">
+            <div class="modal-header">
+                <h2>Follow <span id="authorModalName"></span></h2>
+                <button type="button" class="close-btn" id="closeAuthorModal" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-pad">
+                <p class="modal-lead">Choose the books to add now (upcoming ones are ticked). Books the author releases later are added automatically.</p>
+                <div class="pick-actions">
+                    <button class="link-btn" id="authorPickAll">Select all</button>
+                    <button class="link-btn" id="authorPickNone">Select none</button>
+                </div>
+                <div id="authorPickList" class="pick-list"></div>
+            </div>
+            <div class="modal-footer">
+                <span class="action-status" id="authorModalStatus"></span>
+                <button class="primary-btn" id="authorFollowBtn">Follow</button>
+            </div>
+        </div>
+    </div>
+
     <div id="organizeModal" class="modal">
         <div class="modal-content import-content">
             <div class="modal-header">

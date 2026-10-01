@@ -9,8 +9,8 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import (audible, audiobookshelf, auth, book_search, db, editions, health, indexers, library, organize,
-                 release_calendar, scraper, series_index, splitter)
+from app import (audible, audiobookshelf, auth, authors, book_search, db, editions, health, indexers, library,
+                 organize, release_calendar, scraper, series_index, splitter)
 from app.monitor import (auto_download_book, classify_editions, find_missing_books, grab, match_job, run_monitor_loop,
                          schedule_search, schedule_searches, start_match_job, sync_series)
 from app.qbittorrent import get_torrents, test_connection
@@ -191,6 +191,56 @@ async def api_match_book(book_id: str, request: Request):
     db.apply_audible_match(book_id, audible.product_to_book(products[0], prefer_series=book.get("series", "")))
     db.add_history("matched", book, f"Matched to Audible {asin}")
     return {"success": True, "book": db.get_book(book_id)}
+
+@app.get("/api/authors")
+async def api_authors():
+    """Followed authors."""
+    return {"authors": authors.summary()}
+
+@app.get("/api/authors/detail")
+async def api_author_detail(name: str):
+    """An author's books on Audible, with library status."""
+    if not name.strip():
+        raise HTTPException(status_code=400, detail="Missing author")
+    try:
+        return await authors.detail(name.strip())
+    except Exception as e:
+        logger.error(f"Author lookup failed: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail="Couldn't load the author's books from Audible.")
+
+@app.post("/api/authors")
+async def api_follow_author(request: Request):
+    """Follows an author; add_asins are the books to add now."""
+    data = await request.json()
+    name = (data.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Missing author")
+    entry, added = await authors.follow(name, data.get("add_asins") or [])
+    schedule_searches([b for b in added if b["status"] == "Monitored"])
+    return {"success": True, "author": entry, "added": len(added)}
+
+@app.patch("/api/authors/{author_id}")
+async def api_update_author(author_id: str, request: Request):
+    if not authors.get(author_id):
+        raise HTTPException(status_code=404, detail="Author not followed")
+    data = await request.json()
+    if "monitored" in data:
+        authors.update(author_id, monitored=bool(data["monitored"]))
+    return {"success": True}
+
+@app.post("/api/authors/{author_id}/sync")
+async def api_sync_author(author_id: str):
+    entry = authors.get(author_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Author not followed")
+    added = await authors.sync(entry, db.get_settings())
+    schedule_searches([b for b in added if b["status"] == "Monitored"])
+    return {"success": True, "added": len(added)}
+
+@app.delete("/api/authors/{author_id}")
+async def api_unfollow_author(author_id: str):
+    authors.unfollow(author_id)
+    return {"success": True}
 
 @app.get("/api/indexers")
 async def api_indexers():

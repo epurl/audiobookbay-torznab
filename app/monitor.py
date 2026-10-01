@@ -194,6 +194,14 @@ async def check_library():
             except Exception as e:
                 logger.error(f"Could not sync series {series.get('title')}: {e}")
 
+    from app import authors  # Followed authors' new releases
+    for author in authors.followed():
+        if author.get("monitored"):
+            try:
+                await authors.sync(author, settings)
+            except Exception as e:
+                logger.error(f"Could not check new books by {author.get('name')}: {e}")
+
     for book in db.get_library():
         title = book.get("title")
         status = book.get("status")

@@ -212,13 +212,14 @@ async function initApp() {
     setupCalendar();
     setupSystem();
     setupIndexers();
+    setupAuthors();
     window.addEventListener('hashchange', route);
     route();
 }
 
 // Each page has its own address (#/library, #/series/<key>, ...), so the browser's
 // Back and Forward buttons, refreshing and bookmarks all work
-const PAGES = { search: 'searchView', library: 'libraryView', series: 'seriesView', calendar: 'calendarView', activity: 'activityView', system: 'systemView', settings: 'settingsView' };
+const PAGES = { search: 'searchView', library: 'libraryView', series: 'seriesView', calendar: 'calendarView', activity: 'activityView', system: 'systemView', settings: 'settingsView', author: 'authorView', authors: 'authorsView' };
 const PAGE_NAMES = Object.fromEntries(Object.entries(PAGES).map(([name, view]) => [view, name]));
 
 function navigate(path) {
@@ -242,6 +243,10 @@ function route() {
         showSeriesDetail(arg);
         return;
     }
+    if (name === 'author' && arg) {
+        showAuthorPage(arg);
+        return;
+    }
     activateView(PAGES[name]);
     if (name === 'system') showSystemTab(arg || 'health');
     if (name === 'search' && arg && arg !== lastSearchQuery) {
@@ -256,6 +261,7 @@ function activateView(viewId) {
     if (viewId === 'libraryView') renderLibrary();
     if (viewId === 'seriesView') renderSeries();
     if (viewId === 'calendarView') renderCalendar();
+    if (viewId === 'authorsView') renderFollowedAuthors();
     if (viewId === 'activityView') {
         renderActivity();
         activityTimer = setInterval(renderActivity, 5000);
@@ -1167,10 +1173,17 @@ function seriesPageKey(entry) {
 function renderBookSeriesLinks(book) {
     const box = document.getElementById('bookSeriesLinks');
     const entries = seriesEntries(book);
-    box.hidden = !entries.length;
-    box.innerHTML = entries.length ? `<span class="muted">Series:</span> ` + entries.map((e, i) =>
-        `<button class="series-chip" data-index="${i}">${esc(e.name)}${e.sequence ? ' #' + esc(e.sequence) : ''}</button>`).join('') : '';
-    box.querySelectorAll('.series-chip').forEach(chip => chip.addEventListener('click', () => {
+    const people = String(book.authors || '').split(',').map(a => a.trim()).filter(Boolean);
+    box.hidden = !entries.length && !people.length;
+    box.innerHTML = (people.length ? `<span class="muted">Author:</span> ` + people.map(a =>
+        `<button class="series-chip author-chip" data-author="${esc(a)}">${esc(a)}</button>`).join('') + ' ' : '')
+        + (entries.length ? `<span class="muted">Series:</span> ` + entries.map((e, i) =>
+        `<button class="series-chip" data-index="${i}">${esc(e.name)}${e.sequence ? ' #' + esc(e.sequence) : ''}</button>`).join('') : '');
+    box.querySelectorAll('.author-chip').forEach(chip => chip.addEventListener('click', () => {
+        hideModal(bookModal);
+        openAuthorPage(chip.dataset.author);
+    }));
+    box.querySelectorAll('.series-chip:not(.author-chip)').forEach(chip => chip.addEventListener('click', () => {
         hideModal(bookModal);
         openSeriesDetail(seriesPageKey(entries[chip.dataset.index]));
     }));
@@ -1390,7 +1403,7 @@ function renderSeriesDetail() {
             <img src="${esc(safeUrl(sr.cover, PLACEHOLDER_COVER))}" alt="" class="series-hero-cover">
             <div class="series-hero-info">
                 <h2>${esc(sr.title)}</h2>
-                <div class="muted">${esc(sr.author || '')}</div>
+                <div class="muted">${sr.author ? `<button class="link-btn author-link" data-author="${esc(sr.author)}">${esc(sr.author)}</button>` : ''}</div>
                 <div class="series-hero-stats">
                     ${seriesProgress(sr)}
                     <span class="stat"><b>${sr.owned}</b> on disk</span>
@@ -1722,7 +1735,7 @@ function renderGroup(title, books) {
             <div class="book-info">
                 <div class="book-title" title="${esc(book.title)}">${esc(book.title)}</div>
                 ${editionBadge(book) ? `<div class="edition-badges">${editionBadge(book)}</div>` : ''}
-                <div class="book-author">${esc(book.authors)}</div>
+                <div class="book-author"><button class="link-btn author-link" data-author="${esc(primaryAuthor(book.authors))}">${esc(book.authors)}</button></div>
                 <div class="book-narrator">Narrated by: ${esc(book.narrators)}</div>
                 <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px;">Release: ${esc(released || 'Unknown')}</div>
                 ${addBtnHtml}
@@ -2196,7 +2209,7 @@ function openCalendarEvent(ev) {
             <div>
                 <h3>${esc(b.title)}</h3>
                 ${b.subtitle ? `<div class="muted">${esc(b.subtitle)}</div>` : ''}
-                <div class="cal-detail-author">${esc(b.authors)}</div>
+                <div class="cal-detail-author"><button class="link-btn author-link" data-author="${esc(primaryAuthor(b.authors))}">${esc(b.authors)}</button></div>
                 ${b.from_author ? '<span class="badge match">From your authors</span>' : ''}
                 <dl class="cal-facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
                 <div class="cal-detail-actions">
@@ -2709,4 +2722,177 @@ function setupIndexers() {
         setActionStatus(status, ok ? data.message : (data.detail || 'Test failed'), ok && data.ok ? 'ok' : 'error');
     });
     document.getElementById('ixCancelBtn').addEventListener('click', () => fillIndexerForm(null));
+}
+
+
+// -----------------
+// Authors: an author's books, and following them (new releases added automatically)
+// -----------------
+let currentAuthor = null;
+
+function openAuthorPage(name) {
+    document.querySelectorAll('.modal.show').forEach(hideModal);
+    navigate('/author/' + encodeURIComponent(name));
+}
+
+async function showAuthorPage(name) {
+    showView('authorView', 'seriesView');
+    const box = document.getElementById('authorDetail');
+    box.innerHTML = '<div class="loader"><div class="spinner"></div></div>';
+    const res = await fetch(`/api/authors/detail?name=${encodeURIComponent(name)}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        box.innerHTML = `<div class="empty-state"><h3>Couldn't load ${esc(name)}</h3><p>${esc(data.detail || 'Try again in a moment.')}</p></div>`;
+        return;
+    }
+    currentAuthor = data;
+    drawAuthorPage();
+}
+
+async function refreshAuthorPage() {
+    const main = document.querySelector('.main-content');
+    const scroll = { window: window.scrollY, main: main.scrollTop };
+    const res = await fetch(`/api/authors/detail?name=${encodeURIComponent(currentAuthor.name)}`);
+    if (!res.ok) return;
+    currentAuthor = await res.json();
+    await fetchLibrary();
+    drawAuthorPage();
+    main.scrollTop = scroll.main;
+    window.scrollTo(0, scroll.window);
+}
+
+function drawAuthorPage() {
+    const a = currentAuthor;
+    const f = a.followed;
+    const actions = f
+        ? `<label class="checkbox-label"><input type="checkbox" id="authorMonitored" ${f.monitored ? 'checked' : ''}> Following</label>
+           <button class="secondary-btn" id="authorSyncBtn">Sync</button>
+           <button class="danger-btn" id="authorUnfollowBtn">Unfollow</button>`
+        : `<button class="primary-btn" id="authorFollowOpen">Follow Author</button>`;
+    document.getElementById('authorDetail').innerHTML = `
+        <div class="series-hero">
+            <div class="series-hero-info">
+                <h2>${esc(a.name)}</h2>
+                <div class="series-hero-stats">
+                    <span class="stat"><b>${a.books.length}</b> on Audible</span>
+                    <span class="stat"><b>${a.in_library}</b> in library</span>
+                    <span class="stat"><b>${a.owned}</b> on disk</span>
+                    ${a.upcoming ? `<span class="stat"><b>${a.upcoming}</b> upcoming</span>` : ''}
+                    ${f ? `<span class="stat">${f.monitored ? 'Following' : 'Paused'}${f.last_sync ? ' · checked ' + esc(new Date(f.last_sync).toLocaleDateString()) : ''}</span>` : ''}
+                </div>
+                <div class="series-hero-actions">${actions}</div>
+            </div>
+        </div>
+        ${a.books.length ? `<div class="table-container series-books-table"><table class="data-table">
+            <thead><tr><th class="col-date">Released</th><th>Title</th><th>Series</th><th class="col-len">Length</th><th class="col-status">Status</th></tr></thead>
+            <tbody>${a.books.map((b, i) => `<tr class="${b.book_id ? 'clickable' : 'not-owned'}" data-index="${i}">
+                <td class="muted nowrap">${esc(releaseDate(b.release_date))}${b.upcoming ? ' <span class="edition-badge edition-upcoming">Upcoming</span>' : ''}</td>
+                <td>${esc(b.title)} ${editionOf(b) !== 'narrated' ? `<span class="edition-badge edition-${editionOf(b)}">${EDITION_LABELS[editionOf(b)]}</span>` : ''}</td>
+                <td class="muted">${esc(seriesLabel(b))}</td>
+                <td class="muted nowrap">${esc(formatRuntime(b.runtime_min))}</td>
+                <td class="nowrap">${b.book_id ? `<span class="library-status ${esc(statusClass(b.status))} inline-status">${esc(b.status)}</span>`
+                    : `<span class="muted">Not in library</span> <button class="link-btn author-add" data-index="${i}">Add</button>`}</td>
+            </tr>`).join('')}</tbody></table></div>`
+        : '<div class="empty-state"><h3>No books found</h3><p>Audible lists no books by this name (in your language setting).</p></div>'}`;
+
+    const box = document.getElementById('authorDetail');
+    box.querySelectorAll('tr.clickable').forEach(tr => tr.addEventListener('click', () => openBookModal(a.books[tr.dataset.index].book_id)));
+    box.querySelectorAll('.author-add').forEach(btn => btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        btn.disabled = true;
+        const book = a.books[btn.dataset.index];
+        const { ok, data } = await postJSON('/api/library', book);
+        if (!ok) { toast(data.detail || 'Could not add the book', 'error'); btn.disabled = false; return; }
+        toast(`Added "${book.title}" (${data.status})`, 'ok');
+        refreshAuthorPage();
+    }));
+    document.getElementById('authorFollowOpen')?.addEventListener('click', openFollowDialog);
+    document.getElementById('authorMonitored')?.addEventListener('change', async (e) => {
+        await postJSON(`/api/authors/${encodeURIComponent(f.id)}`, { monitored: e.target.checked }, 'PATCH');
+        toast(e.target.checked ? `Following ${a.name}` : `Paused: new books by ${a.name} won't be added`, 'ok');
+    });
+    document.getElementById('authorSyncBtn')?.addEventListener('click', async (e) => {
+        e.currentTarget.disabled = true;
+        const { ok, data } = await postJSON(`/api/authors/${encodeURIComponent(f.id)}/sync`);
+        toast(ok ? `${data.added} new book${data.added === 1 ? '' : 's'} added` : (data.detail || 'Sync failed'), ok ? 'ok' : 'error');
+        refreshAuthorPage();
+    });
+    document.getElementById('authorUnfollowBtn')?.addEventListener('click', async () => {
+        if (!await confirmDialog(`Stop following ${a.name}?\n\nTheir new books won't be added any more. Books already in your library stay.`,
+            { title: 'Unfollow author', confirmText: 'Unfollow', danger: true })) return;
+        await fetch(`/api/authors/${encodeURIComponent(f.id)}`, { method: 'DELETE' });
+        refreshAuthorPage();
+    });
+}
+
+function authorPicked() {
+    return [...document.querySelectorAll('#authorPickList input:checked')].map(cb => cb.value);
+}
+
+function updateFollowButton() {
+    const n = authorPicked().length;
+    document.getElementById('authorFollowBtn').textContent = n ? `Follow & Add ${n} Book${n === 1 ? '' : 's'}` : 'Follow (New Books Only)';
+}
+
+function openFollowDialog() {
+    const a = currentAuthor;
+    document.getElementById('authorModalName').textContent = a.name;
+    setActionStatus(document.getElementById('authorModalStatus'), '');
+    const list = document.getElementById('authorPickList');
+    list.innerHTML = a.candidates.length ? a.candidates.map(b => `
+        <label class="pick-row">
+            <input type="checkbox" value="${esc(b.asin)}" ${b.upcoming ? 'checked' : ''}>
+            <span class="muted pick-seq">${esc(releaseDate(b.release_date, 4))}</span>
+            <span class="pick-title">${esc(b.title)}${b.series ? ` <span class="muted">(${esc(seriesLabel(b))})</span>` : ''}${b.upcoming ? ' <span class="edition-badge edition-upcoming">Upcoming</span>' : ''}</span>
+        </label>`).join('') : '<p class="muted">You already have every book by this author (in the editions your settings ask for).</p>';
+    list.querySelectorAll('input').forEach(cb => cb.addEventListener('change', updateFollowButton));
+    updateFollowButton();
+    showModal(document.getElementById('authorModal'));
+}
+
+async function renderFollowedAuthors() {
+    const box = document.getElementById('authorsList');
+    const data = await fetch('/api/authors').then(r => r.json()).catch(() => ({ authors: [] }));
+    box.innerHTML = data.authors.length ? data.authors.map(a => `<button class="author-card" data-author="${esc(a.name)}">
+        <img src="${esc(safeUrl(a.cover, PLACEHOLDER_COVER))}" alt="" loading="lazy" onerror="this.src='${PLACEHOLDER_COVER}'">
+        <span class="author-card-text"><b>${esc(a.name)}</b>
+            <span class="muted">${a.in_library} in library · ${a.on_disk} on disk${a.monitored ? '' : ' · paused'}</span>
+            ${a.last_sync ? `<span class="muted">Checked ${esc(new Date(a.last_sync).toLocaleDateString())}</span>` : ''}</span>
+    </button>`).join('') : '<div class="empty-state"><h3>No followed authors</h3><p>Open an author from a book\'s details, a series page or Search, then Follow.</p></div>';
+    box.querySelectorAll('.author-card').forEach(card => card.addEventListener('click', () => openAuthorPage(card.dataset.author)));
+}
+
+function setupAuthors() {
+    // Author links anywhere (search results, series pages, calendar)
+    document.addEventListener('click', (e) => {
+        const link = e.target.closest('.author-link');
+        if (!link) return;
+        e.preventDefault();
+        e.stopPropagation();
+        openAuthorPage(link.dataset.author);
+    }, true);
+    document.getElementById('authorBackBtn').addEventListener('click', () => history.back());
+    document.getElementById('followedAuthorsBtn').addEventListener('click', () => navigate('/authors'));
+    const modal = document.getElementById('authorModal');
+    document.getElementById('closeAuthorModal').addEventListener('click', () => hideModal(modal));
+    modal.addEventListener('click', (e) => { if (e.target === modal) hideModal(modal); });
+    document.getElementById('authorPickAll').addEventListener('click', () => {
+        document.querySelectorAll('#authorPickList input').forEach(cb => { cb.checked = true; });
+        updateFollowButton();
+    });
+    document.getElementById('authorPickNone').addEventListener('click', () => {
+        document.querySelectorAll('#authorPickList input').forEach(cb => { cb.checked = false; });
+        updateFollowButton();
+    });
+    document.getElementById('authorFollowBtn').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        setActionStatus(document.getElementById('authorModalStatus'), 'Following…');
+        const { ok, data } = await postJSON('/api/authors', { name: currentAuthor.name, add_asins: authorPicked() });
+        btn.disabled = false;
+        if (!ok) return setActionStatus(document.getElementById('authorModalStatus'), data.detail || 'Failed', 'error');
+        hideModal(modal);
+        toast(`Following ${currentAuthor.name}${data.added ? `: added ${data.added} book${data.added === 1 ? '' : 's'}` : ''}`, 'ok');
+        refreshAuthorPage();
+    });
 }
