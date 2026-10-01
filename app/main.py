@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 
 from app import (audible, audiobookshelf, auth, authors, book_search, db, editions, health, indexers, library,
-                 organize, reading_list, release_calendar, scraper, series_index, splitter)
+                 organize, reading_list, release_calendar, scraper, series_index, splitter, stats)
 from app.monitor import (auto_download_book, classify_editions, find_missing_books, grab, match_job, run_monitor_loop,
                          schedule_search, schedule_searches, start_match_job, sync_series)
 from app.qbittorrent import get_torrents, test_connection
@@ -307,6 +307,11 @@ async def api_test_abb(request: Request):
     if url and not url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="The address must start with https://")
     return await scraper.test_connection(url, data.get("cookie") or None, data.get("user_agent") or "")
+
+@app.get("/api/stats")
+async def api_stats():
+    """Library statistics for System > Stats."""
+    return await asyncio.to_thread(stats.compute)
 
 @app.get("/api/health")
 async def api_health():

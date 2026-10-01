@@ -167,6 +167,8 @@ Click a trending book for its details, then **Add to Library** (upcoming books b
 | Not matched on Audible, no runtime | Match on Audible (one, or all at once) |
 | No cover (and none inside the audio files) | Get Audible's cover (one, or all at once) |
 
+**Stats** shows totals (books, on disk, hours, size, wanted, authors, series), library growth over the last 24 months, top authors and narrators by hours, top series, status, edition, format and language breakdowns, books by release year, and downloads (grabbed, imported, held, rejected, stalled) for the last 30 days and all time.
+
 **Deep Check** opens every audio file in the background to find unreadable files, embedded covers, and books whose length is far from Audible's runtime.
 
 ## Audiobookshelf

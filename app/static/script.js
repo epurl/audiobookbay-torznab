@@ -2998,3 +2998,70 @@ function setupListImport() {
         watchListJob();
     });
 }
+
+
+// -----------------
+// System > Stats
+// -----------------
+function statBars(title, items, unit = '') {
+    if (!items || !items.length) return '';
+    const max = Math.max(...items.map(i => i.value), 1);
+    return `<div class="stats-card"><h3>${esc(title)}</h3>${items.map(i => `<div class="stat-bar">
+        <span class="stat-bar-name" title="${esc(i.name)}">${esc(i.name)}</span>
+        <span class="stat-bar-track"><span class="stat-bar-fill" style="width:${Math.max(2, i.value / max * 100)}%"></span></span>
+        <span class="stat-bar-value">${esc(i.value.toLocaleString())}${unit}</span>
+    </div>`).join('')}</div>`;
+}
+
+function growthChart(months) {
+    const max = Math.max(...months.map(m => m.total), 1);
+    const w = 600, h = 140, bw = w / months.length;
+    const bars = months.map((m, i) => {
+        const th = m.total / max * (h - 20), ah = m.added / max * (h - 20);
+        const label = new Date(m.month + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+        return `<g><title>${esc(label)}: ${m.total} books (${m.added} added)</title>
+            <rect x="${i * bw + 2}" y="${h - th}" width="${bw - 4}" height="${th}" class="growth-total"></rect>
+            <rect x="${i * bw + 2}" y="${h - ah}" width="${bw - 4}" height="${ah}" class="growth-added"></rect></g>`;
+    }).join('');
+    const first = new Date(months[0].month + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+    return `<div class="stats-card stats-wide"><h3>Library growth <span class="muted">(last 24 months; orange: added that month)</span></h3>
+        <svg viewBox="0 0 ${w} ${h}" class="growth-chart" preserveAspectRatio="none" role="img" aria-label="Library growth">${bars}</svg>
+        <div class="growth-axis"><span>${esc(first)}</span><span>Now: ${months[months.length - 1].total} books</span></div></div>`;
+}
+
+async function renderStats() {
+    const body = document.getElementById('statsBody');
+    const d = await fetch('/api/stats').then(r => r.json()).catch(() => null);
+    if (!d) { body.innerHTML = '<p class="muted">Couldn\'t load stats.</p>'; return; }
+    const t = d.totals;
+    const card = (label, value, hint = '') => `<div class="stat-tile"><b>${esc(value)}</b><span>${esc(label)}</span>${hint ? `<small>${esc(hint)}</small>` : ''}</div>`;
+    const dl = d.downloads;
+    const dlRows = [['Grabbed', 'grabbed'], ['Imported', 'imported'], ['Held for review', 'needs_review'], ['Approved', 'approved'],
+        ['Rejected', 'rejected'], ['Stalled', 'stalled'], ['Failed', 'failed']];
+    body.innerHTML = `
+        <div class="stat-tiles">
+            ${card('Books', t.books.toLocaleString())}
+            ${card('On disk', t.on_disk.toLocaleString())}
+            ${card('Hours on disk', t.hours.toLocaleString(), `${(t.hours / 24).toFixed(1)} days`)}
+            ${card('Size on disk', formatSize(t.size_bytes))}
+            ${card('Wanted', t.wanted.toLocaleString(), t.upcoming ? `+ ${t.upcoming} upcoming` : '')}
+            ${card('Authors', t.authors.toLocaleString())}
+            ${card('Series', t.series.toLocaleString())}
+            ${card('Matched on Audible', t.books ? Math.round(t.matched / t.books * 100) + '%' : '—')}
+        </div>
+        <div class="stats-grid">
+            ${growthChart(d.growth)}
+            ${statBars('Top authors (hours on disk)', d.top_authors, ' h')}
+            ${statBars('Top narrators (hours on disk)', d.top_narrators, ' h')}
+            ${statBars('Top series (books)', d.top_series)}
+            ${statBars('Status', d.statuses)}
+            ${statBars('Editions', d.editions)}
+            ${statBars('Formats (on disk)', d.formats)}
+            ${statBars('Languages', d.languages)}
+            <div class="stats-card"><h3>Downloads</h3>
+                <table class="data-table stats-table"><thead><tr><th></th><th>Last 30 days</th><th>All time</th></tr></thead>
+                <tbody>${dlRows.map(([label, key]) => `<tr><td>${label}</td><td>${dl[key].recent}</td><td>${dl[key].all}</td></tr>`).join('')}</tbody></table>
+            </div>
+            ${statBars('Books by release year', d.release_years.slice().reverse().slice(0, 15))}
+        </div>`;
+}
