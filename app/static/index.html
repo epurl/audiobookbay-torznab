@@ -118,8 +118,8 @@
                         <option value="Monitored">Monitored</option><option value="Unmonitored">Unmonitored</option><option value="Imported">Imported</option><option value="Missing">Missing</option>
                     </select>
                     <select id="bulkEdition" class="form-select" aria-label="Set edition">
-                        <option value="">Set edition…</option>
-                        <option value="narrated">Unabridged</option><option value="abridged">Abridged</option>
+                        <option value="">Abridged…</option>
+                        <option value="abridged">Mark abridged</option><option value="narrated">Mark unabridged</option>
                         <option value="__detect">Detect again</option>
                     </select>
                     <button class="secondary-btn" id="bulkMatch">Match on Audible</button>
@@ -808,7 +808,7 @@
                     <label>Status<select id="bookStatus" class="form-select"><option value="Monitored">Monitored</option><option value="Unmonitored">Unmonitored</option><option value="Unreleased">Unreleased</option><option value="Downloading">Downloading</option><option value="Downloaded">Downloaded</option><option value="Needs Review">Needs Review</option><option value="Imported">Imported</option><option value="Missing">Missing</option></select></label>
                     <label>ASIN<input type="text" id="bookAsin" class="form-input"></label>
                     <label>Runtime (min)<input type="number" id="bookRuntime" class="form-input" min="0"></label>
-                    <label>Edition<select id="bookEdition" class="form-select"><option value="narrated">Unabridged</option><option value="abridged">Abridged</option></select></label>
+                    <label class="checkbox-label book-abridged"><input type="checkbox" id="bookAbridged"> Abridged</label>
                     <div class="book-edition-reason" id="bookEditionReason"></div>
                 </div>
             </div>

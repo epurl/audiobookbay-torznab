@@ -62,11 +62,23 @@ function editionOf(book) {
     return EDITION_LABELS[edition] ? edition : 'narrated';
 }
 
-// A badge for anything but a narrated edition, plus a flag when the edition needs checking
+// Abridged books and series (dramatizations included) get a small scissors icon; unabridged
+// ones nothing
+const SCISSORS = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><line x1="20" y1="4" x2="8.12" y2="15.88"></line><line x1="14.47" y1="14.48" x2="20" y2="20"></line><line x1="8.12" y1="8.12" x2="12" y2="12"></line></svg>';
+
+function isAbridged(item) {
+    return !!item && (item.abridged === true || editionOf(item) === 'abridged');
+}
+
+function abridgedIcon(item, why = '') {
+    if (!isAbridged(item)) return '';
+    const title = why ? `Abridged: ${why}` : 'Abridged';
+    return `<span class="abridged-icon" title="${esc(title)}" role="img" aria-label="Abridged">${SCISSORS}</span>`;
+}
+
+// The abridged icon, plus a flag when the edition needs checking
 function editionBadge(book) {
-    const edition = editionOf(book);
-    const badge = edition !== 'narrated'
-        ? `<span class="edition-badge edition-${edition}" title="${esc(book.edition_reason || '')}">${EDITION_LABELS[edition]}</span>` : '';
+    const badge = abridgedIcon(book, book.edition_reason || '');
     const check = book.edition_check
         ? `<span class="edition-badge edition-check" title="${esc(book.edition_reason || '')}">Check edition</span>` : '';
     return badge + check;
@@ -125,8 +137,7 @@ function formatDuration(seconds) {
 
 function seriesLabel(book) {
     if (!book.series) return '';
-    const name = editionOf(book) === 'abridged' ? `${book.series} (Abridged)` : book.series;
-    return book.sequence ? `${name} #${book.sequence}` : name;
+    return book.sequence ? `${book.series} #${book.sequence}` : book.series;
 }
 
 function formatSize(bytes) {
@@ -710,7 +721,8 @@ function renderLibrary() {
                 const count = books.filter(b => libraryGroupName(b) === group).length;
                 const heading = document.createElement('h3');
                 heading.className = 'library-group-heading';
-                heading.innerHTML = `${esc(group)} <span class="muted">${count}</span>`;
+                const abridged = group.endsWith(' (Abridged)');
+                heading.innerHTML = `${esc(abridged ? group.slice(0, -' (Abridged)'.length) : group)}${abridged ? abridgedIcon({ abridged: true }) : ''} <span class="muted">${count}</span>`;
                 fragment.appendChild(heading);
                 lastGroup = group;
             }
@@ -819,7 +831,7 @@ function setupLibrary() {
         const data = await runBulk(detect ? 'detect_edition' : 'edition', detect ? {} : { edition });
         if (!data) return;
         toast(detect ? `Checked the edition of ${data.count} book${data.count === 1 ? '' : 's'}`
-            : `${data.count} book${data.count === 1 ? '' : 's'} set to ${EDITION_LABELS[edition].toLowerCase()}`, 'ok');
+            : `${data.count} book${data.count === 1 ? '' : 's'} marked ${edition === 'abridged' ? 'abridged' : 'unabridged'}`, 'ok');
         await fetchLibrary();
         setSelectMode(false);
     });
@@ -890,7 +902,7 @@ function hideModal(el) {
 // -----------------
 let currentBookId = null;
 const bookModal = document.getElementById('bookModal');
-const BOOK_FIELDS = { bookTitle: 'title', bookAuthors: 'authors', bookNarrators: 'narrators', bookSeries: 'series', bookSequence: 'sequence', bookStatus: 'status', bookAsin: 'asin', bookRuntime: 'runtime_min', bookEdition: 'edition' };
+const BOOK_FIELDS = { bookTitle: 'title', bookAuthors: 'authors', bookNarrators: 'narrators', bookSeries: 'series', bookSequence: 'sequence', bookStatus: 'status', bookAsin: 'asin', bookRuntime: 'runtime_min' };
 
 async function openBookModal(bookId) {
     const book = appLibrary.find(b => b.id === bookId);
@@ -904,7 +916,7 @@ async function openBookModal(bookId) {
         document.getElementById(elId).value = book[key] || '';
     }
     document.getElementById('bookStatus').value = book.status || 'Monitored';
-    document.getElementById('bookEdition').value = editionOf(book);
+    document.getElementById('bookAbridged').checked = isAbridged(book);
     document.getElementById('bookEditionReason').textContent = book.edition_reason
         ? `Edition: ${book.edition_reason}${book.edition_check ? '. Check this, then save to confirm.' : ''}` : '';
     const review = document.getElementById('bookReview');
@@ -957,6 +969,7 @@ function setupBookModal() {
         for (const [elId, key] of Object.entries(BOOK_FIELDS)) {
             changes[key] = document.getElementById(elId).value.trim();
         }
+        changes.edition = document.getElementById('bookAbridged').checked ? 'abridged' : 'narrated';
         const res = await fetch(`/api/library/${encodeURIComponent(currentBookId)}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
@@ -1049,11 +1062,11 @@ async function searchMatches() {
     }
     results.innerHTML = data.candidates.map((c, i) => {
         const runtime = c.runtime_min ? `${Math.floor(c.runtime_min / 60)}h ${c.runtime_min % 60}m` : '';
-        const details = [editionOf(c) !== 'narrated' ? EDITION_LABELS[editionOf(c)] : '', c.authors, c.narrators && `read by ${c.narrators}`,
+        const details = [c.authors, c.narrators && `read by ${c.narrators}`,
             seriesLabel(c), runtime, releaseDate(c.release_date, 4)].filter(Boolean).join(' · ');
         return `<div class="match-result">
             <img src="${esc(safeUrl(c.imageUrl, PLACEHOLDER_COVER))}" alt="">
-            <div class="match-info"><b>${esc(c.title)}</b><span class="muted">${esc(details)}</span></div>
+            <div class="match-info"><b>${esc(c.title)}${abridgedIcon(c)}</b><span class="muted">${esc(details)}</span></div>
             <button class="primary-btn" data-index="${i}">Use This</button>
         </div>`;
     }).join('');
@@ -1103,8 +1116,7 @@ function importAudibleHtml(b, i) {
     if (!m) return importLooking.has(b.path) ? '<span class="muted">Looking…</span>' : `<span class="muted">Not matched</span> ${change}`;
     if (m.kind === 'as_is') return `<span class="muted">As named</span> ${change}`;
     const sub = [m.series ? `${m.series}${m.sequence ? ' #' + m.sequence : ''}` : '', m.asin].filter(Boolean).join(' · ');
-    return `${esc(m.title)} ${m.edition && m.edition !== 'narrated' ? `<span class="edition-badge edition-${esc(m.edition)}">${esc(EDITION_LABELS[m.edition] || m.edition)}</span>` : ''}
-        ${change}<span class="book-sub">${esc(sub)}</span>`;
+    return `${esc(m.title)}${abridgedIcon(m)} ${change}<span class="book-sub">${esc(sub)}</span>`;
 }
 
 function importDestHtml(b) {
@@ -1140,9 +1152,7 @@ function renderImportResults() {
         return `<tr data-index="${i}">
             <td><input type="checkbox" class="import-check" data-index="${i}" ${b.state === 'in_library' || importDone[b.path]?.ok ? 'disabled' : 'checked'}></td>
             <td title="${esc(b.path)}">${esc(b.title)}<span class="book-sub">${esc(sub)}</span></td>
-            <td><select class="form-select import-edition${b.edition_check ? ' check' : ''}" data-index="${i}" title="${esc(b.edition_reason || '')}"${b.state === 'in_library' ? ' disabled' : ''}>
-                ${Object.entries(EDITION_LABELS).map(([v, l]) => `<option value="${v}"${editionOf(b) === v ? ' selected' : ''}>${l}</option>`).join('')}
-            </select></td>
+            <td><label class="check-label${b.edition_check ? ' edition-check' : ''}" title="${esc(b.edition_reason || '')}"><input type="checkbox" class="import-edition" data-index="${i}"${isAbridged(b) ? ' checked' : ''}${b.state === 'in_library' ? ' disabled' : ''}> Abridged</label></td>
             <td class="import-audible">${importAudibleHtml(b, i)}</td>
             <td class="import-dest">${importDestHtml(b)}</td>
             <td class="nowrap">${esc(formatSize(b.size_bytes))}<span class="book-sub">${esc(b.format)}</span></td>
@@ -1177,8 +1187,8 @@ function updateImportRow(i) {
 }
 
 function importEditionOf(i) {
-    const sel = document.querySelector(`.import-edition[data-index="${i}"]`);
-    return sel ? sel.value : editionOf(importBooks[i]);
+    const box = document.querySelector(`.import-edition[data-index="${i}"]`);
+    return box ? (box.checked ? 'abridged' : 'narrated') : editionOf(importBooks[i]);
 }
 
 function chooseImportMatch(i) {
@@ -1237,7 +1247,7 @@ function selectedImportPaths() {
 // Editions as shown in the preview (possibly changed), by folder
 function importEditions() {
     const chosen = {};
-    document.querySelectorAll('.import-edition').forEach(sel => { chosen[importBooks[sel.dataset.index].path] = sel.value; });
+    document.querySelectorAll('.import-edition').forEach(box => { chosen[importBooks[box.dataset.index].path] = box.checked ? 'abridged' : 'narrated'; });
     return chosen;
 }
 
@@ -1534,7 +1544,7 @@ function drawSeriesList() {
             <thead><tr><th class="col-check"></th><th>Series</th><th>Author</th><th class="col-progress">Books</th><th class="col-seeds">Missing</th><th class="col-when">Latest release</th></tr></thead>
             <tbody>${list.map(sr => `<tr class="clickable" data-key="${esc(sr.key)}">
                 <td>${seriesBookmark(sr)}</td>
-                <td><b>${esc(sr.title)}</b></td>
+                <td><b>${esc(sr.title)}</b>${abridgedIcon(sr)}</td>
                 <td class="muted">${esc(sr.author || '')}</td>
                 <td>${seriesProgress(sr)}</td>
                 <td>${sr.missing == null ? '<span class="muted">…</span>' : esc(sr.missing)}</td>
@@ -1551,7 +1561,7 @@ function drawSeriesList() {
             </div>
             ${seriesProgress(sr)}
             <div class="poster-info">
-                <div class="book-title" title="${esc(sr.title)}">${esc(sr.title)}</div>
+                <div class="book-title" title="${esc(sr.title)}${sr.abridged ? ' (abridged)' : ''}">${esc(sr.title)}${abridgedIcon(sr)}</div>
                 <div class="book-author">${esc(sr.author || '')}</div>
             </div>
         </div>`).join('')}</div>`;
@@ -1610,7 +1620,7 @@ function seriesRowHtml(r, src, i) {
         : `<span class="muted">Not in library</span> <button class="link-btn add-row" data-src="${src}" data-index="${i}">Add</button>${other}`;
     return `<tr class="${r.book_id ? 'clickable' : 'not-owned'}" data-src="${src}" data-index="${i}">
         <td class="muted">${esc(r.sequence)}</td>
-        <td>${bookLink(r.book_id, r.title)} ${editionOf(r) !== 'narrated' ? `<span class="edition-badge edition-${editionOf(r)}">${EDITION_LABELS[editionOf(r)]}</span>` : ''}</td>
+        <td>${bookLink(r.book_id, r.title)}${abridgedIcon(r)}</td>
         <td class="muted" title="${esc(r.narrators || '')}">${esc(shortNames(r.narrators))}</td>
         <td class="muted nowrap">${esc(releaseDate(r.release_date))}</td>
         <td class="muted nowrap">${esc(formatRuntime(r.runtime_min))}</td>
@@ -1638,7 +1648,7 @@ function renderSeriesDetail() {
         <div class="series-hero">
             <img src="${esc(safeUrl(sr.cover, PLACEHOLDER_COVER))}" alt="" class="series-hero-cover">
             <div class="series-hero-info">
-                <h2>${esc(sr.title)}</h2>
+                <h2>${esc(sr.title)}${abridgedIcon(sr)}</h2>
                 <div class="muted">${sr.author ? `<button class="link-btn author-link" data-author="${esc(sr.author)}">${esc(sr.author)}</button>` : ''}</div>
                 <div class="series-hero-stats">
                     ${seriesProgress(sr)}
@@ -1716,7 +1726,7 @@ function openMonitorDialog(missingRows) {
         <label class="pick-row">
             <input type="checkbox" value="${esc(r.asin)}" ${r.other ? '' : 'checked'}>
             <span class="muted pick-seq">${esc(r.sequence ? '#' + r.sequence : '')}</span>
-            <span class="pick-title">${esc(r.title)}${editionOf(r) !== 'narrated' ? ` <span class="edition-badge edition-${editionOf(r)}">${EDITION_LABELS[editionOf(r)]}</span>` : ''}${r.other ? ` <span class="muted">(you have the ${esc((EDITION_LABELS[r.other.edition] || '').toLowerCase())} edition)</span>` : ''}</span>
+            <span class="pick-title">${esc(r.title)}${abridgedIcon(r)}${r.other ? ` <span class="muted">(you have the ${esc((EDITION_LABELS[r.other.edition] || '').toLowerCase())} edition)</span>` : ''}</span>
             <span class="muted">${esc(releaseDate(r.release_date, 4))}</span>
         </label>`).join('') : '<p class="muted">You already have every book in this series (in the editions your settings ask for).</p>';
     list.querySelectorAll('input').forEach(cb => cb.addEventListener('change', updateMonitorButton));
@@ -1899,7 +1909,7 @@ function manualChoiceHtml(it) {
     if (c.kind === 'library') return `${bookLink(c.book_id, c.title)} <span class="muted">· in your library</span> ${change}`;
     if (c.kind === 'audible') {
         const extra = [c.authors, c.series ? `${c.series}${c.sequence ? ' #' + c.sequence : ''}` : '', c.asin].filter(Boolean).join(' · ');
-        return `${esc(c.title)} ${c.edition && c.edition !== 'narrated' ? `<span class="edition-badge edition-${esc(c.edition)}">${esc(EDITION_LABELS[c.edition] || c.edition)}</span>` : ''}
+        return `${esc(c.title)}${abridgedIcon(c)}
             <span class="muted">· Audible</span> ${change}<div class="muted">${esc(extra)}</div>`;
     }
     const g = it.guess;
@@ -1961,10 +1971,10 @@ function openMatchChooser(name, guess, withLibrary, onChoose) {
     searchManualMatch();
 }
 
-function matchOptionHtml(cover, title, lines, data) {
+function matchOptionHtml(cover, title, lines, data, item = null) {
     return `<button type="button" class="match-option" ${data}>
         <img src="${esc(safeUrl(cover, PLACEHOLDER_COVER))}" alt="" loading="lazy">
-        <span><b>${esc(title)}</b>${lines.filter(Boolean).map(l => `<span class="muted">${esc(l)}</span>`).join('')}</span></button>`;
+        <span><b>${esc(title)}${abridgedIcon(item)}</b>${lines.filter(Boolean).map(l => `<span class="muted">${esc(l)}</span>`).join('')}</span></button>`;
 }
 
 async function searchManualMatch() {
@@ -1975,8 +1985,8 @@ async function searchManualMatch() {
         && words.every(w => normKey([b.title, b.authors, b.series].join(' ')).includes(w))).slice(0, 20);
     const libBox = document.getElementById('manualMatchLibrary');
     libBox.innerHTML = lib.map(b => matchOptionHtml(coverUrl(b), b.title,
-        [[b.authors, seriesLabel(b)].filter(Boolean).join(' · '), `${b.status}${editionOf(b) !== 'narrated' ? ' · ' + EDITION_LABELS[editionOf(b)] : ''}`],
-        `data-book="${esc(b.id)}"`)).join('') || '<p class="muted">No books waiting for files match.</p>';
+        [[b.authors, seriesLabel(b)].filter(Boolean).join(' · '), b.status],
+        `data-book="${esc(b.id)}"`, b)).join('') || '<p class="muted">No books waiting for files match.</p>';
     libBox.querySelectorAll('[data-book]').forEach(btn => btn.addEventListener('click', () => {
         const b = appLibrary.find(x => x.id === btn.dataset.book);
         matchChooser.onChoose({ kind: 'library', book_id: b.id, title: b.title });
@@ -1993,8 +2003,8 @@ async function searchManualMatch() {
         box.innerHTML = found.map((b, i) => matchOptionHtml(b.imageUrl, b.title,
             [[b.authors, b.series ? `${b.series}${b.sequence ? ' #' + b.sequence : ''}` : ''].filter(Boolean).join(' · '),
              [b.narrators ? 'Narrated by ' + shortNames(b.narrators) : '', formatRuntime(b.runtime_min), releaseDate(b.release_date),
-              b.edition !== 'narrated' ? EDITION_LABELS[b.edition] : ''].filter(Boolean).join(' · ')],
-            `data-index="${i}"`)).join('') || `<p class="muted">${res.ok ? 'Nothing found on Audible.' : esc(data.detail || 'Audible search failed.')}</p>`;
+              ].filter(Boolean).join(' · ')],
+            `data-index="${i}"`, b)).join('') || `<p class="muted">${res.ok ? 'Nothing found on Audible.' : esc(data.detail || 'Audible search failed.')}</p>`;
         box.querySelectorAll('[data-index]').forEach(btn => btn.addEventListener('click', () => {
             matchChooser.onChoose(audibleChoice(found[btn.dataset.index]));
             hideModal(document.getElementById('manualMatchModal'));
@@ -2751,7 +2761,7 @@ function openCalendarEvent(ev) {
     const facts = [
         ['Release', b.release_date],
         ['Length', b.runtime_min ? formatDuration(b.runtime_min * 60) : ''],
-        ['Edition', editionOf(b) !== 'narrated' ? EDITION_LABELS[editionOf(b)] : ''],
+        ['Abridged', isAbridged(b) ? 'Yes' : ''],
         ['Narrated by', b.narrators],
         ['Series', b.series ? `${b.series}${b.sequence ? ' #' + b.sequence : ''}` : ''],
         ['Genres', [...(b.genres || []), ...(b.subgenres || [])].join(', ')],
@@ -3462,7 +3472,7 @@ function drawAuthorPage() {
             <thead><tr><th class="col-date">Released</th><th>Title</th><th>Series</th><th class="col-len">Length</th><th class="col-status">Status</th></tr></thead>
             <tbody>${a.books.map((b, i) => `<tr class="${b.book_id ? 'clickable' : 'not-owned'}" data-index="${i}">
                 <td class="muted nowrap">${esc(releaseDate(b.release_date))}${b.upcoming ? ' <span class="edition-badge edition-upcoming">Upcoming</span>' : ''}</td>
-                <td>${bookLink(b.book_id, b.title)} ${editionOf(b) !== 'narrated' ? `<span class="edition-badge edition-${editionOf(b)}">${EDITION_LABELS[editionOf(b)]}</span>` : ''}</td>
+                <td>${bookLink(b.book_id, b.title)}${abridgedIcon(b)}</td>
                 <td class="muted">${esc(seriesLabel(b))}</td>
                 <td class="muted nowrap">${esc(formatRuntime(b.runtime_min))}</td>
                 <td class="nowrap">${b.book_id ? `<span class="library-status ${esc(statusClass(b.status))} inline-status">${esc(b.status)}</span>`

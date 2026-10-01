@@ -2624,6 +2624,22 @@ tr.clickable {
     color: #c084fc;
 }
 
+.abridged-icon {
+    display: inline-flex;
+    vertical-align: -2px;
+    margin-left: 6px;
+    color: #fbbf24;
+}
+
+h2 .abridged-icon svg {
+    width: 18px;
+    height: 18px;
+}
+
+label.edition-check {
+    color: var(--error);
+}
+
 .edition-abridged {
     color: #fbbf24;
 }

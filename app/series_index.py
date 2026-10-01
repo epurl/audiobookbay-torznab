@@ -203,7 +203,8 @@ def summarize(group, index):
     tracked = group["tracked"]
     return {
         "key": group["key"],
-        "title": plain_title(group["title"]) + (" (Abridged)" if group.get("dramatized") else ""),
+        "title": plain_title(group["title"]),
+        "abridged": bool(group.get("dramatized")),  # Shown with the abridged icon
         "dramatized": bool(group.get("dramatized")),
         "asin": group["asin"],
         "author": series_author(rows) or (tracked or {}).get("author", ""),
