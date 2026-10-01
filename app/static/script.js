@@ -1226,6 +1226,19 @@ async function showSeriesDetail(key) {
     renderSeriesDetail();
 }
 
+// Reloads the open series page after a change, in place: no spinner, same scroll position
+async function refreshSeriesDetail() {
+    const main = document.querySelector('.main-content');
+    const scroll = { window: window.scrollY, main: main.scrollTop };
+    const res = await fetch(`/api/series/detail?key=${encodeURIComponent(currentSeries.key)}`);
+    if (!res.ok) return;
+    currentSeries = await res.json();
+    await Promise.all([fetchLibrary(), fetchSeries()]);
+    renderSeriesDetail();
+    main.scrollTop = scroll.main;
+    window.scrollTo(0, scroll.window);
+}
+
 function renderSeriesDetail() {
     const sr = currentSeries;
     const box = document.getElementById('seriesDetail');
@@ -1278,7 +1291,7 @@ function renderSeriesDetail() {
             return;
         }
         toast(`Added "${row.title}" (${res.data.status})${res.data.status === 'Monitored' && appSettings.qbt_enabled ? '; searching now' : ''}`, 'ok');
-        openSeriesDetail(sr.key);
+        refreshSeriesDetail();
     }));
 
     const monitorOpen = document.getElementById('seriesMonitorOpen');
@@ -1294,7 +1307,7 @@ function renderSeriesDetail() {
         syncBtn.disabled = true;
         const { ok, data } = await postJSON(`/api/series/${encodeURIComponent(tracked.id)}/sync`);
         toast(ok ? `${data.added} new book${data.added === 1 ? '' : 's'} added` : (data.detail || 'Sync failed'), ok ? 'ok' : 'error');
-        openSeriesDetail(sr.key);
+        refreshSeriesDetail();
     });
     const removeBtn = document.getElementById('seriesRemoveBtn');
     if (removeBtn) removeBtn.addEventListener('click', async () => {
@@ -1302,7 +1315,7 @@ function renderSeriesDetail() {
             { title: 'Stop tracking series', confirmText: 'Stop Tracking', danger: true });
         if (!confirmed) return;
         await fetch(`/api/series/${encodeURIComponent(tracked.id)}`, { method: 'DELETE' });
-        openSeriesDetail(sr.key);
+        refreshSeriesDetail();
     });
 }
 
@@ -1375,7 +1388,11 @@ function setupSeriesPages() {
         }
         hideModal(seriesModal);
         toast(`Monitoring ${data.series.title}${data.added ? `: added ${data.added} book${data.added === 1 ? '' : 's'}` : ''}`, 'ok');
-        openSeriesDetail('asin:' + currentSeries.asin);
+        if (currentSeries.key === 'asin:' + currentSeries.asin) {
+            refreshSeriesDetail();
+        } else {
+            openSeriesDetail('asin:' + currentSeries.asin);
+        }
     });
 }
 
