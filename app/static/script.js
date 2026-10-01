@@ -780,6 +780,7 @@ function setupLibrary() {
     setupImportModal();
     setupSplitModal();
     setupOrganizeModal();
+    setupListImport();
 }
 
 function showModal(el) {
@@ -2894,5 +2895,106 @@ function setupAuthors() {
         hideModal(modal);
         toast(`Following ${currentAuthor.name}${data.added ? `: added ${data.added} book${data.added === 1 ? '' : 's'}` : ''}`, 'ok');
         refreshAuthorPage();
+    });
+}
+
+
+// -----------------
+// Import a reading list (Goodreads / StoryGraph CSV)
+// -----------------
+const listModal = document.getElementById('listModal');
+let listTimer = null;
+const listUnticked = new Set();  // Matches you untick; the rest start ticked as they come in
+
+function listChecked() {
+    return [...document.querySelectorAll('.list-check:checked')].map(cb => cb.value);
+}
+
+function updateListAdd() {
+    const n = listChecked().length;
+    const btn = document.getElementById('listAddBtn');
+    btn.disabled = n === 0;
+    btn.textContent = n ? `Add ${n} Book${n === 1 ? '' : 's'}` : 'Add';
+}
+
+function drawListResults(job) {
+    const rows = document.getElementById('listRows');
+    rows.innerHTML = job.results.map(r => {
+        const m = r.match;
+        const status = r.in_library ? `<span class="library-status ${esc(statusClass(r.in_library))} inline-status">${esc(r.in_library)}</span>`
+            : m ? '<span class="muted">New</span>' : '<span class="muted">No clear match</span>';
+        return `<tr>
+            <td>${m && !r.in_library ? `<input type="checkbox" class="list-check" value="${esc(m.asin)}" ${listUnticked.has(m.asin) ? '' : 'checked'}>` : ''}</td>
+            <td><b>${esc(r.list_title)}</b><div class="muted">${esc(r.list_author)}</div></td>
+            <td>${m ? `<div class="list-match"><img src="${esc(safeUrl(m.imageUrl, PLACEHOLDER_COVER))}" alt="" loading="lazy">
+                <span><b>${esc(m.title)}</b><span class="muted">${esc([seriesLabel(m), formatRuntime(m.runtime_min), releaseDate(m.release_date, 4)].filter(Boolean).join(' · '))}</span></span></div>`
+                : '<span class="muted">—</span>'}</td>
+            <td class="nowrap">${status}</td>
+        </tr>`;
+    }).join('');
+    rows.querySelectorAll('.list-check').forEach(cb => cb.addEventListener('change', () => {
+        cb.checked ? listUnticked.delete(cb.value) : listUnticked.add(cb.value);
+        updateListAdd();
+    }));
+    updateListAdd();
+}
+
+async function watchListJob() {
+    clearTimeout(listTimer);
+    const job = await fetch('/api/lists/match').then(r => r.json()).catch(() => null);
+    if (!job) return;
+    document.getElementById('listTable').hidden = false;
+    drawListResults(job);
+    const found = job.results.filter(r => r.match).length;
+    setActionStatus(document.getElementById('listStatus'), job.running
+        ? `Looking up books on Audible… ${job.done} of ${job.total}`
+        : `${found} of ${job.total} found on Audible`, job.running ? '' : 'ok');
+    if (job.running && listModal.classList.contains('show')) listTimer = setTimeout(watchListJob, 1500);
+}
+
+function setupListImport() {
+    document.getElementById('listImportBtn').addEventListener('click', () => showModal(listModal));
+    document.getElementById('closeListModal').addEventListener('click', () => hideModal(listModal));
+    listModal.addEventListener('click', (e) => { if (e.target === listModal) hideModal(listModal); });
+    document.getElementById('listFile').addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const info = document.getElementById('listInfo');
+        const shelf = document.getElementById('listShelf');
+        info.textContent = 'Reading…';
+        const { ok, data } = await postJSON('/api/lists/parse', { csv: await file.text() });
+        if (!ok) {
+            info.textContent = data.detail || "Couldn't read that file.";
+            shelf.hidden = document.getElementById('listMatchBtn').hidden = true;
+            return;
+        }
+        info.textContent = `${data.format} list with ${data.count} book${data.count === 1 ? '' : 's'}. Choose a shelf:`;
+        shelf.innerHTML = Object.entries(data.shelves).map(([name, n]) =>
+            `<option value="${esc(name)}"${name === 'to-read' ? ' selected' : ''}>${esc(name)} (${n})</option>`).join('');
+        shelf.hidden = false;
+        document.getElementById('listMatchBtn').hidden = false;
+    });
+    document.getElementById('listMatchBtn').addEventListener('click', async () => {
+        const { ok, data } = await postJSON('/api/lists/match', { shelf: document.getElementById('listShelf').value });
+        if (!ok) return setActionStatus(document.getElementById('listStatus'), data.detail || 'Failed', 'error');
+        listUnticked.clear();
+        watchListJob();
+    });
+    document.getElementById('listSelectAll').addEventListener('change', (e) => {
+        document.querySelectorAll('.list-check').forEach(cb => {
+            cb.checked = e.target.checked;
+            cb.checked ? listUnticked.delete(cb.value) : listUnticked.add(cb.value);
+        });
+        updateListAdd();
+    });
+    document.getElementById('listAddBtn').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        const { ok, data } = await postJSON('/api/lists/add', { asins: listChecked(), status: document.getElementById('listAddAs').value });
+        if (!ok) { setActionStatus(document.getElementById('listStatus'), data.detail || 'Failed', 'error'); btn.disabled = false; return; }
+        toast(`Added ${data.added} book${data.added === 1 ? '' : 's'} from your list`, 'ok');
+        await fetchLibrary();
+        renderLibrary();
+        watchListJob();
     });
 }

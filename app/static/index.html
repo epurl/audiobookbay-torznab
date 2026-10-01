@@ -75,6 +75,7 @@
                     <h2>Library</h2>
                     <div class="page-actions">
                         <button id="selectModeBtn" class="secondary-btn">Select</button>
+                        <button id="listImportBtn" class="secondary-btn" title="Add books from a Goodreads or StoryGraph want-to-read list">Import List</button>
                         <button id="organizeBtn" class="secondary-btn" title="Rename existing folders to the Book Folder Format (you approve each change)">Organize</button>
                         <button id="rescanBtn" class="secondary-btn" title="Refresh file info and find books whose files are gone">Rescan</button>
                         <button id="openImportBtn" class="primary-btn">Import Existing</button>
@@ -717,6 +718,46 @@
             <div class="modal-footer">
                 <span class="action-status" id="authorModalStatus"></span>
                 <button class="primary-btn" id="authorFollowBtn">Follow</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="listModal" class="modal">
+        <div class="modal-content import-content">
+            <div class="modal-header">
+                <h2>Import a Reading List</h2>
+                <button type="button" class="close-btn" id="closeListModal" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-pad">
+                <p class="modal-lead">Add books from your Goodreads or StoryGraph want-to-read list. Each is looked up on Audible (only clear matches: the title and author must match), then you choose which to add.</p>
+                <details class="settings-help">
+                    <summary>Where to get the file</summary>
+                    <ul>
+                        <li><b>Goodreads:</b> My Books → Import and export → Export Library, then download the CSV.</li>
+                        <li><b>StoryGraph:</b> Manage Account → Export StoryGraph Library.</li>
+                        <li>Or any CSV with Title and Author columns.</li>
+                    </ul>
+                </details>
+                <div class="list-step">
+                    <input type="file" id="listFile" accept=".csv,text/csv">
+                    <select id="listShelf" class="form-select" hidden aria-label="Shelf"></select>
+                    <button class="secondary-btn" id="listMatchBtn" hidden>Find on Audible</button>
+                    <span id="listInfo" class="muted"></span>
+                </div>
+                <div class="table-container import-table" id="listTable" hidden>
+                    <table class="data-table">
+                        <thead><tr><th class="col-check"><input type="checkbox" id="listSelectAll" aria-label="Select all"></th><th>On your list</th><th>On Audible</th><th>Status</th></tr></thead>
+                        <tbody id="listRows"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <span id="listStatus" class="action-status"></span>
+                <select id="listAddAs" class="form-select" aria-label="Add as">
+                    <option value="Monitored">Add as Monitored (download)</option>
+                    <option value="Unmonitored">Add as Unmonitored (just track)</option>
+                </select>
+                <button class="primary-btn" id="listAddBtn" disabled>Add</button>
             </div>
         </div>
     </div>

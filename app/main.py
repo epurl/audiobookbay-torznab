@@ -1,4 +1,5 @@
 import asyncio
+import csv
 import datetime
 import json
 import logging
@@ -10,7 +11,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 
 from app import (audible, audiobookshelf, auth, authors, book_search, db, editions, health, indexers, library,
-                 organize, release_calendar, scraper, series_index, splitter)
+                 organize, reading_list, release_calendar, scraper, series_index, splitter)
 from app.monitor import (auto_download_book, classify_editions, find_missing_books, grab, match_job, run_monitor_loop,
                          schedule_search, schedule_searches, start_match_job, sync_series)
 from app.qbittorrent import get_torrents, test_connection
@@ -191,6 +192,37 @@ async def api_match_book(book_id: str, request: Request):
     db.apply_audible_match(book_id, audible.product_to_book(products[0], prefer_series=book.get("series", "")))
     db.add_history("matched", book, f"Matched to Audible {asin}")
     return {"success": True, "book": db.get_book(book_id)}
+
+@app.post("/api/lists/parse")
+async def api_list_parse(request: Request):
+    """Reads a Goodreads/StoryGraph export: its shelves and how many books each has."""
+    text = (await request.json()).get("csv") or ""
+    if len(text) > 20_000_000:
+        raise HTTPException(status_code=400, detail="That file is too big.")
+    try:
+        return reading_list.parse(text)
+    except (ValueError, csv.Error) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/lists/match")
+async def api_list_match(request: Request):
+    """Looks up a shelf's books on Audible in the background."""
+    shelf = (await request.json()).get("shelf") or ""
+    if not reading_list.start_matching(shelf):
+        raise HTTPException(status_code=409, detail="A list is already being matched.")
+    return {"success": True, "total": reading_list.job["total"]}
+
+@app.get("/api/lists/match")
+async def api_list_match_status():
+    return reading_list.job
+
+@app.post("/api/lists/add")
+async def api_list_add(request: Request):
+    data = await request.json()
+    status = "Unmonitored" if data.get("status") == "Unmonitored" else "Monitored"
+    added = reading_list.add(data.get("asins") or [], status)
+    schedule_searches([b for b in added if b["status"] == "Monitored"])
+    return {"success": True, "added": len(added)}
 
 @app.get("/api/authors")
 async def api_authors():
