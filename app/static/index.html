@@ -71,6 +71,7 @@
                     <h2>Library</h2>
                     <div class="page-actions">
                         <button id="selectModeBtn" class="secondary-btn">Select</button>
+                        <button id="organizeBtn" class="secondary-btn" title="Rename existing folders to the Book Folder Format (you approve each change)">Organize</button>
                         <button id="rescanBtn" class="secondary-btn" title="Refresh file info and find books whose files are gone">Rescan</button>
                         <button id="openImportBtn" class="primary-btn">Import Existing</button>
                     </div>
@@ -564,6 +565,28 @@
     </div>
 
     <!-- Import Existing Library Modal -->
+    <div id="organizeModal" class="modal">
+        <div class="modal-content import-content">
+            <div class="modal-header">
+                <h2>Organize Library</h2>
+                <button type="button" class="close-btn" id="closeOrganizeModal" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-pad">
+                <p class="modal-lead">Proposed changes to match your Book Folder Format <code id="organizeFormat"></code>. Nothing changes until you approve it. Folders are renamed or moved on the same drive only, so it's instant and hardlinks are kept; Audiobookshelf is asked to rescan afterwards.</p>
+                <div class="organize-options">
+                    <label class="check-label"><input type="checkbox" id="organizeRenameFiles"> Also rename audio files ("Title.m4b", "Title - Part 01.mp3"…)</label>
+                    <span id="organizeSummary" class="muted"></span>
+                </div>
+                <div id="organizeLoader" class="loader hidden"><div class="spinner"></div></div>
+                <div id="organizeList" class="organize-list"></div>
+            </div>
+            <div class="modal-footer">
+                <span id="organizeStatus" class="action-status"></span>
+                <button id="organizeAllBtn" class="primary-btn" disabled>Approve All</button>
+            </div>
+        </div>
+    </div>
+
     <div id="splitModal" class="modal">
         <div class="modal-content import-content">
             <div class="modal-header">

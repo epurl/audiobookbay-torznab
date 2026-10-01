@@ -734,6 +734,7 @@ function setupLibrary() {
     setupBookModal();
     setupImportModal();
     setupSplitModal();
+    setupOrganizeModal();
 }
 
 function showModal(el) {
@@ -2335,5 +2336,110 @@ function setupSplitModal() {
         await fetchLibrary();
         renderLibrary();
         toast(`Split into ${data.created} books. The original folder is unchanged; remove it when you're ready.`, 'ok');
+    });
+}
+
+
+// -----------------
+// Organize: rename existing folders to the Book Folder Format, approving each change
+// -----------------
+const organizeModal = document.getElementById('organizeModal');
+let organizePlan = null;
+
+function organizeRowHtml(item) {
+    const files = item.files.length
+        ? `<details class="organize-files"><summary>${item.files.length} audio file${item.files.length === 1 ? '' : 's'} renamed</summary>
+            ${item.files.map(f => `<div><span class="old">${esc(f.from)}</span> → <span class="new">${esc(f.to)}</span></div>`).join('')}</details>` : '';
+    const action = item.conflict
+        ? `<span class="organize-conflict">${esc(item.conflict)}</span>`
+        : `<button class="secondary-btn organize-approve" data-id="${esc(item.book_id)}">Approve</button>`;
+    return `<div class="organize-item" data-id="${esc(item.book_id)}">
+        <div class="organize-paths">
+            <div class="organize-title">${esc(item.title)} <span class="muted">· ${esc(primaryAuthor(item.authors))}</span></div>
+            <div class="old" title="${esc(item.current)}">${esc(item.current_rel)}</div>
+            <div class="new" title="${esc(item.proposed)}">→ ${esc(item.proposed_rel)}</div>
+            ${files}
+        </div>
+        <div class="organize-action">${action}</div>
+    </div>`;
+}
+
+async function loadOrganizePlan() {
+    const list = document.getElementById('organizeList');
+    const loader = document.getElementById('organizeLoader');
+    const renameFiles = document.getElementById('organizeRenameFiles').checked;
+    list.innerHTML = '';
+    setActionStatus(document.getElementById('organizeStatus'), '');
+    loader.classList.remove('hidden');
+    const res = await fetch(`/api/organize?rename_files=${renameFiles}`);
+    organizePlan = await res.json().catch(() => null);
+    loader.classList.add('hidden');
+    if (!res.ok || !organizePlan) {
+        list.innerHTML = '<p class="muted">Couldn\'t work out the changes.</p>';
+        return;
+    }
+    document.getElementById('organizeFormat').textContent = organizePlan.format || '';
+    const ready = organizePlan.items.filter(i => !i.conflict).length;
+    const conflicts = organizePlan.items.length - ready;
+    document.getElementById('organizeSummary').textContent = `${organizePlan.items.length} to change`
+        + (conflicts ? ` (${conflicts} can't be: see why)` : '') + ` · ${organizePlan.unchanged} already match`;
+    list.innerHTML = organizePlan.items.length
+        ? organizePlan.items.map(organizeRowHtml).join('')
+        : '<p class="muted">Every book already matches your Book Folder Format.</p>';
+    list.querySelectorAll('.organize-approve').forEach(btn => btn.addEventListener('click', () => approveOrganize([btn.dataset.id])));
+    updateOrganizeAll();
+}
+
+function updateOrganizeAll() {
+    const n = document.querySelectorAll('.organize-approve:not(:disabled)').length;
+    const btn = document.getElementById('organizeAllBtn');
+    btn.disabled = n === 0;
+    btn.textContent = n ? `Approve All (${n})` : 'Approve All';
+}
+
+async function approveOrganize(ids) {
+    const renameFiles = document.getElementById('organizeRenameFiles').checked;
+    ids.forEach(id => {
+        const btn = document.querySelector(`.organize-approve[data-id="${CSS.escape(id)}"]`);
+        if (btn) { btn.disabled = true; btn.textContent = 'Working…'; }
+    });
+    const { ok, data } = await postJSON('/api/organize', { book_ids: ids, rename_files: renameFiles });
+    if (!ok) {
+        setActionStatus(document.getElementById('organizeStatus'), data.detail || 'Organize failed', 'error');
+        return;
+    }
+    let done = 0;
+    data.results.forEach(r => {
+        const row = document.querySelector(`.organize-item[data-id="${CSS.escape(r.book_id)}"]`);
+        if (!row) return;
+        const action = row.querySelector('.organize-action');
+        if (r.ok) {
+            done++;
+            row.classList.add('done');
+            action.innerHTML = '<span class="organize-done">Done</span>';
+        } else {
+            action.innerHTML = `<span class="organize-conflict">${esc(r.error)}</span>`;
+        }
+    });
+    setActionStatus(document.getElementById('organizeStatus'), `${done} book${done === 1 ? '' : 's'} organized`, done ? 'ok' : 'error');
+    updateOrganizeAll();
+    await fetchLibrary();
+    renderLibrary();
+}
+
+function setupOrganizeModal() {
+    document.getElementById('organizeBtn').addEventListener('click', () => {
+        showModal(organizeModal);
+        loadOrganizePlan();
+    });
+    document.getElementById('closeOrganizeModal').addEventListener('click', () => hideModal(organizeModal));
+    organizeModal.addEventListener('click', (e) => { if (e.target === organizeModal) hideModal(organizeModal); });
+    document.getElementById('organizeRenameFiles').addEventListener('change', loadOrganizePlan);
+    document.getElementById('organizeAllBtn').addEventListener('click', async () => {
+        const ids = [...document.querySelectorAll('.organize-approve:not(:disabled)')].map(b => b.dataset.id);
+        if (!ids.length) return;
+        const confirmed = await confirmDialog(`Rename or move ${ids.length} folder${ids.length === 1 ? '' : 's'} as shown?`,
+            { title: 'Organize library', confirmText: 'Approve All' });
+        if (confirmed) approveOrganize(ids);
     });
 }

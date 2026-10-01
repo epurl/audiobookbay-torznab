@@ -9,8 +9,8 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import (audible, audiobookshelf, auth, book_search, db, editions, library, release_calendar, series_index,
-                 splitter)
+from app import (audible, audiobookshelf, auth, book_search, db, editions, library, organize, release_calendar,
+                 series_index, splitter)
 from app.monitor import (auto_download_book, classify_editions, find_missing_books, grab, match_job, run_monitor_loop,
                          schedule_search, schedule_searches, start_match_job, sync_series)
 from app.qbittorrent import get_torrents, test_connection
@@ -191,6 +191,23 @@ async def api_match_book(book_id: str, request: Request):
     db.apply_audible_match(book_id, audible.product_to_book(products[0], prefer_series=book.get("series", "")))
     db.add_history("matched", book, f"Matched to Audible {asin}")
     return {"success": True, "book": db.get_book(book_id)}
+
+@app.get("/api/organize")
+async def api_organize_preview(rename_files: bool = False):
+    """Proposed renames of existing folders to the Book Folder Format; nothing changes yet."""
+    return await asyncio.to_thread(organize.plan, rename_files)
+
+@app.post("/api/organize")
+async def api_organize(request: Request):
+    """Applies approved changes (folder renames/moves, optionally audio file renames)."""
+    data = await request.json()
+    ids = [i for i in data.get("book_ids") or [] if db.get_book(i)]
+    if not ids:
+        raise HTTPException(status_code=400, detail="Nothing approved.")
+    results = await asyncio.to_thread(organize.apply, ids, bool(data.get("rename_files")))
+    if any(r["ok"] and not r.get("unchanged") for r in results):
+        await audiobookshelf.scan_library(db.get_settings())
+    return {"results": results}
 
 @app.get("/api/library/{book_id}/split")
 async def api_split_proposal(book_id: str):

@@ -2486,3 +2486,88 @@ tr.clickable {
 .split-title {
     min-width: 220px;
 }
+
+/* Organize: proposed folder changes */
+.organize-options {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 12px;
+    font-size: 0.9rem;
+}
+
+.organize-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.organize-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background-color: var(--bg-dark);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
+
+.organize-item.done {
+    border-color: rgba(54, 180, 79, 0.5);
+}
+
+.organize-paths {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.85rem;
+}
+
+.organize-title {
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.organize-paths .old {
+    color: var(--text-muted);
+    text-decoration: line-through;
+    overflow-wrap: anywhere;
+}
+
+.organize-paths .new {
+    color: var(--success);
+    overflow-wrap: anywhere;
+}
+
+.organize-files {
+    margin-top: 4px;
+    font-size: 0.8rem;
+}
+
+.organize-files summary {
+    cursor: pointer;
+    color: var(--text-muted);
+}
+
+.organize-action {
+    flex-shrink: 0;
+}
+
+.organize-conflict {
+    color: var(--error);
+    font-size: 0.8rem;
+}
+
+.organize-done {
+    color: var(--success);
+    font-weight: 600;
+}
+
+@media (max-width: 768px) {
+    .organize-item {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}
