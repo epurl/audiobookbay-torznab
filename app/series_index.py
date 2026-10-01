@@ -2,6 +2,7 @@
 belongs to and Audible's full list of books for each series."""
 import asyncio
 import logging
+from collections import Counter
 
 from app import audible, db
 from app.library import normalize, primary_author, series_entries, series_key
@@ -21,30 +22,39 @@ def _seq_sort(seq, release_date=""):
 
 
 class LibraryIndex:
-    """Fast lookup of library books by ASIN or title + first author."""
+    """Fast lookup of library books by ASIN, or by title and any shared author (books
+    don't always list their authors in the same order)."""
 
     def __init__(self, library):
         self.by_asin = {b["asin"]: b for b in library if b.get("asin")}
         self.by_title = {}
         for b in library:
-            self.by_title.setdefault(self._key(b), b)
+            title = normalize((b.get("title") or "").split(":")[0])
+            for author in self._authors(b):
+                self.by_title.setdefault((title, author), b)
 
     @staticmethod
-    def _key(book):
-        return (normalize((book.get("title") or "").split(":")[0]), normalize(primary_author(book.get("authors"))))
+    def _authors(book):
+        return [normalize(a) for a in (book.get("authors") or "").split(",") if normalize(a)] or [""]
+
+    def _by_title(self, title, book):
+        for author in self._authors(book):
+            found = self.by_title.get((normalize(title), author))
+            if found:
+                return found
+        return None
 
     def find(self, book):
         found = self.by_asin.get(book.get("asin"))
         if found:
             return found
-        found = self.by_title.get(self._key(book))
+        title = book.get("title") or ""
+        found = self._by_title(title.split(":")[0], book)
         if found:
             return found
         # Audible titles can carry the series name: "Universe: Book Title"
-        title = book.get("title") or ""
         if ":" in title:
-            rest = title.partition(":")[2]
-            return self.by_title.get((normalize(rest), normalize(primary_author(book.get("authors")))))
+            return self._by_title(title.partition(":")[2], book)
         return None
 
 
@@ -118,16 +128,23 @@ def _cover(rows):
     return ""
 
 
+def series_author(rows):
+    """The series' author: the most common lead author across its books, by Audible's
+    order where known (a library book may list an illustrator or co-author first)."""
+    votes = Counter(primary_author((r["catalog"] or r["book"] or {}).get("authors")) for r in rows)
+    votes.pop("", None)
+    return votes.most_common(1)[0][0] if votes else ""
+
+
 def summarize(group, index):
     rows = _rows(group, index)
     statuses = [r["book"]["status"] for r in rows if r["book"]]
     tracked = group["tracked"]
-    first = next((r["book"] or r["catalog"] for r in rows), {}) or {}
     return {
         "key": group["key"],
         "title": group["title"],
         "asin": group["asin"],
-        "author": (tracked or {}).get("author") or primary_author(first.get("authors")),
+        "author": series_author(rows) or (tracked or {}).get("author", ""),
         "cover": _cover(rows),
         "monitored": bool(tracked and tracked.get("monitored")),
         "series_id": (tracked or {}).get("id", ""),
@@ -174,6 +191,20 @@ async def ensure_catalog(asin, force=False):
 _FILL_FROM_AUDIBLE = ("asin", "runtime_min", "narrators", "publisher", "imageUrl", "release_date")
 
 
+def audible_author_order(current, audible_authors):
+    """The library book's authors in Audible's order, when Audible lists all of them (e.g.
+    "Illustrator, Author" from a metadata.json becomes "Author, Illustrator"). Names are
+    only reordered, never added or removed. None when there's nothing to change."""
+    names = [n.strip() for n in (current or "").split(",") if n.strip()]
+    order = [n.strip() for n in (audible_authors or "").split(",") if n.strip()]
+    mine = {normalize(n): n for n in names}
+    if not order or not all(normalize(n) in mine for n in order):
+        return None
+    listed = {normalize(n) for n in order}
+    new = [mine[normalize(n)] for n in order] + [n for n in names if normalize(n) not in listed]
+    return ", ".join(new) if new != names else None
+
+
 def _attach_owned(asin, title, catalog_books):
     """Records the series (with its number) on library books Audible lists in it, and fills
     in Audible details they lack (the runtime is what the download length check uses)."""
@@ -184,6 +215,9 @@ def _attach_owned(asin, title, catalog_books):
             continue
         db.add_series_to_books({"name": title, "asin": asin, "sequence": cb.get("catalog_sequence") or ""}, {owned["id"]})
         fill = {k: cb[k] for k in _FILL_FROM_AUDIBLE if cb.get(k) and not owned.get(k)}
+        reordered = audible_author_order(owned.get("authors"), cb.get("authors"))
+        if reordered:
+            fill["authors"] = reordered
         if fill:
             db.update_book(owned["id"], **fill)
 

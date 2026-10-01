@@ -345,7 +345,7 @@ def get_series(series_id):
 
 CATALOG_MAX_AGE_DAYS = 7
 # Raised when the way series lists are built changes, so saved ones are fetched again
-CATALOG_VERSION = 2
+CATALOG_VERSION = 3
 _CATALOG_BOOK_FIELDS = ("title", "authors", "narrators", "imageUrl", "release_date", "asin", "series", "series_asin",
                         "sequence", "series_list", "runtime_min", "publisher", "language", "catalog_sequence")
 

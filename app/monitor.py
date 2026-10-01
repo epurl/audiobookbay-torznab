@@ -102,7 +102,7 @@ async def sync_series(series, settings, selected=None):
     """Refreshes a monitored series from Audible. Books already in the library get the
     series recorded on them. Books are only added when chosen (selected, when the series is
     first monitored) or new: ones Audible didn't list before. Returns the added books."""
-    from app.series_index import LibraryIndex, ensure_catalog
+    from app.series_index import LibraryIndex, ensure_catalog, series_author
     catalog = await ensure_catalog(series["asin"], force=True)
     books = catalog.get("books", [])
     title = series.get("title") or catalog.get("title", "")
@@ -122,7 +122,8 @@ async def sync_series(series, settings, selected=None):
         entry = db.add_to_library({**book, "description": ""})
         added.append(entry)
     all_asins = {b.get("asin") for b in books if b.get("asin")}
-    db.update_series(series["id"], title=title,
+    author = series_author([{"catalog": b, "book": None} for b in books]) or series.get("author", "")
+    db.update_series(series["id"], title=title, author=author,
                      known_asins=sorted(set(known or []) | all_asins),
                      last_sync=datetime.datetime.now().isoformat(timespec="seconds"))
     if added:
