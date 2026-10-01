@@ -553,6 +553,7 @@
                 <div class="modal-footer">
                     <button id="removeBookBtn" class="danger-btn">Remove</button>
                     <span id="bookStatusMsg" class="action-status"></span>
+                    <button id="splitBookBtn" class="secondary-btn" hidden title="This folder holds several books: give each its own folder">Split into Books</button>
                     <button id="matchBookBtn" class="secondary-btn">Match on Audible</button>
                     <button id="manualSearchBtn" class="secondary-btn">Manual Search</button>
                     <button id="searchNowBtn" class="secondary-btn">Search Now</button>
@@ -563,6 +564,30 @@
     </div>
 
     <!-- Import Existing Library Modal -->
+    <div id="splitModal" class="modal">
+        <div class="modal-content import-content">
+            <div class="modal-header">
+                <h2>Split into Books</h2>
+                <button type="button" class="close-btn" id="closeSplitModal" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-pad">
+                <p class="modal-lead" id="splitLead"></p>
+                <div id="splitLoader" class="loader hidden"><div class="spinner"></div></div>
+                <div class="table-container import-table" id="splitTable" hidden>
+                    <table class="data-table">
+                        <thead><tr><th class="col-check"></th><th class="col-num">#</th><th>Title</th><th>Files</th><th>On Audible</th><th>New folder</th></tr></thead>
+                        <tbody id="splitRows"></tbody>
+                    </table>
+                </div>
+                <p class="settings-hint">Each book's files are hardlinked into a new folder next to the original (copied if the drive doesn't allow hardlinks), with its own cover and metadata.json, and added to the library. The original folder and its files aren't changed or deleted: remove it yourself (and from Audiobookshelf) once you're happy. Its entry is removed from Bayarr.</p>
+            </div>
+            <div class="modal-footer">
+                <span id="splitStatus" class="action-status"></span>
+                <button id="splitBtn" class="primary-btn" disabled>Split</button>
+            </div>
+        </div>
+    </div>
+
     <div id="importModal" class="modal">
         <div class="modal-content import-content">
             <div class="modal-header">

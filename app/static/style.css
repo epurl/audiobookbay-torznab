@@ -2478,3 +2478,11 @@ tr.clickable {
     font-size: 0.9rem;
     padding: 6px 0 10px;
 }
+
+.split-number {
+    width: 64px;
+}
+
+.split-title {
+    min-width: 220px;
+}

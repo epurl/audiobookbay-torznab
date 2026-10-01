@@ -95,6 +95,8 @@ Managing books:
 - **Select** several books to change their status, match them on Audible, or remove them.
 - **Match on Audible** fills in the ASIN, runtime, narrators and series for books imported from folder names. Matching many books at once accepts only clear-cut matches. Your files are never changed.
 - **Book details:** edit, see files, **Search Now**, **Manual Search**, or **Remove**. Removing never deletes files.
+- **Split into Books** (book details): for a folder holding several books, e.g. `Book 1 Title Part 1 of 2.m4b`, `Book 2 Other Part 1 of 2.m4b`, or a `Book N - Title` subfolder per book. Bayarr matches each to its series on Audible (in the folder's edition), you check the titles and numbers, and each book gets its own folder next to the original (`Author - Series 1 - Title (Dramatized)`), with its files hardlinked in (copied if the drive doesn't allow it), its own cover and `metadata.json`. The original folder is never changed; remove it yourself (and from Audiobookshelf) when you're happy.
+- **A second copy** of a book that's already on disk in another folder is imported as its own entry; only books not on disk yet (e.g. Monitored) are linked to an imported folder.
 - **Rescan** (also every 6 hours) refreshes files and flags deleted folders as **Missing**. An unreachable drive is left alone.
 
 | Status | Meaning |

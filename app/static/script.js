@@ -733,6 +733,7 @@ function setupLibrary() {
 
     setupBookModal();
     setupImportModal();
+    setupSplitModal();
 }
 
 function showModal(el) {
@@ -775,6 +776,8 @@ async function openBookModal(bookId) {
     renderBookSeriesLinks(book);
     document.getElementById('matchPanel').hidden = true;
     document.getElementById('matchBookBtn').textContent = book.asin ? 'Rematch on Audible' : 'Match on Audible';
+    // Folders with several audio files might hold several books (a collection)
+    document.getElementById('splitBookBtn').hidden = !(book.path && (book.file_count || 0) > 1);
     setActionStatus(document.getElementById('bookStatusMsg'), '');
     document.getElementById('searchNowBtn').disabled = !appSettings.qbt_enabled;
     document.getElementById('searchNowBtn').title = appSettings.qbt_enabled ? 'Search AudiobookBay and grab the best match' : 'Enable qBittorrent in Settings first';
@@ -2245,4 +2248,92 @@ function setupCalendar() {
     const modalEl = document.getElementById('calendarModal');
     document.getElementById('closeCalendarModal').addEventListener('click', () => hideModal(modalEl));
     modalEl.addEventListener('click', (e) => { if (e.target === modalEl) hideModal(modalEl); });
+}
+
+
+// -----------------
+// Split a collection folder ("Book 1 ... Part 1 of 2", "Book 2 ...") into one book per folder
+// -----------------
+const splitModal = document.getElementById('splitModal');
+let splitProposal = null;
+
+function updateSplitButton() {
+    const n = document.querySelectorAll('.split-check:checked').length;
+    const btn = document.getElementById('splitBtn');
+    btn.disabled = n === 0;
+    btn.textContent = n ? `Split into ${n} Book${n === 1 ? '' : 's'}` : 'Split';
+}
+
+async function openSplitDialog(bookId) {
+    splitProposal = null;
+    const lead = document.getElementById('splitLead');
+    const loader = document.getElementById('splitLoader');
+    document.getElementById('splitTable').hidden = true;
+    document.getElementById('splitRows').innerHTML = '';
+    setActionStatus(document.getElementById('splitStatus'), '');
+    lead.textContent = 'Looking for the books in this folder and their series on Audible…';
+    updateSplitButton();
+    showModal(splitModal);
+    loader.classList.remove('hidden');
+    const res = await fetch(`/api/library/${encodeURIComponent(bookId)}/split`);
+    const data = await res.json().catch(() => ({}));
+    loader.classList.add('hidden');
+    if (!res.ok) {
+        lead.textContent = data.detail || "Couldn't read this folder.";
+        return;
+    }
+    if (data.groups.length < 2) {
+        lead.textContent = 'Bayarr couldn\'t find separate books in this folder. It looks for a book number in the file or folder names, like "Book 2 Golden Son Part 1 of 2.m4b" or a "Book 2 - Title" folder.';
+        return;
+    }
+    splitProposal = data;
+    const matched = data.groups.filter(g => g.match).length;
+    lead.textContent = `${data.groups.length} books found in "${data.title}"`
+        + (data.series ? `, matched to ${matched} ${EDITION_LABELS[data.edition].toLowerCase()} books of ${data.series.name} on Audible.` : '. The series wasn\'t found on Audible, so titles come from the file names.')
+        + ' Check the titles and numbers, then split.';
+    document.getElementById('splitRows').innerHTML = data.groups.map(g => {
+        const m = g.match;
+        return `<tr>
+            <td><input type="checkbox" class="split-check" data-index="${g.index}" checked></td>
+            <td><input type="text" class="form-input split-number" data-index="${g.index}" value="${esc(g.number)}" aria-label="Series number"></td>
+            <td><input type="text" class="form-input split-title" data-index="${g.index}" value="${esc(g.title)}" aria-label="Title"></td>
+            <td class="nowrap" title="${esc(g.files.join('\n'))}">${g.files.length} file${g.files.length === 1 ? '' : 's'}, ${esc(formatSize(g.size))}</td>
+            <td>${m ? `${esc(m.title)}<div class="muted">${esc([formatRuntime(m.runtime_min), m.asin].filter(Boolean).join(' · '))}</div>` : '<span class="muted">No match</span>'}</td>
+            <td class="muted">${esc(g.folder)}${g.exists ? ' <span class="edition-badge edition-check">Exists</span>' : ''}</td>
+        </tr>`;
+    }).join('');
+    document.getElementById('splitTable').hidden = false;
+    document.querySelectorAll('.split-check').forEach(cb => cb.addEventListener('change', updateSplitButton));
+    updateSplitButton();
+}
+
+function setupSplitModal() {
+    document.getElementById('splitBookBtn').addEventListener('click', () => openSplitDialog(currentBookId));
+    document.getElementById('closeSplitModal').addEventListener('click', () => hideModal(splitModal));
+    splitModal.addEventListener('click', (e) => { if (e.target === splitModal) hideModal(splitModal); });
+    document.getElementById('splitBtn').addEventListener('click', async (e) => {
+        if (!splitProposal) return;
+        const btn = e.currentTarget;
+        const msg = document.getElementById('splitStatus');
+        const books = [...document.querySelectorAll('.split-check:checked')].map(cb => {
+            const i = cb.dataset.index;
+            const original = splitProposal.groups.find(g => String(g.index) === i);
+            const title = document.querySelector(`.split-title[data-index="${i}"]`).value.trim();
+            return { index: Number(i), number: document.querySelector(`.split-number[data-index="${i}"]`).value.trim(),
+                     title: title !== original.title ? title : '' };
+        });
+        btn.disabled = true;
+        setActionStatus(msg, 'Creating the folders…');
+        const { ok, data } = await postJSON(`/api/library/${encodeURIComponent(splitProposal.book_id)}/split`, { books });
+        if (!ok) {
+            setActionStatus(msg, data.detail || 'Split failed', 'error');
+            btn.disabled = false;
+            return;
+        }
+        hideModal(splitModal);
+        hideModal(bookModal);
+        await fetchLibrary();
+        renderLibrary();
+        toast(`Split into ${data.created} books. The original folder is unchanged; remove it when you're ready.`, 'ok');
+    });
 }

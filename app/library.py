@@ -127,6 +127,11 @@ def normalize(text):
 _EDITION_WORDS = re.compile(r"\b(dramati[sz]ed|adaptation|graphic\s?audio|full[\s-]?cast|(un)?abridged)\b", re.IGNORECASE)
 
 
+# A bracketed edition tag in a title: "(Dramatized Adaptation)", "[Full Cast]", "(Abridged)"
+_EDITION_TAG = re.compile(r"\s*[\(\[][^\)\]]*(?:dramati[sz]|adaptation|full[\s-]?cast|graphic\s?audio|abridged)[^\)\]]*[\)\]]",
+                          re.IGNORECASE)
+
+
 def title_key(title):
     """A title for matching: the main title, without bracketed tags, edition words or a
     subtitle: "Storm Front (Dramatized Adaptation): Series, Book 1" -> "stormfront"."""
@@ -369,6 +374,17 @@ def find_match(library, book):
     return None
 
 
+def find_import_match(library, book):
+    """find_match for a folder being imported: the entry for this folder, or a tracked book
+    not on disk yet (e.g. Monitored) to link it to. A book already on disk in another
+    folder is a second copy, so it isn't matched."""
+    for entry in library:
+        if same_path(entry.get("path"), book.get("path")):
+            return entry
+    elsewhere = lambda e: e.get("path") and not same_path(e["path"], book.get("path")) and os.path.exists(e["path"])
+    return find_match([e for e in library if not elsewhere(e)], book)
+
+
 def total_duration_min(paths):
     """Total play time of audio files in minutes, or None if any file can't be read."""
     import mutagen  # Only needed for download checks
@@ -523,7 +539,8 @@ def build_folder_name(template, book):
     values = {
         "{Author}": primary_author(book.get("authors")),
         "{Authors}": book.get("authors") or "",
-        "{Title}": (book.get("title") or "").strip(),
+        # "Title (Dramatized Adaptation)" already says what the edition suffix would
+        "{Title}": (_EDITION_TAG.sub("", book.get("title") or "").strip() if edition else (book.get("title") or "").strip()),
         "{Series}": book.get("series") or "",
         "{SeriesNumber}": format_sequence(book.get("sequence")),
         "{Year}": (book.get("release_date") or "")[:4],

@@ -10,7 +10,7 @@ import logging
 import uuid
 
 from app import editions
-from app.library import (_CONTRIBUTOR_ROLE, DEFAULT_NAMING_FORMAT, find_match, main_series_fields,
+from app.library import (_CONTRIBUTOR_ROLE, DEFAULT_NAMING_FORMAT, find_import_match, find_match, main_series_fields,
                          merge_series_lists, series_entries, series_key)
 
 logger = logging.getLogger(__name__)
@@ -207,7 +207,7 @@ def import_books(books):
     with _lock:
         db = _load_db()
         for book in books:
-            existing = find_match(db["library"], book)
+            existing = find_import_match(db["library"], book)
             if existing:
                 existing.update(path=book["path"], cover=book.get("cover", ""), status="Imported")
                 for key in ("asin", "series", "sequence", "narrators", "edition", "edition_reason"):

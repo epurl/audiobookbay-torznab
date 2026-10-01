@@ -9,7 +9,8 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import audible, audiobookshelf, auth, book_search, db, editions, library, release_calendar, series_index
+from app import (audible, audiobookshelf, auth, book_search, db, editions, library, release_calendar, series_index,
+                 splitter)
 from app.monitor import (auto_download_book, classify_editions, find_missing_books, grab, match_job, run_monitor_loop,
                          schedule_search, schedule_searches, start_match_job, sync_series)
 from app.qbittorrent import get_torrents, test_connection
@@ -190,6 +191,28 @@ async def api_match_book(book_id: str, request: Request):
     db.apply_audible_match(book_id, audible.product_to_book(products[0], prefer_series=book.get("series", "")))
     db.add_history("matched", book, f"Matched to Audible {asin}")
     return {"success": True, "book": db.get_book(book_id)}
+
+@app.get("/api/library/{book_id}/split")
+async def api_split_proposal(book_id: str):
+    """The books a collection folder holds, matched to its series on Audible."""
+    _get_book_or_404(book_id)
+    proposal = await splitter.propose(book_id)
+    if proposal is None:
+        raise HTTPException(status_code=400, detail="This book has no folder on disk.")
+    return splitter.public(proposal)
+
+@app.post("/api/library/{book_id}/split")
+async def api_split(book_id: str, request: Request):
+    """Creates a folder per chosen book (hardlinks; the original folder isn't changed)."""
+    _get_book_or_404(book_id)
+    choices = (await request.json()).get("books") or []
+    try:
+        return {"success": True, **await splitter.apply(book_id, choices)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except OSError as e:
+        logger.error(f"Split failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Couldn't create the folders: {e}")
 
 @app.post("/api/library/bulk")
 async def api_bulk(request: Request):
@@ -489,7 +512,7 @@ async def api_scan_library(request: Request):
     current = db.get_library()
     _last_scan.clear()
     for c in candidates:
-        match = library.find_match(current, c)
+        match = library.find_import_match(current, c)
         if not match:
             c["state"] = "new"
         elif library.same_path(match.get("path"), c["path"]) and match.get("status") in ("Imported", "Missing"):
