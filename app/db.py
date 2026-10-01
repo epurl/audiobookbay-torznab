@@ -46,6 +46,8 @@ DEFAULT_SETTINGS = {
     "verify_runtime": True,
     "runtime_tolerance": 10,  # percent
     "write_metadata": True,
+    "auto_convert_m4b": False,                # Queue imported downloads that aren't a single M4B
+    "delete_originals_after_convert": False,  # Delete the .original files once a conversion checks out
     "edition_preference": "narrated",  # narrated | dramatized | both: what series monitoring adds
     # AudiobookBay (the cookie falls back to the ABB_COOKIE environment variable)
     "abb_enabled": True,
@@ -74,6 +76,7 @@ EDITABLE_SETTINGS = {
     "qbt_host", "qbt_user", "root_folder", "downloads_folder", "naming_format",
     "rename_files", "use_hardlinks", "stall_hours", "remove_stalled",
     "verify_runtime", "runtime_tolerance", "write_metadata", "edition_preference",
+    "auto_convert_m4b", "delete_originals_after_convert",
     "pref_narrators", "avoid_narrators", "preferred_words", "blocked_words", "blocked_uploaders",
     "min_bitrate", "max_size_gb", "abb_enabled", "abb_url", "abb_user_agent",
     "abs_url", "abs_library_id",

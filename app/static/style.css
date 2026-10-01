@@ -2927,3 +2927,55 @@ tr.clickable {
 .stats-table th {
     padding: 6px 8px;
 }
+
+/* Activity: conversions to M4B */
+.conversion-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 20px;
+}
+
+.conversion-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    background-color: var(--bg-dark);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 0.9rem;
+}
+
+.conversion-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.conversion-label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.conversion-row.result-converted .conversion-label { color: var(--success); }
+.conversion-row.result-error .conversion-label { color: var(--error); }
+
+.conversion-bar {
+    display: inline-block;
+    width: 160px;
+    height: 6px;
+    border-radius: 3px;
+    background-color: var(--bg-hover);
+    overflow: hidden;
+    vertical-align: middle;
+}
+
+.conversion-bar span {
+    display: block;
+    height: 100%;
+    background-color: var(--primary);
+}

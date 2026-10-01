@@ -115,6 +115,7 @@
                         <option value="__detect">Detect again</option>
                     </select>
                     <button class="secondary-btn" id="bulkMatch">Match on Audible</button>
+                    <button class="secondary-btn" id="bulkConvert" title="Add the selected books to the conversion queue">Convert to M4B</button>
                     <button class="danger-btn" id="bulkRemove">Remove</button>
                 </div>
                 <div id="libraryLoader" class="loader hidden">
@@ -267,6 +268,10 @@
                         <tbody id="queueRows"></tbody>
                     </table>
                 </div>
+                <div id="conversionSection" hidden>
+                    <h3 class="section-title">Conversions to M4B</h3>
+                    <div id="conversionList" class="conversion-list"></div>
+                </div>
                 <h3 class="section-title">History</h3>
                 <div class="table-container activity-table">
                     <table class="data-table">
@@ -371,6 +376,31 @@
                         <div class="settings-group">
                             <label for="setRuntimeTolerance">Allowed Difference (%)</label>
                             <input type="number" id="setRuntimeTolerance" class="form-input narrow" min="1" max="50">
+                        </div>
+
+                        <h3>Conversion to M4B</h3>
+                        <p class="settings-hint" id="convertAvailability"></p>
+                        <div class="settings-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="setAutoConvert">
+                                Convert Downloads to M4B Automatically
+                            </label>
+                            <p class="settings-hint">After a download is imported, if it isn't a single M4B, it's added to the conversion queue: one M4B with a chapter per file, its tags and cover. You can also convert any book by hand from its details, or several with Select in the Library.</p>
+                        </div>
+                        <div class="settings-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="setDeleteOriginals">
+                                Delete the Original Files After Converting
+                            </label>
+                            <p class="settings-hint">Only once the M4B has passed its checks (length, chapters, plays through). Off: the originals are kept as .original files (Audiobookshelf ignores them) until you delete them from the book's details. When imported with hardlinks, the originals take no extra space.</p>
+                        </div>
+                        <div class="settings-group inline-actions">
+                            <button type="button" class="secondary-btn" id="convertQueueAllBtn">Queue Existing Books</button>
+                            <span class="settings-hint">Adds every book on disk that isn't a single M4B to the queue.</span>
+                        </div>
+                        <div class="settings-group">
+                            <label>Queue</label>
+                            <div id="settingsConversionList" class="conversion-list"></div>
                         </div>
                     </section>
 

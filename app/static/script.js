@@ -261,6 +261,7 @@ function activateView(viewId) {
     if (viewId === 'libraryView') renderLibrary();
     if (viewId === 'seriesView') renderSeries();
     if (viewId === 'calendarView') renderCalendar();
+    if (viewId === 'settingsView') pollSettingsQueue();
     if (viewId === 'authorsView') renderFollowedAuthors();
     if (viewId === 'activityView') {
         renderActivity();
@@ -299,6 +300,12 @@ async function fetchSettings() {
         document.getElementById('setVerifyRuntime').checked = appSettings.verify_runtime ?? true;
         document.getElementById('setRuntimeTolerance').value = appSettings.runtime_tolerance ?? 10;
         document.getElementById('setWriteMetadata').checked = appSettings.write_metadata ?? true;
+        document.getElementById('setAutoConvert').checked = appSettings.auto_convert_m4b ?? false;
+        document.getElementById('setDeleteOriginals').checked = appSettings.delete_originals_after_convert ?? false;
+        convertStatus().then(st => {
+            document.getElementById('convertAvailability').textContent = st && st.available ? ''
+                : "ffmpeg isn't installed here, so books can't be converted (it's included in the Docker image).";
+        });
         document.getElementById('setAbbEnabled').checked = appSettings.abb_enabled ?? true;
         document.getElementById('setAbbUrl').value = appSettings.abb_url || '';
         document.getElementById('setAbbUserAgent').value = appSettings.abb_user_agent || '';
@@ -370,6 +377,8 @@ function setupSettings() {
             verify_runtime: document.getElementById('setVerifyRuntime').checked,
             runtime_tolerance: parseInt(document.getElementById('setRuntimeTolerance').value, 10) || 10,
             write_metadata: document.getElementById('setWriteMetadata').checked,
+            auto_convert_m4b: document.getElementById('setAutoConvert').checked,
+            delete_originals_after_convert: document.getElementById('setDeleteOriginals').checked,
             pref_narrators: document.getElementById('setPrefNarrators').value.trim(),
             avoid_narrators: document.getElementById('setAvoidNarrators').value.trim(),
             preferred_words: document.getElementById('setPreferredWords').value.trim(),
@@ -503,9 +512,20 @@ function setupSettings() {
     });
 }
 
+let settingsQueueTimer = null;
+
+function pollSettingsQueue() {
+    clearTimeout(settingsQueueTimer);
+    const media = document.querySelector('.settings-section[data-section="media"]');
+    if (document.getElementById('settingsView').hidden || media.hidden) return;
+    renderConversions();
+    settingsQueueTimer = setTimeout(pollSettingsQueue, 3000);
+}
+
 function showSettingsSection(name) {
     document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t.dataset.section === name));
     document.querySelectorAll('.settings-section').forEach(sec => { sec.hidden = sec.dataset.section !== name; });
+    if (name === 'media') pollSettingsQueue();
     // Security and Backup have their own buttons
     document.getElementById('settingsSaveBar').hidden = ['security', 'backup'].includes(name);
 }
@@ -667,7 +687,7 @@ let shownBookIds = [];
 function updateBulkBar() {
     document.getElementById('bulkBar').hidden = !selectMode;
     document.getElementById('bulkCount').textContent = `${selectedIds.size} selected`;
-    ['bulkStatus', 'bulkEdition', 'bulkMatch', 'bulkRemove'].forEach(id => { document.getElementById(id).disabled = selectedIds.size === 0; });
+    ['bulkStatus', 'bulkEdition', 'bulkMatch', 'bulkConvert', 'bulkRemove'].forEach(id => { document.getElementById(id).disabled = selectedIds.size === 0; });
     document.getElementById('selectModeBtn').textContent = selectMode ? 'Done' : 'Select';
 }
 
@@ -1557,6 +1577,7 @@ const EVENT_LABELS = {
 };
 
 async function renderActivity() {
+    renderConversions();
     let queueData, historyData;
     try {
         [queueData, historyData] = await Promise.all([
@@ -3072,51 +3093,105 @@ async function renderStats() {
 
 
 // -----------------
-// Convert to M4B (one file with chapters); the originals are kept until deleted
+// Convert to M4B: a queue converted one book at a time (Activity shows it); the
+// originals are kept until deleted
 // -----------------
 let convertTimer = null;
+let convertInfo = null;  // The open book's conversion info (from its files)
 
-function updateConvertButtons(bookId, info) {
-    if (!info || bookId !== currentBookId) return;
-    const convertBtn = document.getElementById('convertBookBtn');
-    const deleteBtn = document.getElementById('deleteOriginalsBtn');
-    convertBtn.hidden = !info.available || Boolean(info.reason);
-    deleteBtn.hidden = !info.originals;
-    deleteBtn.textContent = `Delete Originals (${info.originals}, ${formatSize(info.originals_bytes)})`;
+async function convertStatus() {
+    return fetch('/api/convert').then(r => r.json()).catch(() => null);
 }
 
-async function watchConvert(bookId) {
+// The book details' Convert button: queue it, or show its place in the queue / progress
+async function updateConvertButtons(bookId, info) {
+    if (info) convertInfo = info;
+    if (!convertInfo || bookId !== currentBookId) return;
+    const convertBtn = document.getElementById('convertBookBtn');
+    const deleteBtn = document.getElementById('deleteOriginalsBtn');
+    deleteBtn.hidden = !convertInfo.originals;
+    deleteBtn.textContent = `Delete Originals (${convertInfo.originals}, ${formatSize(convertInfo.originals_bytes)})`;
+    const st = await convertStatus();
+    if (!st || bookId !== currentBookId) return;
+    const queued = st.queue.find(q => q.book_id === bookId);
+    const running = st.current && st.current.book_id === bookId;
+    convertBtn.dataset.state = running ? 'running' : queued ? 'queued' : 'idle';
+    convertBtn.textContent = running ? `Converting ${Math.round(st.current.progress * 100)}%… (Cancel)`
+        : queued ? `Queued #${queued.position} (Remove)` : 'Convert to M4B';
+    convertBtn.hidden = !st.available || (!running && !queued && Boolean(convertInfo.reason));
     clearTimeout(convertTimer);
-    const job = await fetch('/api/convert').then(r => r.json()).catch(() => null);
-    if (!job) return;
-    const msg = document.getElementById('bookStatusMsg');
-    const showing = currentBookId === job.book_id && bookModal.classList.contains('show');
-    if (job.running) {
-        if (showing) setActionStatus(msg, `Converting to M4B… ${Math.round(job.progress * 100)}%`);
-        convertTimer = setTimeout(() => watchConvert(bookId), 2000);
+    if ((running || queued) && bookModal.classList.contains('show')) {
+        convertTimer = setTimeout(() => updateConvertButtons(bookId), 2000);
+    } else if (convertBtn.dataset.wasActive === '1' && !running && !queued) {
+        // Just finished: reload the book's files
+        convertBtn.dataset.wasActive = '';
+        await fetchLibrary();
+        openBookModal(bookId);
         return;
     }
-    if (job.finished === 'ok') {
-        toast(`Converted "${job.title}" to M4B. The original files are kept until you delete them.`, 'ok');
-        if (showing) setActionStatus(msg, 'Converted to M4B', 'ok');
-    } else if (job.finished === 'error') {
-        toast(`Converting "${job.title}" failed: ${job.error}`, 'error');
-        if (showing) setActionStatus(msg, job.error, 'error');
+    convertBtn.dataset.wasActive = running || queued ? '1' : '';
+}
+
+function conversionRow(label, title, detail, action) {
+    return `<div class="conversion-row">
+        <div class="conversion-text"><b>${esc(title)}</b><span class="muted">${detail}</span></div>
+        <span class="conversion-label">${label}</span>${action}</div>`;
+}
+
+// Activity: the book being converted, the queue, and recent results
+async function renderConversions() {
+    const section = document.getElementById('conversionSection');
+    const st = await convertStatus();
+    if (!st) return;
+    const recent = st.recent.slice(0, 5);
+    section.hidden = !st.current && !st.queue.length && !recent.length;
+    drawConversions(st, recent, document.getElementById('conversionList'));
+    drawConversions(st, recent, document.getElementById('settingsConversionList'));
+}
+
+function drawConversions(st, recent, list) {
+    const resultLabels = { converted: 'Converted', error: 'Failed', cancelled: 'Cancelled', skipped: 'Skipped' };
+    const rows = [];
+    if (st.current) {
+        rows.push(conversionRow('Converting', st.current.title,
+            `<span class="conversion-bar"><span style="width:${Math.round(st.current.progress * 100)}%"></span></span> ${Math.round(st.current.progress * 100)}%`,
+            `<button class="link-btn conversion-remove" data-id="${esc(st.current.book_id)}">Cancel</button>`));
     }
-    await fetchLibrary();
-    if (showing) openBookModal(job.book_id);
+    st.queue.forEach(q => rows.push(conversionRow(`#${q.position}`, q.title,
+        esc(q.source === 'auto' ? 'Queued after import' : q.source === 'bulk' ? 'Queued with others' : 'Queued by you'),
+        `<button class="link-btn conversion-remove" data-id="${esc(q.book_id)}">Remove</button>`)));
+    recent.forEach(r => rows.push(conversionRow(resultLabels[r.result] || r.result, r.title,
+        esc([new Date(r.finished).toLocaleString(), r.message].filter(Boolean).join(' · ')), '')
+        .replace('conversion-row', `conversion-row result-${esc(r.result)}`)));
+    list.innerHTML = (st.available ? '' : '<p class="settings-hint">ffmpeg isn\'t installed, so nothing is converted (it\'s included in the Docker image).</p>')
+        + (rows.join('') || '<p class="muted">Nothing queued.</p>');
+    list.querySelectorAll('.conversion-remove').forEach(btn => btn.addEventListener('click', async () => {
+        await fetch(`/api/convert/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
+        renderConversions();
+    }));
 }
 
 function setupConvert() {
-    document.getElementById('convertBookBtn').addEventListener('click', async () => {
+    document.getElementById('convertBookBtn').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
         const book = appLibrary.find(b => b.id === currentBookId);
+        if (btn.dataset.state === 'queued' || btn.dataset.state === 'running') {
+            const running = btn.dataset.state === 'running';
+            if (running && !await confirmDialog(`Cancel converting "${book.title}"? Its files stay as they are.`,
+                { title: 'Cancel conversion', confirmText: 'Cancel Conversion', danger: true })) return;
+            await fetch(`/api/convert/${encodeURIComponent(currentBookId)}`, { method: 'DELETE' });
+            toast(running ? 'Conversion cancelled' : 'Removed from the conversion queue', 'ok');
+            return updateConvertButtons(currentBookId);
+        }
         if (!await confirmDialog(`Convert "${book.title}" to one M4B file?\n\nEach current file becomes a chapter, with the book's tags and cover. `
-            + 'The original files are kept (renamed to .original, which Audiobookshelf ignores) until you delete them. '
-            + 'This runs in the background and can take a while for long books.', { title: 'Convert to M4B', confirmText: 'Convert' })) return;
+            + 'The new file must match the originals\' length, have a chapter per file and play through cleanly before anything changes. '
+            + 'The originals are then kept (renamed to .original, which Audiobookshelf ignores) until you delete them, unless Settings say to delete them.',
+            { title: 'Convert to M4B', confirmText: 'Add to Queue' })) return;
         const { ok, data } = await postJSON(`/api/library/${encodeURIComponent(currentBookId)}/convert`);
-        if (!ok) return setActionStatus(document.getElementById('bookStatusMsg'), data.detail || 'Could not start', 'error');
-        document.getElementById('convertBookBtn').hidden = true;
-        watchConvert(currentBookId);
+        if (!ok) return setActionStatus(document.getElementById('bookStatusMsg'), data.detail || 'Could not queue it', 'error');
+        const position = data.queue.find(q => q.book_id === currentBookId);
+        toast(position ? `Queued for conversion (#${position.position})` : 'Converting now', 'ok');
+        updateConvertButtons(currentBookId);
     });
     document.getElementById('deleteOriginalsBtn').addEventListener('click', async () => {
         const book = appLibrary.find(b => b.id === currentBookId);
@@ -3126,5 +3201,19 @@ function setupConvert() {
         if (!ok) return setActionStatus(document.getElementById('bookStatusMsg'), data.detail || 'Could not delete', 'error');
         toast(`Deleted ${data.deleted} original file${data.deleted === 1 ? '' : 's'} (${formatSize(data.bytes)})`, 'ok');
         openBookModal(currentBookId);
+    });
+    document.getElementById('bulkConvert').addEventListener('click', async () => {
+        const data = await runBulk('convert');
+        if (!data) return;
+        toast(`${data.count} book${data.count === 1 ? '' : 's'} queued for conversion`
+            + (data.skipped ? ` (${data.skipped} skipped: already M4B, queued, or not on disk)` : ''), data.count ? 'ok' : '');
+        setSelectMode(false);
+    });
+    document.getElementById('convertQueueAllBtn').addEventListener('click', async () => {
+        if (!await confirmDialog('Add every book on disk that isn\'t a single M4B to the conversion queue?\n\nThey\'re converted one at a time in the background; Activity shows the queue.',
+            { title: 'Queue existing books', confirmText: 'Queue Them' })) return;
+        const { ok, data } = await postJSON('/api/convert/queue_all');
+        toast(ok ? `${data.added} book${data.added === 1 ? '' : 's'} queued for conversion` : (data.detail || 'Could not queue them'), ok ? 'ok' : 'error');
+        renderConversions();
     });
 }

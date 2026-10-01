@@ -38,8 +38,9 @@ app.middleware("http")(auth.auth_middleware)
 
 @app.on_event("startup")
 async def startup_event():
-    # Start the background monitor loop
+    # Start the background monitor loop, and the M4B conversion queue
     asyncio.create_task(run_monitor_loop())
+    asyncio.create_task(convert.run_queue())
 
 # Ensure static directory exists
 os.makedirs("app/static", exist_ok=True)
@@ -413,6 +414,11 @@ async def api_bulk(request: Request):
         if not start_match_job(ids):
             raise HTTPException(status_code=409, detail="A match is already running.")
         return {"success": True, "count": len(ids)}
+    if action == "convert":
+        if not convert.available():
+            raise HTTPException(status_code=409, detail="ffmpeg isn't installed")
+        added, skipped = convert.enqueue(ids, source="bulk")
+        return {"success": True, "count": added, "skipped": len(skipped)}
     if action == "edition":
         edition = data.get("edition")
         if edition not in editions.EDITIONS:
@@ -499,17 +505,34 @@ async def api_book_files(book_id: str):
 
 @app.post("/api/library/{book_id}/convert")
 async def api_convert(book_id: str):
-    """Converts the book's audio files to one M4B with chapters, in the background."""
+    """Queues the book for conversion to one M4B with chapters."""
     _get_book_or_404(book_id)
-    try:
-        convert.start(book_id)
-    except RuntimeError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    return dict(convert.job)
+    if not convert.available():
+        raise HTTPException(status_code=409, detail="ffmpeg isn't installed")
+    added, skipped = convert.enqueue([book_id])
+    if not added:
+        raise HTTPException(status_code=409, detail=skipped.get(book_id, "Couldn't queue it"))
+    return convert.status()
 
 @app.get("/api/convert")
 async def api_convert_status():
-    return {**convert.job, "available": convert.available()}
+    """The conversion queue: the book being converted, the ones waiting, recent results."""
+    return convert.status()
+
+@app.delete("/api/convert/{book_id}")
+async def api_convert_remove(book_id: str):
+    """Takes a book out of the queue, or cancels its conversion if it's running."""
+    if not convert.remove(book_id):
+        raise HTTPException(status_code=404, detail="It isn't queued.")
+    return convert.status()
+
+@app.post("/api/convert/queue_all")
+async def api_convert_queue_all():
+    """Queues every book on disk that isn't a single M4B yet."""
+    if not convert.available():
+        raise HTTPException(status_code=409, detail="ffmpeg isn't installed")
+    added, _ = convert.enqueue([b["id"] for b in convert.eligible_books()], source="bulk")
+    return {"success": True, "added": added, **convert.status()}
 
 @app.post("/api/library/{book_id}/originals/delete")
 async def api_delete_originals(book_id: str):

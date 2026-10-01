@@ -3,7 +3,7 @@ import logging
 import datetime
 import os
 import shutil
-from . import audible, audiobookshelf, book_search, db, editions, indexers, release_match, scraper
+from . import audible, audiobookshelf, book_search, convert, db, editions, indexers, release_match, scraper
 from .library import (audio_files, build_folder_name, describe_files, find_match, plan_import_files,
                       read_abs_metadata, total_duration_min)
 from .qbittorrent import delete_torrents, get_completed_torrents, get_torrents, send_to_qbittorrent, send_torrent_file
@@ -481,6 +481,11 @@ async def import_completed_downloads(settings):
             db.update_book(book["id"], status="Imported", path=dest_dir, cover=cover_name,
                            review_reason="", skip_verify=False, **describe_files(dest_dir))
             db.add_history("imported", book, f"{len(audio)} file{'s' if len(audio) != 1 else ''} into {dest_dir}")
+            # Settings > Media Management: convert downloads that aren't a single M4B
+            if settings.get("auto_convert_m4b") and convert.available():
+                added, _ = convert.enqueue([book["id"]], source="auto")
+                if added:
+                    logger.info(f"Queued {title} for conversion to M4B")
         except Exception as e:
             logger.error(f"Failed to import {title}: {e}")
             db.add_history("failed", book, f"Import failed: {e}")
