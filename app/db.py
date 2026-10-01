@@ -377,10 +377,10 @@ def get_series(series_id):
 
 CATALOG_MAX_AGE_DAYS = 7
 # Raised when the way series lists are built changes, so saved ones are fetched again
-CATALOG_VERSION = 6
+CATALOG_VERSION = 7
 _CATALOG_BOOK_FIELDS = ("title", "authors", "narrators", "imageUrl", "release_date", "asin", "series", "series_asin",
                         "sequence", "series_list", "runtime_min", "publisher", "language", "catalog_sequence",
-                        "edition", "edition_reason", "part_asins", "part", "part_count")
+                        "edition", "edition_reason", "part_asins", "part", "part_count", "placeholder")
 
 
 CATALOG_FILE = os.path.join(CONFIG_DIR, "series_catalog.json")

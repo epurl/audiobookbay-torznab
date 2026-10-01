@@ -27,7 +27,8 @@ def abs_series(book):
         return None
     from app.series_index import plain_title
     name = plain_title(name)
-    if edition_of(book) == ABRIDGED:
+    # Unless the series' own name already says it ("Series [Dramatized Adaptation]")
+    if edition_of(book) == ABRIDGED and not re.search(r"abridged|dramati[sz]", name, re.IGNORECASE):
         name += " (Abridged)"
     sequence = format_sequence(book.get("sequence"))
     part = part_number(book.get("title"))

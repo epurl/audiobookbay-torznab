@@ -1620,7 +1620,7 @@ function seriesRowHtml(r, src, i) {
         : `<span class="muted">Not in library</span> <button class="link-btn add-row" data-src="${src}" data-index="${i}">Add</button>${other}`;
     return `<tr class="${r.book_id ? 'clickable' : 'not-owned'}" data-src="${src}" data-index="${i}">
         <td class="muted">${esc(r.sequence)}</td>
-        <td>${bookLink(r.book_id, r.title)}${abridgedIcon(r)}</td>
+        <td>${bookLink(r.book_id, r.title)}${abridgedIcon(r)}${r.placeholder ? ' <span class="muted" title="Audible lists it in the series but does not sell it; it can still be found elsewhere">· not on Audible</span>' : ''}</td>
         <td class="muted" title="${esc(r.narrators || '')}">${esc(shortNames(r.narrators))}</td>
         <td class="muted nowrap">${esc(releaseDate(r.release_date))}</td>
         <td class="muted nowrap">${esc(formatRuntime(r.runtime_min))}</td>

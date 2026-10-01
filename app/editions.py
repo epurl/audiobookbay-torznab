@@ -81,8 +81,10 @@ def classify_product(product):
         return _result(ABRIDGED, "Audible lists it as abridged")
     narrators = _people(product.get("narrators"))
     publisher = product.get("publisher_name") or ""
+    series_names = ", ".join(s.get("title") or "" for s in product.get("series") or [])
     for text, where in ((f"{product.get('title', '')} {product.get('subtitle') or ''}", "title"),
-                        (", ".join(narrators), "narrators"), (publisher, "publisher")):
+                        (", ".join(narrators), "narrators"), (publisher, "publisher"),
+                        (series_names, "series name")):  # "Series [Dramatized Adaptation]"
         found = _words(text, where)
         if found and found["edition"] == DRAMATIZED:
             return found

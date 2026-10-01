@@ -371,6 +371,7 @@ def _row_json(r):
         "asin": (book or {}).get("asin") or (catalog or {}).get("asin", ""),
         "edition": edition_of(shown),
         "part": _part(shown),
+        "placeholder": bool((catalog or {}).get("placeholder")),  # Listed by Audible, not sold there
         "part_count": (catalog or {}).get("part_count") or audible.part_of(shown.get("title"))[1],
         "catalog": catalog if not book else None,
         # Another edition of this book that you have

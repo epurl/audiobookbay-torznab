@@ -92,18 +92,23 @@ def product_to_book(product, prefer_series=""):
             fields.update(series=chosen["name"], sequence=chosen["sequence"], series_asin=chosen["asin"])
     authors = [a["name"] for a in product.get("authors") or [] if not _CONTRIBUTOR_ROLE.search(a.get("name", ""))]
     edition = editions.classify_product(product)
+    # Audible lists some series' books it doesn't sell (e.g. dramatizations sold elsewhere) as
+    # placeholders: no narrators or length, released "2200-01-01". They're still books you
+    # can get, so they keep no date (not Unreleased forever) and are marked
+    placeholder = "placeholder" in (product.get("publisher_name") or "").lower()
     return {
+        "placeholder": placeholder,
         "title": _strip_series_tag(product.get("title") or "", entries),
         "subtitle": product.get("subtitle") or "",
         "authors": ", ".join(authors),
         "narrators": ", ".join(n["name"] for n in product.get("narrators") or []),
         "imageUrl": (product.get("product_images") or {}).get("500", ""),
-        "release_date": product.get("release_date") or product.get("issue_date") or "",
+        "release_date": "" if placeholder else (product.get("release_date") or product.get("issue_date") or ""),
         "asin": product.get("asin") or "",
         **fields,
         "runtime_min": product.get("runtime_length_min") or 0,
         "description": product.get("publisher_summary") or "",
-        "publisher": product.get("publisher_name") or "",
+        "publisher": "" if placeholder else (product.get("publisher_name") or ""),
         "language": (product.get("language") or "").capitalize(),
         "edition": edition["edition"],
         "edition_reason": edition["reason"],
