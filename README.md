@@ -146,6 +146,21 @@ With **Trending** on, recent and upcoming Audible releases you don't have are ad
 
 Click a trending book for its details, then **Add to Library** (upcoming books become Unreleased and are downloaded on release day) or **View Series**.
 
+## System
+
+**Health** lists books that need attention, grouped by kind, each with a fix:
+
+| Issue | Fix |
+| --- | --- |
+| Folder gone, no audio files, empty or unreadable files, parts missing (`Part 2 of 3`) | Open the book |
+| Length doesn't match Audible, edition to check, same book in two folders | Open the book |
+| Several books in one folder | Split into Books |
+| Download held for review | Activity |
+| Not matched on Audible, no runtime | Match on Audible (one, or all at once) |
+| No cover (and none inside the audio files) | Get Audible's cover (one, or all at once) |
+
+**Deep Check** opens every audio file in the background to find unreadable files, embedded covers, and books whose length is far from Audible's runtime.
+
 ## Audiobookshelf
 
 - **Write metadata.json and Cover** (on by default): imported downloads get Audiobookshelf's `metadata.json` and Audible's 1000px cover. Folders from Import Existing are never changed.

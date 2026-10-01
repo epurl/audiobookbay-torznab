@@ -9,8 +9,8 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import (audible, audiobookshelf, auth, book_search, db, editions, library, organize, release_calendar,
-                 series_index, splitter)
+from app import (audible, audiobookshelf, auth, book_search, db, editions, health, library, organize,
+                 release_calendar, series_index, splitter)
 from app.monitor import (auto_download_book, classify_editions, find_missing_books, grab, match_job, run_monitor_loop,
                          schedule_search, schedule_searches, start_match_job, sync_series)
 from app.qbittorrent import get_torrents, test_connection
@@ -191,6 +191,41 @@ async def api_match_book(book_id: str, request: Request):
     db.apply_audible_match(book_id, audible.product_to_book(products[0], prefer_series=book.get("series", "")))
     db.add_history("matched", book, f"Matched to Audible {asin}")
     return {"success": True, "book": db.get_book(book_id)}
+
+@app.get("/api/health")
+async def api_health():
+    """Books that need attention, with the fix for each kind of issue."""
+    return await asyncio.to_thread(health.check)
+
+@app.post("/api/health/deep")
+async def api_health_deep():
+    """Opens every audio file in the background: unreadable files, wrong lengths."""
+    health.start_deep_check()
+    return dict(health.deep_job)
+
+@app.get("/api/health/deep")
+async def api_health_deep_status():
+    return dict(health.deep_job)
+
+async def _fetch_cover(book):
+    path = book.get("path") or ""
+    if not book.get("imageUrl") or not os.path.isdir(path):
+        return False
+    name = await audiobookshelf.download_cover(book["imageUrl"], path)
+    if name:
+        db.update_book(book["id"], cover=name)
+    return bool(name)
+
+@app.post("/api/covers")
+async def api_fetch_covers(request: Request):
+    """Saves Audible's cover into the folders of these books (as cover.jpg)."""
+    ids = (await request.json()).get("ids") or []
+    fetched = 0
+    for book_id in ids:
+        book = db.get_book(book_id)
+        if book and await _fetch_cover(book):
+            fetched += 1
+    return {"success": True, "fetched": fetched, "count": len(ids)}
 
 @app.get("/api/organize")
 async def api_organize_preview(rename_files: bool = False):

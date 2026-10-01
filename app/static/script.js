@@ -202,13 +202,14 @@ async function initApp() {
     setupLibrary();
     setupSeriesPages();
     setupCalendar();
+    setupSystem();
     window.addEventListener('hashchange', route);
     route();
 }
 
 // Each page has its own address (#/library, #/series/<key>, ...), so the browser's
 // Back and Forward buttons, refreshing and bookmarks all work
-const PAGES = { search: 'searchView', library: 'libraryView', series: 'seriesView', calendar: 'calendarView', activity: 'activityView', settings: 'settingsView' };
+const PAGES = { search: 'searchView', library: 'libraryView', series: 'seriesView', calendar: 'calendarView', activity: 'activityView', system: 'systemView', settings: 'settingsView' };
 const PAGE_NAMES = Object.fromEntries(Object.entries(PAGES).map(([name, view]) => [view, name]));
 
 function navigate(path) {
@@ -233,6 +234,7 @@ function route() {
         return;
     }
     activateView(PAGES[name]);
+    if (name === 'system') showSystemTab(arg || 'health');
     if (name === 'search' && arg && arg !== lastSearchQuery) {
         searchInput.value = arg;
         runSearch(arg);
@@ -2441,5 +2443,115 @@ function setupOrganizeModal() {
         const confirmed = await confirmDialog(`Rename or move ${ids.length} folder${ids.length === 1 ? '' : 's'} as shown?`,
             { title: 'Organize library', confirmText: 'Approve All' });
         if (confirmed) approveOrganize(ids);
+    });
+}
+
+
+// -----------------
+// System: library health (and stats)
+// -----------------
+let healthData = null;
+let healthFilter = '';
+let healthDeepTimer = null;
+
+function showSystemTab(tab) {
+    document.querySelectorAll('.system-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+    document.querySelectorAll('.system-section').forEach(s => { s.hidden = s.dataset.tab !== tab; });
+    if (tab === 'health') renderHealth();
+    if (tab === 'stats' && typeof renderStats === 'function') renderStats();
+}
+
+const HEALTH_FIX_LABELS = { open: 'Open', match: 'Match on Audible', cover: 'Get Cover', split: 'Split', activity: 'Review' };
+const HEALTH_BULK = { match: 'Match All on Audible', cover: 'Get All Covers' };
+
+async function renderHealth() {
+    const loader = document.getElementById('healthLoader');
+    loader.classList.remove('hidden');
+    const res = await fetch('/api/health');
+    healthData = await res.json().catch(() => null);
+    loader.classList.add('hidden');
+    if (!healthData) return;
+    drawHealth();
+    updateHealthDeep(healthData.deep);
+}
+
+function drawHealth() {
+    const { issues, counts, kinds } = healthData;
+    const books = new Set(issues.map(i => i.book_id)).size;
+    document.getElementById('healthSummary').textContent = issues.length
+        ? `${issues.length} issue${issues.length === 1 ? '' : 's'} across ${books} book${books === 1 ? '' : 's'}`
+        : 'No issues found.';
+    document.getElementById('healthChips').innerHTML = Object.entries(counts).filter(([, n]) => n).map(([kind, n]) =>
+        `<button class="health-chip sev-${kinds[kind].severity}${healthFilter === kind ? ' active' : ''}" data-kind="${kind}">${esc(kinds[kind].label)} <b>${n}</b></button>`).join('');
+    document.querySelectorAll('.health-chip').forEach(chip => chip.addEventListener('click', () => {
+        healthFilter = healthFilter === chip.dataset.kind ? '' : chip.dataset.kind;
+        drawHealth();
+    }));
+
+    const groups = {};
+    issues.filter(i => !healthFilter || i.kind === healthFilter).forEach(i => (groups[i.kind] = groups[i.kind] || []).push(i));
+    const list = document.getElementById('healthList');
+    list.innerHTML = Object.keys(groups).length ? Object.entries(groups).map(([kind, items]) => {
+        const k = kinds[kind];
+        const bulk = HEALTH_BULK[k.fix] && items.length > 1
+            ? `<button class="secondary-btn health-bulk" data-kind="${kind}">${HEALTH_BULK[k.fix]} (${items.length})</button>` : '';
+        return `<div class="health-group sev-${k.severity}">
+            <div class="health-group-head"><h3>${esc(k.label)} <span class="muted">${items.length}</span></h3>${bulk}</div>
+            ${items.map((i, n) => `<div class="health-row">
+                <div class="health-book"><b>${esc(i.title)}</b> <span class="muted">· ${esc(primaryAuthor(i.authors))}</span>
+                    ${i.detail ? `<div class="muted health-detail">${esc(i.detail)}</div>` : ''}</div>
+                <button class="link-btn health-fix" data-kind="${kind}" data-index="${n}">${HEALTH_FIX_LABELS[k.fix]}</button>
+            </div>`).join('')}
+        </div>`;
+    }).join('') : '<div class="empty-state"><h3>All good</h3><p>Nothing in your library needs attention.</p></div>';
+
+    list.querySelectorAll('.health-fix').forEach(btn => btn.addEventListener('click', () =>
+        fixHealth(groups[btn.dataset.kind][btn.dataset.index].fix, [groups[btn.dataset.kind][btn.dataset.index].book_id], btn)));
+    list.querySelectorAll('.health-bulk').forEach(btn => btn.addEventListener('click', () =>
+        fixHealth(kinds[btn.dataset.kind].fix, groups[btn.dataset.kind].map(i => i.book_id), btn)));
+}
+
+async function fixHealth(fix, ids, btn) {
+    if (fix === 'open') return openBookModal(ids[0]);
+    if (fix === 'split') return openSplitDialog(ids[0]);
+    if (fix === 'activity') return navigate('/activity');
+    btn.disabled = true;
+    if (fix === 'match') {
+        const { ok, data } = await postJSON('/api/library/bulk', { ids, action: 'match' });
+        if (!ok) { toast(data.detail || 'Match failed', 'error'); btn.disabled = false; return; }
+        toast(`Matching ${ids.length} book${ids.length === 1 ? '' : 's'} on Audible in the background…`);
+        await watchMatchJob();
+    } else if (fix === 'cover') {
+        const { data } = await postJSON('/api/covers', { ids });
+        toast(`Saved ${data.fetched} of ${data.count} cover${data.count === 1 ? '' : 's'} from Audible`, data.fetched ? 'ok' : 'error');
+    }
+    await fetchLibrary();
+    renderHealth();
+}
+
+function updateHealthDeep(job) {
+    const status = document.getElementById('healthDeepStatus');
+    const btn = document.getElementById('healthDeepBtn');
+    clearTimeout(healthDeepTimer);
+    if (job && job.running) {
+        btn.disabled = true;
+        status.textContent = `Checking files… ${job.done} of ${job.total} books`;
+        healthDeepTimer = setTimeout(async () => {
+            if (document.getElementById('systemView').hidden) return;
+            const next = await fetch('/api/health/deep').then(r => r.json()).catch(() => null);
+            if (next && !next.running) renderHealth(); else updateHealthDeep(next);
+        }, 2000);
+    } else {
+        btn.disabled = false;
+        status.textContent = job && job.checked ? `Files last checked ${new Date(job.checked).toLocaleString()}` : 'Files not checked yet';
+    }
+}
+
+function setupSystem() {
+    document.querySelectorAll('.system-tab').forEach(tab => tab.addEventListener('click', () => navigate('/system/' + tab.dataset.tab)));
+    document.getElementById('healthRefreshBtn').addEventListener('click', renderHealth);
+    document.getElementById('healthDeepBtn').addEventListener('click', async () => {
+        const { data } = await postJSON('/api/health/deep');
+        updateHealthDeep({ ...data, running: true });
     });
 }
