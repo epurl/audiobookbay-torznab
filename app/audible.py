@@ -263,7 +263,9 @@ async def auto_match(book):
     The title and first author must match, in the book's edition (narrated unless it's
     dramatized or abridged). Among matches, the closest title wins, then a matching series
     number, then the earliest edition."""
-    title = (book.get("title") or "").split(":")[0].strip()
+    # A release sold in parts: search for the book, then keep only the same part
+    part = part_of(book.get("title"))[0]
+    title = _split_part(book.get("title") or "")[0].split(":")[0].strip()
     author = primary_author(book.get("authors"))
     if not title:
         return None
@@ -275,6 +277,8 @@ async def auto_match(book):
         candidate = product_to_book(product, prefer_series=book.get("series", ""))
         if candidate["edition"] != edition:
             continue  # A dramatized folder matches the dramatized edition, and so on
+        if part_of(candidate["title"])[0] != part:
+            continue  # Part 1 matches part 1; a book not sold in parts matches only a whole book
         rank = _title_rank(want_title, candidate["title"])
         if rank is None:
             continue

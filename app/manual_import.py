@@ -13,8 +13,8 @@ import os
 import shutil
 
 from app import archives, audible, db, monitor
-from app.library import (AUDIO_EXTENSIONS, _make_candidate, audio_files, find_match, plan_import_files,
-                         primary_author)
+from app.library import (AUDIO_EXTENSIONS, _make_candidate, audio_files, build_folder_name, find_match,
+                         plan_import_files, primary_author)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,11 @@ _UNFINISHED = (".!qb", ".part", ".partial", ".!ut", ".crdownload", ".tmp")
 
 def _item_id(path, files):
     return hashlib.sha1((path + "|" + "|".join(files or [])).encode("utf-8", "surrogateescape")).hexdigest()[:16]
+
+
+# A guess's details that describe the book (not where its files are)
+_BOOK_INFO = ("title", "authors", "narrators", "series", "sequence", "series_list", "release_date", "description",
+              "publisher", "language", "edition", "edition_reason", "edition_check", "imageUrl")
 
 
 def _guess_fields(candidate):
@@ -95,19 +100,60 @@ def scan(path):
     return items
 
 
+_audible_books = {}  # asin -> Audible's details, so previews don't ask Audible again
+
+
+async def audible_book(asin, prefer_series=""):
+    if asin not in _audible_books:
+        products = await audible.get_products([asin])
+        if not products:
+            return None
+        _audible_books[asin] = audible.product_to_book(products[0], prefer_series=prefer_series)
+    return _audible_books[asin]
+
+
+async def suggest_for(guess):
+    """The Audible book something probably is: its ASIN's (from metadata.json), else a clear
+    match (title and author, same edition, same part)."""
+    if guess.get("asin"):
+        found = await audible_book(guess["asin"], guess.get("series", ""))
+        if found:
+            return found
+    if not guess.get("title"):
+        return None
+    found = await audible.auto_match(guess)
+    if found and found.get("asin"):
+        _audible_books[found["asin"]] = found
+    return found
+
+
 async def suggest(item_id):
     """The Audible book an item probably is (title and author must match), or None."""
     item = _items.get(item_id)
     if not item:
         raise KeyError(item_id)
-    guess = item["guess"]
-    if guess.get("asin"):
-        products = await audible.get_products([guess["asin"]])
-        if products:
-            return audible.product_to_book(products[0], prefer_series=guess.get("series", ""))
-    if not guess.get("title"):
-        return None
-    return await audible.auto_match(guess)
+    return await suggest_for(item["guess"])
+
+
+async def preview(source, guess, asin, settings):
+    """Where a book would go: {"folder", "files"} in the Root Folder, named from its Audible
+    match when there is one, else from the guess."""
+    book = dict(guess)
+    if asin:
+        found = await audible_book(asin, guess.get("series", ""))
+        if found:
+            book.update({k: v for k, v in found.items() if v})
+    audio, _ = await asyncio.to_thread(plan_import_files, source, *monitor._plan_args(book, settings))
+    folder = build_folder_name(settings.get("naming_format"), book)
+    root = settings.get("root_folder") or ""
+    return {"folder": folder, "files": [dest for _, dest in audio],
+            "exists": bool(root) and os.path.isdir(os.path.join(root, folder))}
+
+
+def register(path, guess):
+    """An item for something found elsewhere (Import Existing), so it can be imported here."""
+    kind = "archive" if os.path.isfile(path) and archives.is_archive(path) else "audio"
+    return _make_item(path, os.path.basename(path), kind, None, 0, 0, guess, [])
 
 
 async def _book_for(item, choice, settings):
@@ -119,10 +165,9 @@ async def _book_for(item, choice, settings):
         if not book:
             raise ValueError("That book isn't in the library any more.")
     elif choice.get("asin"):
-        products = await audible.get_products([choice["asin"]])
-        if not products:
+        found = await audible_book(choice["asin"], item["guess"].get("series", ""))
+        if not found:
             raise ValueError("That book wasn't found on Audible.")
-        found = audible.product_to_book(products[0], prefer_series=item["guess"].get("series", ""))
         book = find_match(library, {**found, "path": ""})
         if book and not book.get("path"):
             db.apply_audible_match(book["id"], found)  # A tracked book: fill in Audible's details
@@ -134,7 +179,7 @@ async def _book_for(item, choice, settings):
         guess = item["guess"]
         if not guess.get("title"):
             raise ValueError("The item has no title to use.")
-        book = db.add_to_library({**guess, "asin": ""}, status="Downloaded")
+        book = db.add_to_library({k: guess[k] for k in _BOOK_INFO if guess.get(k) not in (None, "")}, status="Downloaded")
     else:
         raise ValueError("Choose which book it is.")
     if book.get("path") and os.path.isdir(book["path"]):
@@ -218,8 +263,8 @@ def start(choices, mode):
                     ok, message, book_id = False, str(e), choice.get("book_id", "")
                     logger.warning(f"Manual import of {item['name']} failed: {e}")
                 job["imported" if ok else "failed"] += 1
-                job["results"].append({"id": item["id"], "name": item["name"], "ok": ok, "message": message,
-                                       "book_id": book_id})
+                job["results"].append({"id": item["id"], "name": item["name"], "path": item["path"], "ok": ok,
+                                       "message": message, "book_id": book_id})
                 if ok:
                     _items.pop(item["id"], None)
                 job["done"] += 1

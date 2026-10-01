@@ -53,6 +53,13 @@
         <!-- Main Content -->
         <main class="main-content">
             <div class="content-wrapper" id="searchView" hidden>
+                <div class="page-header">
+                    <h2>Search</h2>
+                    <div class="page-actions">
+                        <button type="button" class="secondary-btn" id="manualImportOpen" title="Bring in books from a download folder, choosing what each one is">Manual Import</button>
+                        <button type="button" id="openImportBtn" class="primary-btn" title="Add audiobooks you already have">Import</button>
+                    </div>
+                </div>
                 <div class="search-container">
                     <svg class="search-icon" viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
                     <input type="search" id="searchInput" placeholder="Search Audible by title, author or series…" autocomplete="off" aria-label="Search Audible">
@@ -78,7 +85,6 @@
                         <button id="listImportBtn" class="secondary-btn" title="Add books from a Goodreads or StoryGraph want-to-read list">Import List</button>
                         <button id="organizeBtn" class="secondary-btn" title="Rename existing folders to the Book Folder Format (you approve each change)">Organize</button>
                         <button id="rescanBtn" class="secondary-btn" title="Refresh file info and find books whose files are gone">Rescan</button>
-                        <button id="openImportBtn" class="primary-btn">Import Existing</button>
                     </div>
                 </div>
                 <div class="library-toolbar">
@@ -263,7 +269,6 @@
             <div class="content-wrapper" id="activityView" hidden>
                 <div class="page-header">
                     <h2>Activity</h2>
-                    <button type="button" class="secondary-btn" id="manualImportOpen">Manual Import</button>
                 </div>
                 <h3 class="section-title">Queue</h3>
                 <div id="queueNotice" class="settings-hint"></div>
@@ -860,8 +865,10 @@
                     <button type="button" id="manualMatchSearch" class="primary-btn">Search</button>
                 </div>
                 <button type="button" class="link-btn" id="manualMatchAsIs"></button>
-                <h3 class="section-title">In your library</h3>
-                <div id="manualMatchLibrary" class="match-list"></div>
+                <div id="manualMatchLibraryBox">
+                    <h3 class="section-title">In your library</h3>
+                    <div id="manualMatchLibrary" class="match-list"></div>
+                </div>
                 <h3 class="section-title">On Audible</h3>
                 <div id="manualMatchLoader" class="loader hidden"><div class="spinner"></div></div>
                 <div id="manualMatchAudible" class="match-list"></div>
@@ -918,7 +925,7 @@
     <div id="importModal" class="modal">
         <div class="modal-content import-content">
             <div class="modal-header">
-                <h2>Import Existing Library</h2>
+                <h2>Import Audiobooks</h2>
                 <button type="button" class="close-btn" id="closeImportModal" aria-label="Close">&times;</button>
             </div>
             <div class="import-toolbar">
@@ -926,7 +933,17 @@
                 <button type="button" class="secondary-btn browse-btn" data-target="importPath">Browse</button>
                 <button id="scanBtn" class="primary-btn">Scan</button>
             </div>
-            <p class="settings-hint">Finds every folder with audio files. Details come from Audiobookshelf's metadata.json when a folder has one, otherwise from the folder name (Author - Series N - Title). The edition (narrated, dramatized or abridged) comes from metadata.json, the files' tags and names; change it before importing if it's wrong. Files are not moved or renamed.</p>
+            <p class="settings-hint">Finds every folder with audio files. Details come from Audiobookshelf's metadata.json when a folder has one, otherwise from the folder and file names. Each book is looked up on Audible (only clear matches); <b>Change</b> to pick another, or to use it as named. Check the edition before importing.</p>
+            <div class="import-options">
+                <label class="inline-select">Files
+                    <select id="importMode">
+                        <option value="in_place">Keep them where they are</option>
+                        <option value="copy">Hardlink or copy into the Root Folder</option>
+                        <option value="move">Move into the Root Folder</option>
+                    </select>
+                </label>
+                <span id="importModeHint" class="muted"></span>
+            </div>
             <div id="importLoader" class="loader hidden"><div class="spinner"></div></div>
             <div id="importSummary" class="import-summary"></div>
             <div class="table-container import-table">
@@ -934,13 +951,11 @@
                     <thead>
                         <tr>
                             <th class="col-check"><input type="checkbox" id="importSelectAll" title="Select all new books" aria-label="Select all new books"></th>
-                            <th>Author</th>
-                            <th>Series</th>
-                            <th>Title</th>
+                            <th>Book</th>
                             <th>Edition</th>
-                            <th>Format</th>
+                            <th>Audible</th>
+                            <th class="col-dest">Goes to</th>
                             <th>Size</th>
-                            <th>Source</th>
                             <th>Status</th>
                         </tr>
                     </thead>

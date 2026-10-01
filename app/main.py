@@ -795,29 +795,102 @@ async def api_scan_library(request: Request):
         else:
             c["state"] = "link"  # Tracked (e.g. Monitored) but not yet linked to these files
         c["match_title"] = match.get("title") if match else ""
+        c["match_id"] = match.get("id") if match else ""
+        c["in_root"] = _inside(c["path"], db.get_settings().get("root_folder"))
         _last_scan[c["path"]] = c
     logger.info(f"Library scan of {root}: {len(candidates)} books found")
     return {"root": root, "books": candidates}
 
+def _inside(path, folder):
+    if not path or not folder:
+        return False
+    path, folder = os.path.normcase(os.path.abspath(path)), os.path.normcase(os.path.abspath(folder))
+    return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
+
+def _scanned(data):
+    found = _last_scan.get(data.get("path") or "")
+    if not found:
+        raise HTTPException(status_code=404, detail="Scan the folder again; it has changed.")
+    return found
+
+def _with_edition(c, edition):
+    """The scanned book with the edition chosen in the preview."""
+    if edition in editions.EDITIONS and edition != c.get("edition"):
+        return {**c, "edition": edition, "edition_reason": "Set by you", "edition_check": False}
+    return c
+
+@app.post("/api/library/scan/suggest")
+async def api_scan_suggest(request: Request):
+    """The Audible book a scanned folder probably is (only clear matches), or null."""
+    data = await request.json()
+    c = _with_edition(_scanned(data), data.get("edition"))
+    try:
+        return {"match": await manual_import.suggest_for(c)}
+    except Exception as e:
+        logger.warning(f"Import: Audible lookup failed: {e}")
+        return {"match": None}
+
+@app.post("/api/library/scan/preview")
+async def api_scan_preview(request: Request):
+    """Where a scanned book would go in the Root Folder, and its files' new names."""
+    data = await request.json()
+    c = _with_edition(_scanned(data), data.get("edition"))
+    try:
+        return await manual_import.preview(c["path"], c, data.get("asin") or "", db.get_settings())
+    except Exception as e:
+        logger.warning(f"Import preview failed: {e}")
+        raise HTTPException(status_code=502, detail="Couldn't work out where it goes.")
+
 @app.post("/api/library/import")
 async def api_import_library(request: Request):
+    """Imports scanned books. mode "in_place" records them where they are; "copy" and
+    "move" bring them into the Root Folder like Manual Import (in the background).
+    matches: {path: Audible ASIN} chosen in the preview."""
     data = await request.json()
     chosen = [_last_scan[p] for p in data.get("paths", []) if p in _last_scan]
     if not chosen:
         raise HTTPException(status_code=400, detail="Nothing to import; scan the folder again.")
+    chosen_editions = data.get("editions") or {}
+    matches = data.get("matches") or {}
+    mode = data.get("mode") if data.get("mode") in ("copy", "move") else "in_place"
+    chosen = [_with_edition(c, chosen_editions.get(c["path"])) for c in chosen]
+
+    if mode != "in_place":
+        choices = []
+        for c in chosen:
+            item = manual_import.register(c["path"], c)
+            asin = matches.get(c["path"])
+            if asin:
+                choices.append({"id": item["id"], "asin": asin})
+            elif c.get("state") == "link" and c.get("match_id"):
+                choices.append({"id": item["id"], "book_id": c["match_id"]})
+            else:
+                choices.append({"id": item["id"], "as_is": True})
+        try:
+            return {"success": True, "job": manual_import.start(choices, mode)}
+        except RuntimeError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
     fields = ("title", "authors", "narrators", "series", "sequence", "asin", "release_date",
               "description", "publisher", "path", "cover", "file_count", "size_bytes", "format",
               "edition", "edition_reason", "edition_check")
-    # Editions changed in the preview
-    chosen_editions = data.get("editions") or {}
     books = []
     for c in chosen:
         book = {k: c.get(k, "") for k in fields}
-        edition = chosen_editions.get(c["path"])
-        if edition in editions.EDITIONS and edition != c.get("edition"):
-            book.update(edition=edition, edition_reason="Set by you", edition_check=False)
+        if matches.get(c["path"]):
+            book["asin"] = matches[c["path"]]  # Links to a tracked book with that ASIN
         books.append(book)
     added, linked = db.import_books(books)
+    # Audible's details for the matches chosen in the preview
+    for c in chosen:
+        asin = matches.get(c["path"])
+        entry = next((b for b in db.get_library() if library.same_path(b.get("path"), c["path"])), None)
+        if asin and entry:
+            found = await manual_import.audible_book(asin, c.get("series", ""))
+            if found:
+                db.apply_audible_match(entry["id"], found)
     return {"success": True, "added": added, "linked": linked}
 
 @app.post("/api/library/rescan")

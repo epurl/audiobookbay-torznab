@@ -11,13 +11,13 @@ An audiobook manager in the style of Sonarr and Radarr, built around AudiobookBa
 - **Import:** finished downloads are hardlinked or copied (so seeding continues), renamed, and checked against Audible's runtime.
   A download holding several books of a series (`Series 01 - Title, Part 1.m4b`, `Book 2 - Title`...) that's too long for the book: only the grabbed book's files are imported (picked by title, else by number, and they must match Audible's length). The pack's other books are imported too if they're in your library as Monitored or Missing, in the same series and edition, and their length matches.
   Downloads that are archives (`.zip`, `.7z`, or a folder of them) are unpacked into a temporary `.bayarr-unpack` folder in the Root Folder, imported from there, and the unpacked copy is removed; the archive keeps seeding. `.rar` works only if the installed 7-Zip can open it. An archive that can't be unpacked, holds no audio, or contains paths pointing outside its folder goes to Needs Review with the reason.
-- **Existing library:** import the audiobooks you already have, from Audiobookshelf's `metadata.json` or folder names. Files are never moved.
+- **Import** (Search page): add the audiobooks you already have, from Audiobookshelf's `metadata.json` or folder and file names, matched on Audible. Keep the files where they are, or hardlink, copy or move them into your Root Folder, renamed; the preview shows where each one goes.
 - **Series:** a Sonarr-style page with every series, Audible's full book list and what you're missing. Monitor a series to get the books you pick and every new release.
 - **Editions:** narrated, dramatized (full cast, GraphicAudio) and abridged editions are told apart, matched, searched for and imported separately.
 - **Authors:** an author's page with all their books; follow an author to get their new releases automatically.
 - **Calendar:** your books on their release dates, coloured by status like Sonarr's calendar, plus trending Audible releases filtered by trend and genre.
-- **Activity:** live download queue and history (show 10, 20, 50, 100 or all), and **Manual Import**. Book titles link to the book (`#/book/<id>`) in Activity, Manual Import, series and author pages, the Calendar, System > Health, and Search (**In Library**). **Audiobookshelf:** metadata, covers and library scans.
-- **Manual Import** (Activity): like Sonarr's. Scan a folder (your Downloads Folder unless you pick another) and each item is listed: a folder of audio files, a single file, an archive, or one book of a folder holding several. Each gets a guess: a library book waiting for files, else a clear match on Audible. **Change** searches your library and Audible, or uses the item as it's named. Tick the items and **Import** them, either **hardlinked or copied** (the originals stay and keep seeding) or **moved** (the originals are deleted afterwards). Files are renamed and placed like any import; a book already on disk isn't imported twice.
+- **Activity:** live download queue and history (show 10, 20, 50, 100 or all). Book titles link to the book (`#/book/<id>`) in Activity, Manual Import, series and author pages, the Calendar, System > Health, and Search (**In Library**). **Audiobookshelf:** metadata, covers and library scans.
+- **Manual Import** (Search page): like Sonarr's. Scan a folder (your Downloads Folder unless you pick another) and each item is listed: a folder of audio files, a single file, an archive, or one book of a folder holding several. Each gets a guess: a library book waiting for files, else a clear match on Audible. **Change** searches your library and Audible, or uses the item as it's named. Tick the items and **Import** them, either **hardlinked or copied** (the originals stay and keep seeding) or **moved** (the originals are deleted afterwards). Files are renamed and placed like any import; a book already on disk isn't imported twice.
 
 ## Quick start (Docker)
 
@@ -83,7 +83,7 @@ Searches are spaced a second apart and cached for 15 minutes. If AudiobookBay st
 
 ## Library
 
-**Import Existing** (Library tab) scans a folder; each folder with audio files is one book (`CD1`, `Disc 2` subfolders included). Details come from Audiobookshelf's `metadata.json` when present, otherwise the folder name:
+**Import** (Search page) scans a folder; each folder with audio files is one book (`CD1`, `Disc 2` subfolders included), and so is each audio file sitting loose in the folder you scan. Details come from Audiobookshelf's `metadata.json` when present, otherwise the folder or file name:
 
 | Folder | Author | Series | # | Title |
 | --- | --- | --- | --- | --- |
@@ -93,6 +93,12 @@ Searches are spaced a second apart and cached for 15 minutes. If AudiobookBay st
 | `Jane Author - Series Name, Vol. 07 - Book Title` | Jane Author | Series Name | 7 | Book Title |
 | `Jane Author - Book Title` | Jane Author | | | Book Title |
 | `Jane Author/Series Name 1 - Book Title` | Jane Author | Series Name | 1 | Book Title |
+| `Book 2 Book Title Part 1 of 2 Series GA.m4b` in `Jane Author - Series GraphicAudio` | Jane Author | | 2 | Book Title (Part 1 of 2), dramatized |
+
+A loose file's author and edition can come from the folder it's in.
+
+- **Audible:** each book is looked up on Audible, and clear matches are filled in: the same title and author, the same edition, and for a book sold in parts the same part. **Change** searches Audible yourself, or uses the book as it's named.
+- **Files:** **Keep them where they are** (the default when everything is already inside your Root Folder) records the books as they are. **Hardlink or copy into the Root Folder** (the default for anything outside it) or **Move into the Root Folder** names each book's folder and files from its Audible match, and the **Goes to** column shows each new folder and file name before you import. Moving deletes the originals afterwards (a torrent of them stops seeding).
 
 The preview shows each book as **New**, **Link to library** (a book you already track, matched by ASIN or title and author) or **In library**.
 
@@ -124,7 +130,7 @@ Managing books:
 A book can be **narrated** (one or a few narrators), **dramatized** (full-cast productions such as GraphicAudio, radio plays, Audible Original performances) or **abridged**. Audible labels dramatizations "unabridged" too, so Bayarr combines several signs: "full cast" or many narrators, GraphicAudio or BBC radio publishers, radio-production and performance listings, and words like "Dramatized Adaptation" in titles.
 
 - **Separate books:** each edition is its own library entry, matched to its own Audible edition (with its own runtime), searched for in its own edition, and imported into its own folder, e.g. `Author - Series 1 - Title (Dramatized)`. Audiobookshelf gets a `Dramatized` tag and its `abridged` flag.
-- **Import Existing:** the edition comes from `metadata.json`, the files' tags, and folder and file names (e.g. "Graphic Audio"). The preview shows it with the reason; change it before importing if it's wrong. Unclear ones (many narrators, or a folder that says GraphicAudio but an ASIN for the narrated edition) are highlighted.
+- **Import:** the edition comes from `metadata.json`, the files' tags, and folder and file names (e.g. "Graphic Audio"). The preview shows it with the reason; change it before importing if it's wrong. Unclear ones (many narrators, or a folder that says GraphicAudio but an ASIN for the narrated edition) are highlighted.
 - **Your library:** books from before editions existed are checked once in the background (Audible's edition by ASIN, plus what the files say). Filter the Library by **Dramatized**, **Abridged** or **Check edition**; change one in a book's details, or many with **Select** → **Set edition** (or **Detect again**).
 - **Series:** a series' dramatizations are a series of their own, "Name (Dramatized)", with **Narrated / Dramatized** tabs on the series page; owning a dramatization doesn't count towards the narrated series. Abridged editions are listed under the narrated books. Every release is its own row: a book Audible sells in parts ("Part 1 of 2") is one row (and one library book) per part. In the Library, sorting by series or author puts a series' dramatizations after its narrated books. The **Editions** setting decides which editions **Monitor Series** offers and series syncs add; the dramatized tab always offers its releases.
 
@@ -179,7 +185,7 @@ Click a trending book for its details, then **Add to Library** (upcoming books b
 
 ## Audiobookshelf
 
-- **Write metadata.json and Cover** (on by default): imported downloads get Audiobookshelf's `metadata.json` and Audible's 1000px cover. Folders from Import Existing are never changed.
+- **Write metadata.json and Cover** (on by default): imported downloads get Audiobookshelf's `metadata.json` and Audible's 1000px cover. Folders imported where they are are never changed.
 - **Server URL, API Token, Library:** after each import, Bayarr asks Audiobookshelf to scan that library. The token needs admin rights and is never sent to the browser.
 
 ## Torznab indexer

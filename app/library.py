@@ -168,6 +168,29 @@ _SERIES_WITH_NUMBER = re.compile(
 _BARE_NUMBER = re.compile(r'^(?:book|vol\.?|volume|no\.?|#)?\s*(\d+(?:\.\d+)?)$', re.IGNORECASE)
 
 
+# "Book 2 Title Part 1 of 2 Series GA", "Vol. 3 - Title (2 of 3)"
+_NUMBERED_NAME = re.compile(r"^(?:book|bk|vol(?:ume)?)\.?[\s._-]*0*(?P<num>\d{1,3}(?:\.\d)?)[\s._-]+(?P<rest>.+)$", re.IGNORECASE)
+_NAME_PART = re.compile(r"[\s._\-(\[]*(?:part|pt)[\s._-]*0*(?P<part>\d+)(?:\s*of\s*(?P<of>\d+))?[)\]]?"
+                        r"|[\s._\-(\[]+0*(?P<part2>\d+)\s+of\s+(?P<of2>\d+)[)\]]?", re.IGNORECASE)
+
+
+def parse_numbered_name(name):
+    """ "Book 1 Title Part 1 of 2 Series GA" -> {"sequence": "1", "title": "Title (Part 1 of 2)"}:
+    the book's number, its title, and which part it is when it's sold in parts. None when the
+    name doesn't start with a book number."""
+    m = _NUMBERED_NAME.match((name or "").strip())
+    if not m:
+        return None
+    rest = m.group("rest")
+    part = _NAME_PART.search(rest)
+    title = re.sub(r"\s+", " ", re.sub(r"[._]+", " ", rest[:part.start()] if part else rest)).strip(" -_[](),")
+    if not title:
+        return None
+    if part and (part.group("of") or part.group("of2")):
+        title += f" (Part {int(part.group('part') or part.group('part2'))} of {int(part.group('of') or part.group('of2'))})"
+    return {"sequence": format_sequence(m.group("num")), "title": title}
+
+
 def parse_folder_name(name, author=None):
     """Parses 'Author - [Series N -] Title' style folder names. When the author is already
     known (nested Author/Title folders), the name is parsed as '[Series N -] Title'."""
@@ -314,6 +337,17 @@ def _make_candidate(path, name, cover="", parents=()):
             parsed["series"] = with_number.group("series").strip(" ,") if with_number else parents[-1]
     else:
         parsed = parse_folder_name(name)
+    # "Vol. 4 - Title" isn't by an author called "Vol. 4"
+    if not parsed["authors"] or parsed["title"] == name.strip() or _BARE_NUMBER.match(parsed["authors"]):
+        numbered = parse_numbered_name(name)
+        if numbered:
+            parsed.update(title=numbered["title"], sequence=numbered["sequence"])
+            if _BARE_NUMBER.match(parsed["authors"]):
+                parsed["authors"] = ""
+    # A loose file: its folder's name may say the author and edition ("Author - Series GraphicAudio")
+    folder = path if os.path.isdir(path) else os.path.dirname(path)
+    if not os.path.isdir(path) and not parsed["authors"]:
+        parsed["authors"] = parse_folder_name(display_name(os.path.basename(folder)))["authors"]
     parsed_series = [{"name": parsed["series"], "asin": "", "sequence": parsed["sequence"]}] if parsed["series"] else []
     if meta:
         info = meta
@@ -325,8 +359,10 @@ def _make_candidate(path, name, cover="", parents=()):
         source = "metadata.json"
     else:
         info = {**parsed, **main_series_fields(parsed_series), "narrators": "", "asin": "", "release_date": "", "description": ""}
+        # "Book 2 Title": the number helps matching on Audible even without a series name
+        info["sequence"] = info["sequence"] or parsed["sequence"]
         source = "folder name"
-    found = classify_local(meta, [f for f, _ in audio_files(path)], path)
+    found = classify_local(meta, [f for f, _ in audio_files(path)], folder)
     return {**info, "path": path, "cover": cover, "source": source, **describe_files(path),
             "edition": found["edition"], "edition_reason": found["reason"], "edition_check": not found["sure"]}
 
@@ -576,7 +612,8 @@ def build_folder_name(template, book):
         # "Title (Dramatized Adaptation)" already says what the edition suffix would
         "{Title}": (_EDITION_TAG.sub("", book.get("title") or "").strip() if edition else (book.get("title") or "").strip()),
         "{Series}": book.get("series") or "",
-        "{SeriesNumber}": format_sequence(book.get("sequence")),
+        # A number with no series name to go with it says nothing
+        "{SeriesNumber}": format_sequence(book.get("sequence")) if book.get("series") else "",
         "{Year}": (book.get("release_date") or "")[:4],
         "{Edition}": edition,
     }

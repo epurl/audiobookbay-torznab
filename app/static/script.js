@@ -1068,12 +1068,53 @@ async function searchMatches() {
 // -----------------
 const importModal = document.getElementById('importModal');
 let importBooks = [];
+// By folder: the Audible match ({kind: 'audible', ...}, or {kind: 'as_is'} for none), rows being
+// looked up, where each would go, and import results
+let importMatches = {};
+let importLooking = new Set();
+let importDest = {};
+let importDone = {};
+let importRun = 0;
 
 const IMPORT_STATES = {
     new: ['new', 'New'],
     link: ['link', 'Link to library'],
     in_library: ['owned', 'In library'],
 };
+
+function importMode() {
+    return document.getElementById('importMode').value;
+}
+
+function importAudibleHtml(b, i) {
+    if (b.state === 'in_library') return '<span class="muted">—</span>';
+    const m = importMatches[b.path];
+    const change = `<button class="link-btn import-choose" data-index="${i}">${m && m.kind === 'audible' ? 'Change' : 'Choose…'}</button>`;
+    if (!m) return importLooking.has(b.path) ? '<span class="muted">Looking…</span>' : `<span class="muted">Not matched</span> ${change}`;
+    if (m.kind === 'as_is') return `<span class="muted">As named</span> ${change}`;
+    const sub = [m.series ? `${m.series}${m.sequence ? ' #' + m.sequence : ''}` : '', m.asin].filter(Boolean).join(' · ');
+    return `${esc(m.title)} ${m.edition && m.edition !== 'narrated' ? `<span class="edition-badge edition-${esc(m.edition)}">${esc(EDITION_LABELS[m.edition] || m.edition)}</span>` : ''}
+        ${change}<span class="book-sub">${esc(sub)}</span>`;
+}
+
+function importDestHtml(b) {
+    if (b.state === 'in_library') return '<span class="muted">Already in your library</span>';
+    if (importMode() === 'in_place') return '<span class="muted">Stays where it is</span>';
+    const d = importDest[b.path];
+    if (!d) return '<span class="muted">…</span>';
+    if (d.error) return `<span class="muted">${esc(d.error)}</span>`;
+    const files = d.files.slice(0, 2).join(', ') + (d.files.length > 2 ? ` +${d.files.length - 2} more` : '');
+    return `<div class="dest-folder">${esc(d.folder)}/</div><span class="book-sub">${esc(files)}${d.exists ? ' · the folder exists; files are added to it' : ''}</span>`;
+}
+
+function importStatusHtml(b) {
+    const r = importDone[b.path];
+    if (r) return r.ok ? '<span class="result-ok">Imported</span>' + (r.message ? `<span class="book-sub">${esc(r.message)}</span>` : '')
+        : `<span class="result-error">Failed</span><span class="book-sub">${esc(r.message)}</span>`;
+    const [badgeClass, label] = IMPORT_STATES[b.state];
+    const hint = b.state === 'link' ? ` title="Will link to '${esc(b.match_title)}'"` : '';
+    return `<span class="badge ${badgeClass}"${hint}>${esc(label)}</span>`;
+}
 
 function renderImportResults() {
     const tbody = document.getElementById('importResults');
@@ -1085,26 +1126,98 @@ function renderImportResults() {
         + (toCheck ? ` ${toCheck} edition${toCheck === 1 ? '' : 's'} to check (highlighted).` : '');
 
     tbody.innerHTML = importBooks.map((b, i) => {
-        const [badgeClass, label] = IMPORT_STATES[b.state];
-        const hint = b.state === 'link' ? ` title="Will link to '${esc(b.match_title)}'"` : '';
-        return `<tr>
-            <td><input type="checkbox" class="import-check" data-index="${i}" ${b.state === 'in_library' ? 'disabled' : 'checked'}></td>
-            <td>${esc(b.authors || '—')}</td>
-            <td>${esc(seriesLabel(b))}</td>
-            <td>${esc(b.title)}</td>
+        const sub = [b.authors, seriesLabel(b), `from the ${b.source}`].filter(Boolean).join(' · ');
+        return `<tr data-index="${i}">
+            <td><input type="checkbox" class="import-check" data-index="${i}" ${b.state === 'in_library' || importDone[b.path]?.ok ? 'disabled' : 'checked'}></td>
+            <td title="${esc(b.path)}">${esc(b.title)}<span class="book-sub">${esc(sub)}</span></td>
             <td><select class="form-select import-edition${b.edition_check ? ' check' : ''}" data-index="${i}" title="${esc(b.edition_reason || '')}"${b.state === 'in_library' ? ' disabled' : ''}>
                 ${Object.entries(EDITION_LABELS).map(([v, l]) => `<option value="${v}"${editionOf(b) === v ? ' selected' : ''}>${l}</option>`).join('')}
             </select></td>
-            <td>${esc(b.format)}</td>
-            <td>${esc(formatSize(b.size_bytes))}</td>
-            <td>${esc(b.source)}</td>
-            <td><span class="badge ${badgeClass}"${hint}>${esc(label)}</span></td>
+            <td class="import-audible">${importAudibleHtml(b, i)}</td>
+            <td class="import-dest">${importDestHtml(b)}</td>
+            <td class="nowrap">${esc(formatSize(b.size_bytes))}<span class="book-sub">${esc(b.format)}</span></td>
+            <td class="import-status">${importStatusHtml(b)}</td>
         </tr>`;
-    }).join('') || '<tr><td colspan="9" class="no-results">No audiobooks found in this folder.</td></tr>';
+    }).join('') || '<tr><td colspan="7" class="no-results">No audiobooks found in this folder.</td></tr>';
 
     tbody.querySelectorAll('.import-check').forEach(cb => cb.addEventListener('change', updateImportButton));
+    tbody.querySelectorAll('.import-edition').forEach(sel => sel.addEventListener('change', () => {
+        // Another edition: look it up again
+        const b = importBooks[sel.dataset.index];
+        delete importMatches[b.path];
+        delete importDest[b.path];
+        updateImportRow(+sel.dataset.index);
+        lookUpImportRows([+sel.dataset.index]);
+    }));
+    tbody.querySelectorAll('.import-choose').forEach(btn => btn.addEventListener('click', () => chooseImportMatch(+btn.dataset.index)));
     document.getElementById('importSelectAll').checked = counts.new + counts.link > 0;
     updateImportButton();
+}
+
+// Redraws one row's Audible, destination and status cells
+function updateImportRow(i) {
+    const row = document.querySelector(`#importResults tr[data-index="${i}"]`);
+    if (!row) return;
+    const b = importBooks[i];
+    row.querySelector('.import-audible').innerHTML = importAudibleHtml(b, i);
+    row.querySelector('.import-dest').innerHTML = importDestHtml(b);
+    row.querySelector('.import-status').innerHTML = importStatusHtml(b);
+    const choose = row.querySelector('.import-choose');
+    if (choose) choose.addEventListener('click', () => chooseImportMatch(i));
+}
+
+function importEditionOf(i) {
+    const sel = document.querySelector(`.import-edition[data-index="${i}"]`);
+    return sel ? sel.value : editionOf(importBooks[i]);
+}
+
+function chooseImportMatch(i) {
+    const b = importBooks[i];
+    openMatchChooser(b.title, b, false, choice => {
+        importMatches[b.path] = choice;
+        delete importDest[b.path];
+        updateImportRow(i);
+        lookUpImportRows([i], true);
+    });
+}
+
+// Audible matches (when not chosen yet) and destinations, one row at a time
+async function lookUpImportRows(indexes, destOnly = false) {
+    const run = importRun;
+    for (const i of indexes) {
+        const b = importBooks[i];
+        if (run !== importRun) return;  // Scanned again
+        if (!b || b.state === 'in_library') continue;
+        if (!destOnly && !importMatches[b.path]) {
+            importLooking.add(b.path);
+            updateImportRow(i);
+            const { ok, data } = await postJSON('/api/library/scan/suggest', { path: b.path, edition: importEditionOf(i) });
+            importLooking.delete(b.path);
+            if (run !== importRun) return;
+            if (ok && data.match && !importMatches[b.path]) importMatches[b.path] = audibleChoice(data.match);
+            updateImportRow(i);
+        }
+        await fetchImportDest(i, run);
+    }
+}
+
+async function fetchImportDest(i, run = importRun) {
+    const b = importBooks[i];
+    if (importMode() === 'in_place' || importDest[b.path]) return;
+    const m = importMatches[b.path];
+    const { ok, data } = await postJSON('/api/library/scan/preview',
+        { path: b.path, edition: importEditionOf(i), asin: m && m.kind === 'audible' ? m.asin : '' });
+    if (run !== importRun) return;
+    importDest[b.path] = ok ? data : { error: data.detail || 'Unknown' };
+    updateImportRow(i);
+}
+
+function updateImportModeHint() {
+    const mode = importMode();
+    document.getElementById('importModeHint').textContent = mode === 'in_place'
+        ? 'Books are added where they are; nothing is copied or renamed.'
+        : mode === 'copy' ? 'Files are renamed into your Book Folder Format; the originals stay (and keep seeding).'
+            : 'Files are renamed into your Book Folder Format; the originals are deleted afterwards.';
 }
 
 function selectedImportPaths() {
@@ -1130,6 +1243,8 @@ async function scanForImport() {
     const msg = document.getElementById('importStatusMsg');
     const path = document.getElementById('importPath').value.trim();
     importBooks = [];
+    importMatches = {}; importLooking = new Set(); importDest = {}; importDone = {};
+    importRun++;
     document.getElementById('importResults').innerHTML = '';
     document.getElementById('importSummary').textContent = '';
     setActionStatus(msg, '');
@@ -1148,7 +1263,11 @@ async function scanForImport() {
         }
         document.getElementById('importPath').value = data.root;
         importBooks = data.books;
+        // Books outside the Root Folder are brought into it; your library stays where it is
+        document.getElementById('importMode').value = importBooks.length && importBooks.every(b => b.in_root) ? 'in_place' : 'copy';
+        updateImportModeHint();
         renderImportResults();
+        lookUpImportRows(importBooks.map((_, i) => i));
     } finally {
         loader.classList.add('hidden');
     }
@@ -1165,6 +1284,12 @@ function setupImportModal() {
     document.getElementById('scanBtn').addEventListener('click', scanForImport);
     document.getElementById('importPath').addEventListener('keypress', (e) => { if (e.key === 'Enter') scanForImport(); });
 
+    document.getElementById('importMode').addEventListener('change', () => {
+        updateImportModeHint();
+        importBooks.forEach((_, i) => updateImportRow(i));
+        if (importMode() !== 'in_place') lookUpImportRows(importBooks.map((_, i) => i), true);
+    });
+
     document.getElementById('importSelectAll').addEventListener('change', (e) => {
         document.querySelectorAll('.import-check:not(:disabled)').forEach(cb => { cb.checked = e.target.checked; });
         updateImportButton();
@@ -1173,17 +1298,33 @@ function setupImportModal() {
     document.getElementById('importSelectedBtn').addEventListener('click', async (e) => {
         const btn = e.currentTarget;
         const msg = document.getElementById('importStatusMsg');
+        const mode = importMode();
+        const paths = selectedImportPaths();
+        if (mode === 'move' && !await confirmDialog(`Move ${paths.length} book${paths.length === 1 ? '' : 's'} into the Root Folder? The originals are deleted afterwards, so a torrent of them stops seeding.`,
+            { title: 'Move files?', confirmText: 'Move', danger: true })) return;
         btn.disabled = true;
         setActionStatus(msg, 'Importing...');
-        const res = await fetch('/api/library/import', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths: selectedImportPaths(), editions: importEditions() })
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
+        const matches = {};
+        paths.forEach(p => { const m = importMatches[p]; if (m && m.kind === 'audible') matches[p] = m.asin; });
+        const { ok, data } = await postJSON('/api/library/import', { paths, editions: importEditions(), matches, mode });
+        if (!ok) {
             setActionStatus(msg, data.detail || 'Import failed', 'error');
             btn.disabled = false;
+            return;
+        }
+        if (data.job) {
+            // Copying or moving runs in the background, like Manual Import
+            let st = data.job;
+            while (st.running) {
+                setActionStatus(msg, `Importing ${Math.min(st.done + 1, st.total)} of ${st.total}…`);
+                await new Promise(r => setTimeout(r, 1000));
+                st = await fetch('/api/manual_import/status').then(r => r.json()).catch(() => st);
+            }
+            st.results.forEach(r => { importDone[r.path] = r; });
+            await fetchLibrary();
+            renderLibrary();
+            renderImportResults();
+            setActionStatus(msg, `${st.imported} imported${st.failed ? `, ${st.failed} failed` : ''}`, st.failed ? 'error' : 'ok');
             return;
         }
         await fetchLibrary();
@@ -1649,7 +1790,8 @@ let manualChoices = {};
 let manualChecked = new Set();
 let manualResults = {};
 let manualSuggestRun = 0;
-let manualMatchFor = null;
+// The open "Choose the Book" dialog: {library: show library books, onChoose(choice)}
+let matchChooser = null;
 
 function openManualImport() {
     const input = document.getElementById('manualImportPath');
@@ -1678,7 +1820,7 @@ function setupManualImport() {
     document.getElementById('manualMatchSearch').addEventListener('click', searchManualMatch);
     document.getElementById('manualMatchQuery').addEventListener('keypress', e => { if (e.key === 'Enter') searchManualMatch(); });
     document.getElementById('manualMatchAsIs').addEventListener('click', () => {
-        setManualChoice(manualMatchFor, { kind: 'as_is' });
+        matchChooser.onChoose({ kind: 'as_is' });
         hideModal(modal);
     });
 }
@@ -1794,11 +1936,16 @@ function setManualChoice(id, choice) {
 function openManualMatch(id) {
     const it = manualItems.find(x => x.id === id);
     if (!it) return;
-    manualMatchFor = id;
-    document.getElementById('manualMatchItem').textContent = it.name;
-    document.getElementById('manualMatchQuery').value = `${String(it.guess.title || '').split(':')[0]} ${primaryAuthor(it.guess.authors)}`.trim();
-    document.getElementById('manualMatchAsIs').textContent = `Use it as named: "${it.guess.title}"${it.guess.authors ? ' by ' + it.guess.authors : ''}`;
-    document.getElementById('manualMatchAsIs').hidden = !it.guess.title;
+    openMatchChooser(it.name, it.guess, true, choice => setManualChoice(id, choice));
+}
+
+function openMatchChooser(name, guess, withLibrary, onChoose) {
+    matchChooser = { library: withLibrary, onChoose };
+    document.getElementById('manualMatchItem').textContent = name;
+    document.getElementById('manualMatchQuery').value = `${String(guess.title || '').split(':')[0]} ${primaryAuthor(guess.authors)}`.trim();
+    document.getElementById('manualMatchAsIs').textContent = `Use it as named: "${guess.title}"${guess.authors ? ' by ' + guess.authors : ''}`;
+    document.getElementById('manualMatchAsIs').hidden = !guess.title;
+    document.getElementById('manualMatchLibraryBox').hidden = !withLibrary;
     showModal(document.getElementById('manualMatchModal'));
     searchManualMatch();
 }
@@ -1813,7 +1960,7 @@ async function searchManualMatch() {
     const query = document.getElementById('manualMatchQuery').value.trim();
     const words = normKey(query).split(' ').filter(w => w.length > 1);
     // Library books not on disk yet first; ones on disk can't take another copy
-    const lib = appLibrary.filter(b => !b.path && words.length
+    const lib = !matchChooser.library ? [] : appLibrary.filter(b => !b.path && words.length
         && words.every(w => normKey([b.title, b.authors, b.series].join(' ')).includes(w))).slice(0, 20);
     const libBox = document.getElementById('manualMatchLibrary');
     libBox.innerHTML = lib.map(b => matchOptionHtml(coverUrl(b), b.title,
@@ -1821,7 +1968,7 @@ async function searchManualMatch() {
         `data-book="${esc(b.id)}"`)).join('') || '<p class="muted">No books waiting for files match.</p>';
     libBox.querySelectorAll('[data-book]').forEach(btn => btn.addEventListener('click', () => {
         const b = appLibrary.find(x => x.id === btn.dataset.book);
-        setManualChoice(manualMatchFor, { kind: 'library', book_id: b.id, title: b.title });
+        matchChooser.onChoose({ kind: 'library', book_id: b.id, title: b.title });
         hideModal(document.getElementById('manualMatchModal'));
     }));
     const box = document.getElementById('manualMatchAudible');
@@ -1829,7 +1976,7 @@ async function searchManualMatch() {
     box.innerHTML = '';
     loader.classList.remove('hidden');
     try {
-        const res = await fetch(`/api/manual_import/candidates?id=${encodeURIComponent(manualMatchFor)}&q=${encodeURIComponent(query)}`);
+        const res = await fetch(`/api/manual_import/candidates?q=${encodeURIComponent(query)}`);
         const data = await res.json();
         const found = res.ok ? data.candidates : [];
         box.innerHTML = found.map((b, i) => matchOptionHtml(b.imageUrl, b.title,
@@ -1838,7 +1985,7 @@ async function searchManualMatch() {
               b.edition !== 'narrated' ? EDITION_LABELS[b.edition] : ''].filter(Boolean).join(' · ')],
             `data-index="${i}"`)).join('') || `<p class="muted">${res.ok ? 'Nothing found on Audible.' : esc(data.detail || 'Audible search failed.')}</p>`;
         box.querySelectorAll('[data-index]').forEach(btn => btn.addEventListener('click', () => {
-            setManualChoice(manualMatchFor, audibleChoice(found[btn.dataset.index]));
+            matchChooser.onChoose(audibleChoice(found[btn.dataset.index]));
             hideModal(document.getElementById('manualMatchModal'));
         }));
     } catch (err) {
