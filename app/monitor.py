@@ -3,7 +3,7 @@ import logging
 import datetime
 import os
 import shutil
-from . import audible, audiobookshelf, book_search, convert, db, editions, indexers, release_match, scraper
+from . import archives, audible, audiobookshelf, book_search, convert, db, editions, indexers, release_match, scraper
 from .library import (audio_files, build_folder_name, describe_files, find_match, plan_import_files,
                       read_abs_metadata, total_duration_min)
 from .qbittorrent import delete_torrents, get_completed_torrents, get_torrents, send_to_qbittorrent, send_torrent_file
@@ -451,49 +451,93 @@ async def import_completed_downloads(settings):
             logger.warning(f"Mapped path does not exist: {content_path}")
             continue
 
-        # In a thread: telling copies of the book from its parts may read the files' lengths
-        audio, cover = await asyncio.to_thread(
-            plan_import_files, content_path, title, settings.get("rename_files", True),
-            book.get("runtime_min") or 0, settings.get("runtime_tolerance", 10))
-        if not audio:
-            logger.warning(f"No audio files found in {content_path}; leaving {title} as Downloaded")
-            continue
-
-        if not book.get("skip_verify"):
-            reason = await asyncio.to_thread(check_download, book, [src for src, _ in audio], settings, content_path)
-            if reason:
-                logger.warning(f"Holding {title} for review: {reason}")
-                db.update_book(book["id"], status="Needs Review", review_reason=reason)
-                db.add_history("needs_review", book, reason)
-                continue
-
-        dest_dir = os.path.join(root_folder, build_folder_name(settings.get("naming_format"), book))
-        logger.info(f"Importing {title} into {dest_dir}")
+        # Downloads that are archives are unpacked into a folder of their own, imported from
+        # there, and the folder removed afterwards; the archive itself keeps seeding
+        staging = os.path.join(root_folder, UNPACK_FOLDER, book["id"])
         try:
-            # Large copies run in a thread so the web UI stays responsive
-            plan = audio + ([cover] if cover else [])
-            copied = await asyncio.to_thread(_copy_files, plan, dest_dir, settings.get("use_hardlinks", True))
-            cover_name = cover[1] if cover else ""
-            if settings.get("write_metadata", True):
-                cover_name = await audiobookshelf.download_cover(book.get("imageUrl", ""), dest_dir) or cover_name
-                await asyncio.to_thread(audiobookshelf.write_metadata, book, dest_dir)
-            logger.info(f"Successfully imported {title} ({copied} files copied)")
-            db.update_book(book["id"], status="Imported", path=dest_dir, cover=cover_name,
-                           review_reason="", skip_verify=False, **describe_files(dest_dir))
-            db.add_history("imported", book, f"{len(audio)} file{'s' if len(audio) != 1 else ''} into {dest_dir}")
-            # Settings > Media Management: convert downloads that aren't a single M4B
-            if settings.get("auto_convert_m4b") and convert.available():
-                added, _ = convert.enqueue([book["id"]], source="auto")
-                if added:
-                    logger.info(f"Queued {title} for conversion to M4B")
-        except Exception as e:
-            logger.error(f"Failed to import {title}: {e}")
-            db.add_history("failed", book, f"Import failed: {e}")
-            continue
+            if not await _import_download(book, content_path, staging, settings, root_folder):
+                continue
+        finally:
+            await asyncio.to_thread(shutil.rmtree, staging, True)
+            try:
+                os.rmdir(os.path.dirname(staging))
+            except OSError:
+                pass
 
         error = await audiobookshelf.scan_library(settings)
         if error:
             db.add_history("failed", book, f"Audiobookshelf scan failed: {error}")
+
+
+UNPACK_FOLDER = ".bayarr-unpack"  # In the Root Folder; library scans skip folders starting with "."
+
+
+def _hold_for_review(book, reason):
+    logger.warning(f"Holding {book.get('title', '')} for review: {reason}")
+    db.update_book(book["id"], status="Needs Review", review_reason=reason)
+    db.add_history("needs_review", book, reason)
+
+
+async def _import_download(book, content_path, staging, settings, root_folder):
+    """Imports one finished download into the library. Returns True once it's imported."""
+    title = book.get("title", "").strip()
+    plan_args = (title, settings.get("rename_files", True), book.get("runtime_min") or 0,
+                 settings.get("runtime_tolerance", 10))
+    # In a thread: telling copies of the book from its parts may read the files' lengths
+    source = content_path
+    audio, cover = await asyncio.to_thread(plan_import_files, source, *plan_args)
+    unpacked = False
+    if not audio:
+        packed = archives.find_archives(content_path)
+        if not packed:
+            logger.warning(f"No audio files found in {content_path}; leaving {title} as Downloaded")
+            return False
+        logger.info(f"Unpacking {len(packed)} archive{'s' if len(packed) != 1 else ''} for {title}")
+        await asyncio.to_thread(shutil.rmtree, staging, True)
+        try:
+            await asyncio.to_thread(archives.extract_all, packed, staging)
+        except ValueError as e:
+            _hold_for_review(book, str(e))
+            return False
+        source, unpacked = staging, True
+        audio, cover = await asyncio.to_thread(plan_import_files, source, *plan_args)
+        if not audio:
+            _hold_for_review(book, f"There are no audio files in {os.path.basename(packed[0])}.")
+            return False
+
+    if not book.get("skip_verify"):
+        reason = await asyncio.to_thread(check_download, book, [src for src, _ in audio], settings, source)
+        if reason:
+            _hold_for_review(book, reason)
+            return False
+
+    dest_dir = os.path.join(root_folder, build_folder_name(settings.get("naming_format"), book))
+    logger.info(f"Importing {title} into {dest_dir}")
+    try:
+        # Large copies run in a thread so the web UI stays responsive. Unpacked files sit on
+        # the same drive as the library, so they're always hardlinked (the copies are removed)
+        plan = audio + ([cover] if cover else [])
+        copied = await asyncio.to_thread(_copy_files, plan, dest_dir,
+                                         settings.get("use_hardlinks", True) or unpacked)
+        cover_name = cover[1] if cover else ""
+        if settings.get("write_metadata", True):
+            cover_name = await audiobookshelf.download_cover(book.get("imageUrl", ""), dest_dir) or cover_name
+            await asyncio.to_thread(audiobookshelf.write_metadata, book, dest_dir)
+        logger.info(f"Successfully imported {title} ({copied} files copied)")
+        db.update_book(book["id"], status="Imported", path=dest_dir, cover=cover_name,
+                       review_reason="", skip_verify=False, **describe_files(dest_dir))
+        detail = f"{len(audio)} file{'s' if len(audio) != 1 else ''} into {dest_dir}"
+        db.add_history("imported", book, detail + (" (unpacked from an archive)" if unpacked else ""))
+        # Settings > Media Management: convert downloads that aren't a single M4B
+        if settings.get("auto_convert_m4b") and convert.available():
+            added, _ = convert.enqueue([book["id"]], source="auto")
+            if added:
+                logger.info(f"Queued {title} for conversion to M4B")
+    except Exception as e:
+        logger.error(f"Failed to import {title}: {e}")
+        db.add_history("failed", book, f"Import failed: {e}")
+        return False
+    return True
 
 
 def _copy_files(plan, dest_dir, hardlink=False):
