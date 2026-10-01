@@ -142,6 +142,10 @@ Open a series to see every release Audible lists, in order (books sold in parts 
 
 **Monitor Series** lets you tick which missing books to add. Monitored series are checked every 6 hours, and new releases are added automatically. Books you didn't pick aren't added again.
 
+### GraphicAudio
+
+Audible lists some GraphicAudio dramatizations in a series only as placeholders (no narrators, length or date; "not on Audible" on the series page), and GraphicAudio sells most books in several parts. For a dramatized series like that, Bayarr reads GraphicAudio's own store (graphicaudio.net) and lists its releases instead: every part (e.g. *The Way of Kings (Part 1 of 5)*), linked to its page, with upcoming ones dated (so they're **Unreleased** until they're out). Parts Audible does sell stay Audible's; GraphicAudio fills in the rest, including parts it releases before Audible. Adding one fetches its page for the release date, approximate length, ISBN, description and cover. GraphicAudio only gives the length in whole hours, so the download check allows 25% for these. The store has no API, so its pages are read gently and cached; a redesign of the site could break this.
+
 ## Authors
 
 Click an author's name (in a book's details, Search results, a series page or the Calendar) to see every book Audible lists for them, newest first, with what you have. **Follow Author** lets you tick the books to add now (upcoming ones are ticked); after that their new books are added automatically, checked every 6 hours in the editions your **Editions** setting asks for. **Followed Authors** (on the Series page) lists them; each can be paused, synced now or unfollowed (books stay in your library).

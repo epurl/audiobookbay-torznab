@@ -51,6 +51,7 @@ class LibraryIndex:
 
     def __init__(self, library):
         self.by_asin = {b["asin"]: b for b in library if b.get("asin")}
+        self.by_ga = {b["ga_url"]: b for b in library if b.get("ga_url")}  # GraphicAudio releases
         self.by_full = defaultdict(list)  # whole title -> books
         self.by_part = defaultdict(list)  # whole title, main title or subtitle part -> books
         for b in library:
@@ -69,6 +70,8 @@ class LibraryIndex:
             found = self.by_asin.get(asin)
             if found:
                 return found
+        if book.get("ga_url") and book["ga_url"] in self.by_ga:
+            return self.by_ga[book["ga_url"]]
         full, keys = title_keys(book.get("title"))
         authors, edition = self._authors(book), edition_of(book)
         part = book.get("part") or part_number(book.get("title"))
@@ -246,6 +249,11 @@ async def ensure_catalog(asin, force=False):
     if catalog and not force and db.catalog_is_fresh(catalog):
         return catalog
     title, books, alternates = await audible.get_series_books(asin, db.get_settings().get("language", "All"))
+    # A dramatized series Audible only lists placeholders for: GraphicAudio's own releases
+    from app import graphicaudio
+    if graphicaudio.needs_graphicaudio(title, books, alternates):
+        releases = await graphicaudio.series_releases(title)
+        books, alternates = graphicaudio.fill_series(title, asin, books, alternates, releases)
     db.save_catalog(asin, title, books, alternates)
     _attach_owned(asin, title, books + alternates)
     return db.get_catalog(asin)
@@ -372,6 +380,7 @@ def _row_json(r):
         "edition": edition_of(shown),
         "part": _part(shown),
         "placeholder": bool((catalog or {}).get("placeholder")),  # Listed by Audible, not sold there
+        "ga_url": (book or {}).get("ga_url") or (catalog or {}).get("ga_url", ""),  # From GraphicAudio's store
         "part_count": (catalog or {}).get("part_count") or audible.part_of(shown.get("title"))[1],
         "catalog": catalog if not book else None,
         # Another edition of this book that you have

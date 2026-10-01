@@ -182,7 +182,8 @@ def get_book(book_id):
 
 BOOK_FIELDS = {"title", "authors", "narrators", "imageUrl", "release_date", "sequence", "series", "asin",
                "series_asin", "series_list", "runtime_min", "description", "publisher", "language",
-               "edition", "edition_reason", "edition_check"}
+               "edition", "edition_reason", "edition_check",
+               "ga_url", "runtime_approx", "isbn"}  # GraphicAudio releases Audible doesn't sell
 # Fields the book editor may change
 EDITABLE_BOOK_FIELDS = {"title", "authors", "narrators", "release_date", "sequence", "series", "asin", "status",
                         "runtime_min", "edition"}
@@ -377,10 +378,10 @@ def get_series(series_id):
 
 CATALOG_MAX_AGE_DAYS = 7
 # Raised when the way series lists are built changes, so saved ones are fetched again
-CATALOG_VERSION = 7
+CATALOG_VERSION = 8
 _CATALOG_BOOK_FIELDS = ("title", "authors", "narrators", "imageUrl", "release_date", "asin", "series", "series_asin",
                         "sequence", "series_list", "runtime_min", "publisher", "language", "catalog_sequence",
-                        "edition", "edition_reason", "part_asins", "part", "part_count", "placeholder")
+                        "edition", "edition_reason", "part_asins", "part", "part_count", "placeholder", "ga_url")
 
 
 CATALOG_FILE = os.path.join(CONFIG_DIR, "series_catalog.json")

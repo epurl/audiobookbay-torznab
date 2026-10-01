@@ -109,7 +109,7 @@ def check():
             issues.append(_issue("check_edition", book, book.get("edition_reason", "")))
         if status != "Imported" or not path:
             continue
-        if not book.get("asin"):
+        if not book.get("asin") and not book.get("ga_url"):  # GraphicAudio releases aren't on Audible
             issues.append(_issue("unmatched", book))
         elif not book.get("runtime_min"):
             issues.append(_issue("no_runtime", book))

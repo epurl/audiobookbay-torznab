@@ -134,6 +134,9 @@ async def api_add_library(request: Request):
     data = await request.json()
     if not data.get("title"):
         raise HTTPException(status_code=400, detail="Missing title")
+    # A GraphicAudio release: its date, length and description from its page
+    from app import graphicaudio
+    data = await graphicaudio.with_details(data)
     book = db.add_to_library(data)
     # Like the *arr apps, search as soon as a released book is added
     if book.get("status") == "Monitored":

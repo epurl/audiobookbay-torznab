@@ -185,7 +185,8 @@ async def sync_series(series, settings, selected=None):
                       and editions.edition_of(book) in editions_wanted)
         if not wanted:
             continue
-        entry = db.add_to_library({**book, "description": ""})
+        from app import graphicaudio
+        entry = db.add_to_library({**(await graphicaudio.with_details(book)), "description": ""})
         added.append(entry)
     all_asins = {b.get("asin") for b in every_edition if b.get("asin")}
     author = series_author([{"catalog": b, "book": None} for b in books]) or series.get("author", "")
@@ -420,6 +421,8 @@ def check_download(book, audio_files, settings, folder=""):
             logger.warning(f"Could not read the length of {book.get('title')}; skipping the runtime check")
             return ""
         tolerance = settings.get("runtime_tolerance", 10)
+        if book.get("runtime_approx"):
+            tolerance = max(tolerance, 25)  # GraphicAudio only gives whole hours
         off = abs(actual - expected) / expected * 100
         if off > tolerance:
             return (f"The files run {actual} min, but Audible lists {expected} min ({off:.0f}% off, "
