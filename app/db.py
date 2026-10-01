@@ -42,6 +42,10 @@ DEFAULT_SETTINGS = {
     "rename_files": True,
     "stall_hours": 6,  # 0 = never give up on a stalled download
     "remove_stalled": True,
+    "seed_cleanup": False,       # Remove torrents of imported books once they've seeded enough
+    "seed_ratio": 0,             # ... at this ratio (0 = no ratio limit)
+    "seed_days": 0,              # ... or after this many days of seeding (0 = no time limit)
+    "seed_delete_files": True,   # ... with their downloaded files (the library has its own copy)
     "verify_runtime": True,
     "runtime_tolerance": 10,  # percent
     "write_metadata": True,
@@ -73,7 +77,7 @@ DEFAULT_SETTINGS = {
 EDITABLE_SETTINGS = {
     "language", "auto_match_narrator", "format_preference", "qbt_enabled",
     "qbt_host", "qbt_user", "root_folder", "downloads_folder", "naming_format",
-    "rename_files", "stall_hours", "remove_stalled",
+    "rename_files", "stall_hours", "remove_stalled", "seed_cleanup", "seed_ratio", "seed_days", "seed_delete_files",
     "verify_runtime", "runtime_tolerance", "write_metadata", "edition_preference",
     "auto_convert_m4b", "delete_originals_after_convert",
     "pref_narrators", "avoid_narrators", "preferred_words", "blocked_words", "blocked_uploaders",
@@ -496,7 +500,8 @@ def update_settings(new_settings):
                 settings["stall_hours"] = max(0, min(168, int(new_settings["stall_hours"])))
             except (TypeError, ValueError):
                 settings["stall_hours"] = DEFAULT_SETTINGS["stall_hours"]
-        for key, kind, top in (("min_bitrate", int, 1000), ("max_size_gb", float, 1000)):
+        for key, kind, top in (("min_bitrate", int, 1000), ("max_size_gb", float, 1000),
+                               ("seed_ratio", float, 100), ("seed_days", float, 3650)):
             try:
                 settings[key] = max(0, min(top, kind(settings.get(key) or 0)))
             except (TypeError, ValueError):

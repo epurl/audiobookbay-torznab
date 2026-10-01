@@ -278,6 +278,16 @@
                         <tbody id="queueRows"></tbody>
                     </table>
                 </div>
+                <div id="seedingSection" hidden>
+                    <h3 class="section-title">Seeding</h3>
+                    <div id="seedingNotice" class="settings-hint"></div>
+                    <div class="table-container activity-table">
+                        <table class="data-table">
+                            <thead><tr><th>Book</th><th class="col-status">State</th><th>Ratio</th><th>Uploaded</th><th>Seeding</th><th>Removed</th><th></th></tr></thead>
+                            <tbody id="seedingRows"></tbody>
+                        </table>
+                    </div>
+                </div>
                 <div id="conversionSection" hidden>
                     <h3 class="section-title">Conversions to M4B</h3>
                     <div id="conversionList" class="conversion-list"></div>
@@ -592,6 +602,32 @@
                                 Remove Stalled Torrents from qBittorrent
                             </label>
                             <p class="settings-hint">Deletes the unfinished torrent and its partial files. Only affects torrents Bayarr added.</p>
+                        </div>
+
+                        <h3>Seeding</h3>
+                        <div class="settings-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="setSeedCleanup">
+                                Remove Torrents After Seeding
+                            </label>
+                            <p class="settings-hint">Once a book is imported (its files are copied into your library), its torrent is removed from qBittorrent when it reaches the ratio or has seeded for the number of days, whichever comes first. 0 turns a limit off. Only affects torrents Bayarr added; Activity shows them under Seeding.</p>
+                        </div>
+                        <div class="settings-row">
+                            <div class="settings-group">
+                                <label for="setSeedRatio">Ratio</label>
+                                <input type="number" id="setSeedRatio" class="form-input narrow" min="0" max="100" step="0.1">
+                            </div>
+                            <div class="settings-group">
+                                <label for="setSeedDays">Days</label>
+                                <input type="number" id="setSeedDays" class="form-input narrow" min="0" max="3650" step="0.5">
+                            </div>
+                        </div>
+                        <div class="settings-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="setSeedDeleteFiles">
+                                Also Delete the Downloaded Files
+                            </label>
+                            <p class="settings-hint">The copy in your library stays. Off: only the torrent is removed and its files are left in the downloads folder.</p>
                         </div>
                     </section>
 

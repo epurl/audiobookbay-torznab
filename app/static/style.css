@@ -1006,7 +1006,13 @@ a.book-link:hover {
 }
 
 .event-grabbed { color: #0ea5e9; }
-.event-imported, .event-approved { color: var(--success); }
+.event-imported, .event-approved, .event-seeded { color: var(--success); }
+
+.settings-row {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
 .event-needs_review, .event-failed, .event-missing, .event-rejected { color: var(--error); }
 .event-series, .event-released { color: var(--primary); }
 

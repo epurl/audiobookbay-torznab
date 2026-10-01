@@ -320,6 +320,10 @@ async function fetchSettings() {
         document.getElementById('setRenameFiles').checked = appSettings.rename_files ?? true;
         document.getElementById('setStallHours').value = appSettings.stall_hours ?? 6;
         document.getElementById('setRemoveStalled').checked = appSettings.remove_stalled ?? true;
+        document.getElementById('setSeedCleanup').checked = appSettings.seed_cleanup ?? false;
+        document.getElementById('setSeedRatio').value = appSettings.seed_ratio ?? 0;
+        document.getElementById('setSeedDays').value = appSettings.seed_days ?? 0;
+        document.getElementById('setSeedDeleteFiles').checked = appSettings.seed_delete_files ?? true;
         document.getElementById('setVerifyRuntime').checked = appSettings.verify_runtime ?? true;
         document.getElementById('setRuntimeTolerance').value = appSettings.runtime_tolerance ?? 10;
         document.getElementById('setWriteMetadata').checked = appSettings.write_metadata ?? true;
@@ -396,6 +400,10 @@ function setupSettings() {
             rename_files: document.getElementById('setRenameFiles').checked,
             stall_hours: parseInt(document.getElementById('setStallHours').value, 10) || 0,
             remove_stalled: document.getElementById('setRemoveStalled').checked,
+            seed_cleanup: document.getElementById('setSeedCleanup').checked,
+            seed_ratio: parseFloat(document.getElementById('setSeedRatio').value) || 0,
+            seed_days: parseFloat(document.getElementById('setSeedDays').value) || 0,
+            seed_delete_files: document.getElementById('setSeedDeleteFiles').checked,
             verify_runtime: document.getElementById('setVerifyRuntime').checked,
             runtime_tolerance: parseInt(document.getElementById('setRuntimeTolerance').value, 10) || 10,
             write_metadata: document.getElementById('setWriteMetadata').checked,
@@ -1775,7 +1783,7 @@ function setupSeriesPages() {
 // -----------------
 const EVENT_LABELS = {
     grabbed: 'Grabbed', imported: 'Imported', needs_review: 'Needs review', approved: 'Approved',
-    rejected: 'Rejected', failed: 'Failed', missing: 'Missing', series: 'Series', released: 'Released',
+    rejected: 'Rejected', failed: 'Failed', missing: 'Missing', series: 'Series', released: 'Released', seeded: 'Seeded',
 };
 
 // -----------------
@@ -2040,8 +2048,53 @@ function setupHistoryLimit() {
     });
 }
 
+// "3d 4h", "5h 12m", "8m": a length of time that may run to days
+function formatSpan(seconds) {
+    if (seconds == null || seconds < 0) return '';
+    const d = Math.floor(seconds / 86400);
+    return d ? `${d}d ${Math.floor((seconds % 86400) / 3600)}h` : (formatDuration(seconds) || '0m');
+}
+
+// Activity: torrents of imported books, with their ratio and when they'll be removed
+async function renderSeeding() {
+    let data;
+    try {
+        data = await fetch('/api/seeding').then(r => r.json());
+    } catch (err) {
+        return;
+    }
+    const section = document.getElementById('seedingSection');
+    section.hidden = !data.torrents.length && data.client_reachable;
+    const limits = [data.ratio ? `ratio ${data.ratio}` : '', data.days ? `${data.days} day${data.days === 1 ? '' : 's'}` : ''].filter(Boolean).join(' or ');
+    document.getElementById('seedingNotice').textContent = !data.client_reachable ? "Can't reach qBittorrent."
+        : data.cleanup && limits ? `Removed at ${limits}, whichever comes first (Settings > Download Client).`
+            : 'Kept seeding: turn on Remove Torrents After Seeding in Settings > Download Client to remove them automatically.';
+    const rows = document.getElementById('seedingRows');
+    rows.innerHTML = data.torrents.map(t => {
+        const when = t.limit_reached ? 'Now' : t.remove_in != null ? `in ${formatSpan(t.remove_in)}` : '—';
+        return `<tr>
+            <td>${bookLink(t.book_id, t.title)}</td>
+            <td class="muted">${esc(t.state || '')}</td>
+            <td>${esc(t.ratio.toFixed(2))}</td>
+            <td class="nowrap">${esc(formatSize(t.uploaded) || '0 B')}${t.upspeed ? `<div class="muted">${esc(formatSize(t.upspeed))}/s</div>` : ''}</td>
+            <td class="nowrap">${esc(formatSpan(t.seeded_seconds))}</td>
+            <td class="nowrap muted">${esc(when)}</td>
+            <td><button class="link-btn seeding-remove" data-id="${esc(t.book_id)}">Remove now</button></td>
+        </tr>`;
+    }).join('');
+    rows.querySelectorAll('.seeding-remove').forEach(btn => btn.addEventListener('click', async () => {
+        const deleteFiles = appSettings.seed_delete_files ?? true;
+        if (!await confirmDialog(`Remove this torrent from qBittorrent${deleteFiles ? ' and delete its downloaded files' : ''}? The book in your library isn't affected.`,
+            { title: 'Remove torrent?', confirmText: 'Remove', danger: deleteFiles })) return;
+        const { ok, data: out } = await postJSON(`/api/seeding/${encodeURIComponent(btn.dataset.id)}/remove`, { delete_files: deleteFiles });
+        toast(ok ? 'Removed from qBittorrent' : (out.detail || 'Could not remove it'), ok ? 'ok' : 'error');
+        renderSeeding();
+    }));
+}
+
 async function renderActivity() {
     renderConversions();
+    renderSeeding();
     let queueData, historyData;
     try {
         [queueData, historyData] = await Promise.all([

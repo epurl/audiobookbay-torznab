@@ -11,7 +11,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 
 from app import (audible, audiobookshelf, auth, authors, book_search, convert, db, editions, health, indexers, library,
-                 manual_import, organize, reading_list, release_calendar, scraper, series_index, splitter, stats)
+                 manual_import, organize, reading_list, release_calendar, scraper, seeding, series_index, splitter,
+                 stats)
 from app.monitor import (auto_download_book, classify_editions, find_missing_books, grab, match_job, run_monitor_loop,
                          schedule_search, schedule_searches, start_match_job, sync_series)
 from app.qbittorrent import get_torrents, test_connection
@@ -619,6 +620,22 @@ async def api_queue():
             "in_client": bool(t),
         })
     return {"queue": queue, "client_reachable": reachable}
+
+@app.get("/api/seeding")
+async def api_seeding():
+    """Torrents of imported books still in qBittorrent, and when each will be removed."""
+    settings = db.get_settings()
+    return {**await seeding.status(settings), "cleanup": bool(settings.get("seed_cleanup")),
+            "ratio": settings.get("seed_ratio") or 0, "days": settings.get("seed_days") or 0}
+
+@app.post("/api/seeding/{book_id}/remove")
+async def api_seeding_remove(book_id: str, request: Request):
+    """Removes a book's torrent from qBittorrent now (optionally with its downloaded files)."""
+    data = await request.json()
+    error = await seeding.remove_now(book_id, db.get_settings(), bool(data.get("delete_files", True)))
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    return {"success": True}
 
 @app.get("/api/history")
 async def api_history(limit: int = 200):

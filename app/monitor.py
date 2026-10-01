@@ -47,6 +47,8 @@ async def _import_loop():
             if settings.get("qbt_enabled"):
                 await check_active_downloads(settings)
                 await import_completed_downloads(settings)
+                from app import seeding  # Torrents of imported books: removed once they've seeded enough
+                await seeding.check(settings)
         except Exception as e:
             logger.error(f"Error in import loop: {e}", exc_info=True)
         await asyncio.sleep(IMPORT_INTERVAL)
