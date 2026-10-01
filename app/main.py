@@ -9,9 +9,9 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import audible, audiobookshelf, auth, book_search, db, library, release_calendar, series_index
-from app.monitor import (auto_download_book, find_missing_books, grab, match_job, run_monitor_loop, schedule_search,
-                         schedule_searches, start_match_job, sync_series)
+from app import audible, audiobookshelf, auth, book_search, db, editions, library, release_calendar, series_index
+from app.monitor import (auto_download_book, classify_editions, find_missing_books, grab, match_job, run_monitor_loop,
+                         schedule_search, schedule_searches, start_match_job, sync_series)
 from app.qbittorrent import get_torrents, test_connection
 from app.scraper import fetch_detail_info, search_audiobooks
 from app.torznab import build_caps, build_rss
@@ -158,6 +158,13 @@ async def api_edit_book(book_id: str, request: Request):
             fields["runtime_min"] = max(0, int(fields["runtime_min"] or 0))
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="Runtime must be a whole number of minutes")
+    if "edition" in fields:
+        if fields["edition"] not in editions.EDITIONS:
+            raise HTTPException(status_code=400, detail=f"Unknown edition: {fields['edition']}")
+        if fields["edition"] != editions.edition_of(_get_book_or_404(book_id)):
+            fields.update(edition_reason="Set by you", edition_check=False)
+        else:
+            fields["edition_check"] = False  # Confirmed as it is
     db.update_book(book_id, **fields)
     return {"success": True, "book": db.get_book(book_id)}
 
@@ -186,7 +193,8 @@ async def api_match_book(book_id: str, request: Request):
 
 @app.post("/api/library/bulk")
 async def api_bulk(request: Request):
-    """Applies one action to many books: status, remove, or match (on Audible)."""
+    """Applies one action to many books: status, remove, match (on Audible), edition (set
+    it) or detect_edition (work it out again from Audible and the files)."""
     data = await request.json()
     known = {b["id"] for b in db.get_library()}
     ids = [i for i in data.get("ids", []) if i in known]
@@ -209,6 +217,15 @@ async def api_bulk(request: Request):
         if not start_match_job(ids):
             raise HTTPException(status_code=409, detail="A match is already running.")
         return {"success": True, "count": len(ids)}
+    if action == "edition":
+        edition = data.get("edition")
+        if edition not in editions.EDITIONS:
+            raise HTTPException(status_code=400, detail=f"Unknown edition: {edition}")
+        db.update_books({i: {"edition": edition, "edition_reason": "Set by you", "edition_check": False} for i in ids})
+        return {"success": True, "count": len(ids)}
+    if action == "detect_edition":
+        count = await classify_editions(set(ids))
+        return {"success": True, "count": count}
     raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
 
 @app.get("/api/library/match_status")
@@ -367,7 +384,8 @@ async def api_add_series(request: Request):
     # Today's books count as known, so if this first sync fails, later ones still only add
     # new releases rather than everything that wasn't chosen
     series = db.add_series(asin, title, data.get("author", ""),
-                           known_asins=[b["asin"] for b in catalog.get("books", []) if b.get("asin")])
+                           known_asins=[b["asin"] for b in catalog.get("books", []) + catalog.get("alternates", [])
+                                        if b.get("asin")])
     added = await sync_series(series, db.get_settings(), selected=set(data.get("add_asins") or []))
     schedule_searches([b for b in added if b["status"] == "Monitored"])
     return {"success": True, "series": db.get_series(series["id"]), "added": len(added)}
@@ -490,8 +508,18 @@ async def api_import_library(request: Request):
     if not chosen:
         raise HTTPException(status_code=400, detail="Nothing to import; scan the folder again.")
     fields = ("title", "authors", "narrators", "series", "sequence", "asin", "release_date",
-              "description", "path", "cover", "file_count", "size_bytes", "format")
-    added, linked = db.import_books([{k: c.get(k, "") for k in fields} for c in chosen])
+              "description", "publisher", "path", "cover", "file_count", "size_bytes", "format",
+              "edition", "edition_reason", "edition_check")
+    # Editions changed in the preview
+    chosen_editions = data.get("editions") or {}
+    books = []
+    for c in chosen:
+        book = {k: c.get(k, "") for k in fields}
+        edition = chosen_editions.get(c["path"])
+        if edition in editions.EDITIONS and edition != c.get("edition"):
+            book.update(edition=edition, edition_reason="Set by you", edition_check=False)
+        books.append(book)
+    added, linked = db.import_books(books)
     return {"success": True, "added": added, "linked": linked}
 
 @app.post("/api/library/rescan")
@@ -611,7 +639,11 @@ async def search_audible(title: str = ""):
     if not title.strip():
         return {"products": []}
     try:
-        return await audible.search_keywords(title.strip())
+        data = await audible.search_keywords(title.strip())
+        for product in data.get("products") or []:
+            found = editions.classify_product(product)
+            product["edition"], product["edition_reason"] = found["edition"], found["reason"]
+        return data
     except Exception as e:
         logger.error(f"Error fetching from Audible: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch from Audible")

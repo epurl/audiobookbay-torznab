@@ -9,6 +9,7 @@ import tempfile
 import logging
 import uuid
 
+from app import editions
 from app.library import (_CONTRIBUTOR_ROLE, DEFAULT_NAMING_FORMAT, find_match, main_series_fields,
                          merge_series_lists, series_entries, series_key)
 
@@ -45,6 +46,7 @@ DEFAULT_SETTINGS = {
     "verify_runtime": True,
     "runtime_tolerance": 10,  # percent
     "write_metadata": True,
+    "edition_preference": "narrated",  # narrated | dramatized | both: what series monitoring adds
     "abs_url": "",
     "abs_token": "",
     "abs_library_id": "",
@@ -57,7 +59,7 @@ EDITABLE_SETTINGS = {
     "language", "auto_match_narrator", "format_preference", "qbt_enabled",
     "qbt_host", "qbt_user", "root_folder", "downloads_folder", "naming_format",
     "rename_files", "use_hardlinks", "stall_hours", "remove_stalled",
-    "verify_runtime", "runtime_tolerance", "write_metadata",
+    "verify_runtime", "runtime_tolerance", "write_metadata", "edition_preference",
     "abs_url", "abs_library_id",
 }
 # Secrets: never sent to the browser, and a blank value from the UI keeps the stored one
@@ -157,10 +159,11 @@ def get_book(book_id):
 
 
 BOOK_FIELDS = {"title", "authors", "narrators", "imageUrl", "release_date", "sequence", "series", "asin",
-               "series_asin", "series_list", "runtime_min", "description", "publisher", "language"}
+               "series_asin", "series_list", "runtime_min", "description", "publisher", "language",
+               "edition", "edition_reason", "edition_check"}
 # Fields the book editor may change
 EDITABLE_BOOK_FIELDS = {"title", "authors", "narrators", "release_date", "sequence", "series", "asin", "status",
-                        "runtime_min"}
+                        "runtime_min", "edition"}
 
 
 def _new_entry(book, status):
@@ -182,6 +185,10 @@ def add_to_library(book, status=None):
     book["series_list"] = merge_series_lists(series_entries(book))
     if book.get("description"):
         book["description"] = _clean_description(book["description"])
+    if book.get("edition") not in editions.EDITIONS:
+        # Added from somewhere that didn't say (e.g. the Search page): judge by its details
+        found = editions.classify_fields(book) or {"edition": editions.NARRATED, "reason": "No signs of a dramatization"}
+        book.update(edition=found["edition"], edition_reason=found["reason"])
     with _lock:
         db = _load_db()
         existing = find_match(db["library"], book)
@@ -203,7 +210,7 @@ def import_books(books):
             existing = find_match(db["library"], book)
             if existing:
                 existing.update(path=book["path"], cover=book.get("cover", ""), status="Imported")
-                for key in ("asin", "series", "sequence", "narrators"):
+                for key in ("asin", "series", "sequence", "narrators", "edition", "edition_reason"):
                     if book.get(key) and not existing.get(key):
                         existing[key] = book[key]
                 existing["series_list"] = merge_series_lists(series_entries(existing), series_entries(book))
@@ -228,7 +235,7 @@ def update_book(book_id, **fields):
 
 # Fields taken from Audible when a book is matched; status, path and files stay as they are
 AUDIBLE_FIELDS = ("title", "authors", "narrators", "asin", "series", "series_asin", "sequence", "runtime_min",
-                  "description", "publisher", "language", "release_date", "imageUrl")
+                  "description", "publisher", "language", "release_date", "imageUrl", "edition", "edition_reason")
 
 
 def apply_audible_match(book_id, audible_book):
@@ -239,6 +246,8 @@ def apply_audible_match(book_id, audible_book):
     # Keep every series from both sides; the main one is what Audible matching chose
     entries = merge_series_lists(series_entries(audible_book), series_entries(book))
     fields["series_list"] = entries
+    if fields.get("edition"):
+        fields["edition_check"] = False  # Audible's edition for the chosen match
     if not fields.get("series"):
         fields.update({k: v for k, v in main_series_fields(entries).items() if k != "series_list"})
     return update_book(book_id, **fields)
@@ -345,9 +354,10 @@ def get_series(series_id):
 
 CATALOG_MAX_AGE_DAYS = 7
 # Raised when the way series lists are built changes, so saved ones are fetched again
-CATALOG_VERSION = 3
+CATALOG_VERSION = 4
 _CATALOG_BOOK_FIELDS = ("title", "authors", "narrators", "imageUrl", "release_date", "asin", "series", "series_asin",
-                        "sequence", "series_list", "runtime_min", "publisher", "language", "catalog_sequence")
+                        "sequence", "series_list", "runtime_min", "publisher", "language", "catalog_sequence",
+                        "edition", "edition_reason", "part_asins")
 
 
 CATALOG_FILE = os.path.join(CONFIG_DIR, "series_catalog.json")
@@ -377,7 +387,9 @@ def catalog_is_fresh(catalog):
     return age < datetime.timedelta(days=CATALOG_MAX_AGE_DAYS)
 
 
-def save_catalog(asin, title, books):
+def save_catalog(asin, title, books, alternates=()):
+    """books: one edition per book (narrated where there is one); alternates: the other
+    editions (dramatized, abridged) of the same books."""
     with _lock:
         catalogs = get_catalogs()
         catalogs[asin] = {
@@ -385,6 +397,7 @@ def save_catalog(asin, title, books):
             "version": CATALOG_VERSION,
             "fetched": datetime.datetime.now().isoformat(timespec="seconds"),
             "books": [{k: b.get(k) for k in _CATALOG_BOOK_FIELDS} for b in books],
+            "alternates": [{k: b.get(k) for k in _CATALOG_BOOK_FIELDS} for b in alternates],
         }
         os.makedirs(CONFIG_DIR, exist_ok=True)
         fd, tmp_path = tempfile.mkstemp(dir=CONFIG_DIR, prefix=".catalog-", suffix=".json")
@@ -462,6 +475,8 @@ def update_settings(new_settings):
                 settings["stall_hours"] = max(0, min(168, int(new_settings["stall_hours"])))
             except (TypeError, ValueError):
                 settings["stall_hours"] = DEFAULT_SETTINGS["stall_hours"]
+        if settings.get("edition_preference") not in ("narrated", "dramatized", "both"):
+            settings["edition_preference"] = DEFAULT_SETTINGS["edition_preference"]
         if "runtime_tolerance" in new_settings:
             try:
                 settings["runtime_tolerance"] = max(1, min(50, int(new_settings["runtime_tolerance"])))

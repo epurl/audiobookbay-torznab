@@ -4,6 +4,7 @@ import re
 
 import httpx
 
+from app import editions
 from app.library import format_sequence, main_series_fields, normalize, primary_author, series_key
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,7 @@ def product_to_book(product, prefer_series=""):
         if chosen:
             fields.update(series=chosen["name"], sequence=chosen["sequence"], series_asin=chosen["asin"])
     authors = [a["name"] for a in product.get("authors") or [] if not _CONTRIBUTOR_ROLE.search(a.get("name", ""))]
+    edition = editions.classify_product(product)
     return {
         "title": _strip_series_tag(product.get("title") or "", entries),
         "subtitle": product.get("subtitle") or "",
@@ -103,6 +105,8 @@ def product_to_book(product, prefer_series=""):
         "description": product.get("publisher_summary") or "",
         "publisher": product.get("publisher_name") or "",
         "language": (product.get("language") or "").capitalize(),
+        "edition": edition["edition"],
+        "edition_reason": edition["reason"],
     }
 
 
@@ -133,18 +137,35 @@ def _same_book(a, b):
                 and ra and rb and abs(ra - rb) <= 0.05 * max(ra, rb))
 
 
-def _is_dramatized(product):
-    """Alternate versions of a book, not the book itself: dramatized and full-cast
-    adaptations (e.g. GraphicAudio) and music-enhanced "Booktrack" editions."""
-    narrators = " ".join(n.get("name", "") for n in product.get("narrators") or [])
-    text = f"{product.get('title', '')} {product.get('publisher_name', '')} {narrators}".lower()
-    return any(word in text.replace("-", " ") for word in ("dramatized", "full cast", "booktrack")) \
-        or "graphicaudio" in text.replace(" ", "")
+# Editions sold in parts: "Red Rising (Part 1 of 2) (Dramatized Adaptation)", "Light Bringer (1 of 3)"
+_PART = re.compile(r"\s*[\(\[]\s*(?:part\s+)?(\d+)\s+of\s+(\d+)\s*[\)\]]", re.IGNORECASE)
+
+
+def _split_part(title):
+    """ "Red Rising (Part 1 of 2) (Dramatized Adaptation)" -> ("Red Rising (Dramatized Adaptation)", 1)"""
+    m = _PART.search(title or "")
+    if not m:
+        return title, None
+    return re.sub(r"\s{2,}", " ", (title[:m.start()] + title[m.end():]).strip()), int(m.group(1))
+
+
+def _join_parts(parts):
+    """One book from the parts of an edition sold in pieces: the parts' ASINs, their total
+    length, and the first part's details."""
+    parts = sorted(parts, key=lambda pb: pb[0])
+    first = dict(parts[0][1])
+    first["title"] = _split_part(first["title"])[0]
+    first["part_asins"] = [b["asin"] for _, b in parts]
+    first["runtime_min"] = sum(b.get("runtime_min") or 0 for _, b in parts)
+    first["release_date"] = min((b.get("release_date") or "9999" for _, b in parts))
+    return first
 
 
 async def get_series_books(series_asin, language="All"):
-    """Every book in a series, one entry per book: dramatized adaptations, box sets and
-    duplicate regional editions are dropped (the earliest edition is kept)."""
+    """Every book in a series: (title, books, alternates). books has one entry per book,
+    its narrated edition where there is one; alternates are the books' other editions
+    (dramatized, abridged). Box sets and duplicate regional editions are dropped (the
+    earliest edition is kept)."""
     data = await _get(f"{API}/{series_asin}", {"response_groups": "relationships,product_desc"})
     series = data.get("product") or {}
     children = [r for r in series.get("relationships") or []
@@ -152,7 +173,18 @@ async def get_series_books(series_asin, language="All"):
     sequences = {r["asin"]: r.get("sequence", "") for r in children}
     products = await get_products(sequences)
 
-    kept, alternates = [], []
+    def add(found, book):
+        # Regional editions and retitled ones ("Book Title" / "Series: Book Title") are one
+        # book: same number and an overlapping title. Keep the earliest.
+        same = next((k for k in found if k["catalog_sequence"] == book["catalog_sequence"]
+                     and k["edition"] == book["edition"] and _same_book(k, book)), None)
+        if same is None:
+            found.append(book)
+        elif (book["release_date"] or "9999") < (same["release_date"] or "9999"):
+            found[found.index(same)] = book
+
+    kept, others = [], []
+    parted = {}  # (number, edition, title) -> {part: book}
     for product in products:
         seq = sequences.get(product.get("asin"), "")
         if re.search(r"[-,]", seq):
@@ -164,26 +196,29 @@ async def get_series_books(series_asin, language="All"):
         book["catalog_sequence"] = format_sequence(seq)
         if not any(e["asin"] == series_asin for e in book["series_list"]):
             book["series_list"].append({"name": series.get("title", ""), "asin": series_asin, "sequence": format_sequence(seq)})
-        # Regional editions and retitled ones ("Book Title" / "Series: Book
-        # Title") are one book: same number and an overlapping title. Keep the earliest.
-        if _is_dramatized(product):
-            alternates.append(book)
+        base, part = _split_part(book["title"])
+        if part is not None:
+            # Regional duplicates of a part: keep the earliest
+            pieces = parted.setdefault((book["catalog_sequence"], book["edition"], normalize(base)), {})
+            if part not in pieces or (book["release_date"] or "9999") < (pieces[part]["release_date"] or "9999"):
+                pieces[part] = book
             continue
-        same = next((k for k in kept if k["catalog_sequence"] == book["catalog_sequence"]
-                     and _same_book(k, book)), None)
-        if same is None:
+        add(kept if book["edition"] == editions.NARRATED else others, book)
+    for pieces in parted.values():
+        book = _join_parts(pieces.items())
+        add(kept if book["edition"] == editions.NARRATED else others, book)
+
+    # A book with no narrated edition is listed by its other edition
+    alternates = []
+    for book in others:
+        narrated = any(k["catalog_sequence"] == book["catalog_sequence"] and
+                       (not book["catalog_sequence"] or _title_keys(k["title"]) & _title_keys(book["title"]))
+                       or _title_keys(k["title"]) & _title_keys(_strip_edition(book["title"])) for k in kept)
+        if narrated or any(k["catalog_sequence"] == book["catalog_sequence"] and k["catalog_sequence"] for k in kept):
+            alternates.append(book)
+        else:
             kept.append(book)
-        elif (book["release_date"] or "9999") < (same["release_date"] or "9999"):
-            kept[kept.index(same)] = book
-    # Full-cast and dramatized versions are only listed when there's no regular edition
-    for book in alternates:
-        regular = any(k["catalog_sequence"] == book["catalog_sequence"] and
-                      (not book["catalog_sequence"] or _title_keys(k["title"]) & _title_keys(book["title"]))
-                      or _title_keys(k["title"]) & _title_keys(_strip_edition(book["title"])) for k in kept)
-        if not regular and not any(k["catalog_sequence"] == book["catalog_sequence"] and k["catalog_sequence"]
-                                   for k in kept):
-            kept.append(book)
-    return series.get("title", ""), kept
+    return series.get("title", ""), kept, alternates
 
 
 async def find_series_for_book(title, author, series_name=""):
@@ -230,8 +265,9 @@ def _title_rank(want, title):
 
 async def auto_match(book):
     """Finds the Audible edition of a library book, or None when it isn't clear-cut.
-    The title and first author must match; dramatized versions are skipped. Among matches,
-    the closest title wins, then a matching series number, then the earliest edition."""
+    The title and first author must match, in the book's edition (narrated unless it's
+    dramatized or abridged). Among matches, the closest title wins, then a matching series
+    number, then the earliest edition."""
     title = (book.get("title") or "").split(":")[0].strip()
     author = primary_author(book.get("authors"))
     if not title:
@@ -239,10 +275,11 @@ async def auto_match(book):
     data = await search(title=title, author=author, num_results=20)
     want_title, want_author = normalize(title), normalize(author)
     found = []
+    edition = editions.edition_of(book)
     for product in data.get("products") or []:
-        if _is_dramatized(product):
-            continue
         candidate = product_to_book(product, prefer_series=book.get("series", ""))
+        if candidate["edition"] != edition:
+            continue  # A dramatized folder matches the dramatized edition, and so on
         rank = _title_rank(want_title, candidate["title"])
         if rank is None:
             continue

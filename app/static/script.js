@@ -53,6 +53,32 @@ function primaryAuthor(authors) {
     return String(authors || '').split(',')[0].split('&')[0].trim();
 }
 
+// Editions: narrated (one or a few narrators), dramatized (full cast, e.g. GraphicAudio), abridged
+const EDITION_LABELS = { narrated: 'Narrated', dramatized: 'Dramatized', abridged: 'Abridged' };
+
+function editionOf(book) {
+    return EDITION_LABELS[book && book.edition] ? book.edition : 'narrated';
+}
+
+// A badge for anything but a narrated edition, plus a flag when the edition needs checking
+function editionBadge(book) {
+    const edition = editionOf(book);
+    const badge = edition !== 'narrated'
+        ? `<span class="edition-badge edition-${edition}" title="${esc(book.edition_reason || '')}">${EDITION_LABELS[edition]}</span>` : '';
+    const check = book.edition_check
+        ? `<span class="edition-badge edition-check" title="${esc(book.edition_reason || '')}">Check edition</span>` : '';
+    return badge + check;
+}
+
+// The main title for matching, like the server's: no bracketed tags, edition words or
+// subtitle ("Title (Dramatized Adaptation)", "Title Graphic Audio")
+function titleKey(title) {
+    const plain = String(title || '').replace(/\s*[([][^)\]]*[)\]]/g, '')
+        .replace(/\b(dramati[sz]ed|adaptation|graphic\s?audio|full[\s-]?cast|(un)?abridged)\b/gi, '')
+        .trim().replace(/^-+|-+$/g, '').trim() || String(title || '');
+    return normKey(plain.split(':')[0]);
+}
+
 function authorKeyList(authors) {
     const keys = String(authors || '').split(',').map(normKey).filter(Boolean);
     return keys.length ? keys : [''];
@@ -63,11 +89,12 @@ function findInLibrary(book) {
         const byAsin = appLibrary.find(b => b.asin && b.asin === book.asin);
         if (byAsin) return byAsin;
     }
-    // Title (before any subtitle) and any shared author: books don't always list
-    // their authors in the same order
-    const titleKey = normKey(String(book.title || '').split(':')[0]);
+    // Title (before any subtitle) and any shared author, in the same edition: books don't
+    // always list their authors in the same order, and a dramatized version is its own book
+    const key = titleKey(book.title);
     const authorKeys = authorKeyList(book.authors);
-    return appLibrary.find(b => normKey(String(b.title || '').split(':')[0]) === titleKey
+    const edition = editionOf(book);
+    return appLibrary.find(b => titleKey(b.title) === key && editionOf(b) === edition
         && authorKeyList(b.authors).some(a => authorKeys.includes(a)));
 }
 
@@ -267,6 +294,7 @@ async function fetchSettings() {
         document.getElementById('setQbtPass').value = "";
         document.getElementById('setQbtPass').placeholder = appSettings.qbt_pass_set ? "Unchanged" : "";
         document.getElementById('setFormatPref').value = appSettings.format_preference || "prefer_m4b";
+        document.getElementById('setEditionPref').value = appSettings.edition_preference || "narrated";
         document.getElementById('setAuthUser').value = appSettings.auth_username || "";
         if (appSettings.auth_from_env) {
             document.getElementById('setAuthUser').disabled = true;
@@ -298,6 +326,7 @@ function setupSettings() {
         const newSettings = {
             language: document.getElementById('setLanguage').value,
             format_preference: document.getElementById('setFormatPref').value,
+            edition_preference: document.getElementById('setEditionPref').value,
             auto_match_narrator: document.getElementById('setAutoMatch').checked,
             qbt_enabled: document.getElementById('setQbtEnabled').checked,
             qbt_host: document.getElementById('setQbtHost').value,
@@ -521,6 +550,10 @@ function renderLibrary() {
             if (!WANTED_STATUSES.includes(b.status)) return false;
         } else if (status === '__unmatched') {
             if (b.asin) return false;
+        } else if (status === '__dramatized' || status === '__abridged') {
+            if (editionOf(b) !== status.slice(2)) return false;
+        } else if (status === '__checkedition') {
+            if (!b.edition_check) return false;
         } else if (status && b.status !== status) return false;
         if (!text) return true;
         return [b.title, b.authors, b.series, b.narrators].join(' ').toLowerCase().includes(text);
@@ -561,6 +594,7 @@ function renderLibrary() {
             <div class="book-info">
                 <div class="book-title" title="${esc(book.title)}">${esc(book.title)}</div>
                 ${series ? `<div class="book-series" title="${esc(series)}">${esc(series)}</div>` : ''}
+                ${editionBadge(book) ? `<div class="edition-badges">${editionBadge(book)}</div>` : ''}
                 <div class="book-author">${esc(book.authors)}</div>
                 ${book.narrators ? `<div class="book-narrator">Narrated by: ${esc(book.narrators)}</div>` : ''}
             </div>
@@ -588,7 +622,7 @@ let shownBookIds = [];
 function updateBulkBar() {
     document.getElementById('bulkBar').hidden = !selectMode;
     document.getElementById('bulkCount').textContent = `${selectedIds.size} selected`;
-    ['bulkStatus', 'bulkMatch', 'bulkRemove'].forEach(id => { document.getElementById(id).disabled = selectedIds.size === 0; });
+    ['bulkStatus', 'bulkEdition', 'bulkMatch', 'bulkRemove'].forEach(id => { document.getElementById(id).disabled = selectedIds.size === 0; });
     document.getElementById('selectModeBtn').textContent = selectMode ? 'Done' : 'Select';
 }
 
@@ -640,6 +674,18 @@ function setupLibrary() {
         const data = await runBulk('status', { status });
         if (!data) return;
         toast(`${data.count} book${data.count === 1 ? '' : 's'} set to ${status}`, 'ok');
+        await fetchLibrary();
+        setSelectMode(false);
+    });
+    document.getElementById('bulkEdition').addEventListener('change', async (e) => {
+        const edition = e.target.value;
+        e.target.value = '';
+        if (!edition) return;
+        const detect = edition === '__detect';
+        const data = await runBulk(detect ? 'detect_edition' : 'edition', detect ? {} : { edition });
+        if (!data) return;
+        toast(detect ? `Checked the edition of ${data.count} book${data.count === 1 ? '' : 's'}`
+            : `${data.count} book${data.count === 1 ? '' : 's'} set to ${EDITION_LABELS[edition].toLowerCase()}`, 'ok');
         await fetchLibrary();
         setSelectMode(false);
     });
@@ -706,7 +752,7 @@ function hideModal(el) {
 // -----------------
 let currentBookId = null;
 const bookModal = document.getElementById('bookModal');
-const BOOK_FIELDS = { bookTitle: 'title', bookAuthors: 'authors', bookNarrators: 'narrators', bookSeries: 'series', bookSequence: 'sequence', bookStatus: 'status', bookAsin: 'asin', bookRuntime: 'runtime_min' };
+const BOOK_FIELDS = { bookTitle: 'title', bookAuthors: 'authors', bookNarrators: 'narrators', bookSeries: 'series', bookSequence: 'sequence', bookStatus: 'status', bookAsin: 'asin', bookRuntime: 'runtime_min', bookEdition: 'edition' };
 
 async function openBookModal(bookId) {
     const book = appLibrary.find(b => b.id === bookId);
@@ -720,6 +766,9 @@ async function openBookModal(bookId) {
         document.getElementById(elId).value = book[key] || '';
     }
     document.getElementById('bookStatus').value = book.status || 'Monitored';
+    document.getElementById('bookEdition').value = editionOf(book);
+    document.getElementById('bookEditionReason').textContent = book.edition_reason
+        ? `Edition: ${book.edition_reason}${book.edition_check ? '. Check this, then save to confirm.' : ''}` : '';
     const review = document.getElementById('bookReview');
     review.hidden = book.status !== 'Needs Review';
     document.getElementById('bookReviewReason').textContent = book.review_reason || '';
@@ -857,7 +906,8 @@ async function searchMatches() {
     }
     results.innerHTML = data.candidates.map((c, i) => {
         const runtime = c.runtime_min ? `${Math.floor(c.runtime_min / 60)}h ${c.runtime_min % 60}m` : '';
-        const details = [c.authors, c.narrators && `read by ${c.narrators}`, seriesLabel(c), runtime, releaseDate(c.release_date, 4)].filter(Boolean).join(' · ');
+        const details = [editionOf(c) !== 'narrated' ? EDITION_LABELS[editionOf(c)] : '', c.authors, c.narrators && `read by ${c.narrators}`,
+            seriesLabel(c), runtime, releaseDate(c.release_date, 4)].filter(Boolean).join(' · ');
         return `<div class="match-result">
             <img src="${esc(safeUrl(c.imageUrl, PLACEHOLDER_COVER))}" alt="">
             <div class="match-info"><b>${esc(c.title)}</b><span class="muted">${esc(details)}</span></div>
@@ -897,7 +947,9 @@ function renderImportResults() {
     const summary = document.getElementById('importSummary');
     const counts = { new: 0, link: 0, in_library: 0 };
     importBooks.forEach(b => counts[b.state]++);
-    summary.textContent = `${importBooks.length} books found: ${counts.new} new, ${counts.link} already tracked (will be linked to their files), ${counts.in_library} already imported.`;
+    const toCheck = importBooks.filter(b => b.edition_check && b.state !== 'in_library').length;
+    summary.textContent = `${importBooks.length} books found: ${counts.new} new, ${counts.link} already tracked (will be linked to their files), ${counts.in_library} already imported.`
+        + (toCheck ? ` ${toCheck} edition${toCheck === 1 ? '' : 's'} to check (highlighted).` : '');
 
     tbody.innerHTML = importBooks.map((b, i) => {
         const [badgeClass, label] = IMPORT_STATES[b.state];
@@ -907,12 +959,15 @@ function renderImportResults() {
             <td>${esc(b.authors || '—')}</td>
             <td>${esc(seriesLabel(b))}</td>
             <td>${esc(b.title)}</td>
+            <td><select class="form-select import-edition${b.edition_check ? ' check' : ''}" data-index="${i}" title="${esc(b.edition_reason || '')}"${b.state === 'in_library' ? ' disabled' : ''}>
+                ${Object.entries(EDITION_LABELS).map(([v, l]) => `<option value="${v}"${editionOf(b) === v ? ' selected' : ''}>${l}</option>`).join('')}
+            </select></td>
             <td>${esc(b.format)}</td>
             <td>${esc(formatSize(b.size_bytes))}</td>
             <td>${esc(b.source)}</td>
             <td><span class="badge ${badgeClass}"${hint}>${esc(label)}</span></td>
         </tr>`;
-    }).join('') || '<tr><td colspan="8" class="no-results">No audiobooks found in this folder.</td></tr>';
+    }).join('') || '<tr><td colspan="9" class="no-results">No audiobooks found in this folder.</td></tr>';
 
     tbody.querySelectorAll('.import-check').forEach(cb => cb.addEventListener('change', updateImportButton));
     document.getElementById('importSelectAll').checked = counts.new + counts.link > 0;
@@ -921,6 +976,13 @@ function renderImportResults() {
 
 function selectedImportPaths() {
     return [...document.querySelectorAll('.import-check:checked')].map(cb => importBooks[cb.dataset.index].path);
+}
+
+// Editions as shown in the preview (possibly changed), by folder
+function importEditions() {
+    const chosen = {};
+    document.querySelectorAll('.import-edition').forEach(sel => { chosen[importBooks[sel.dataset.index].path] = sel.value; });
+    return chosen;
 }
 
 function updateImportButton() {
@@ -983,7 +1045,7 @@ function setupImportModal() {
         const res = await fetch('/api/library/import', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths: selectedImportPaths() })
+            body: JSON.stringify({ paths: selectedImportPaths(), editions: importEditions() })
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
@@ -1248,6 +1310,28 @@ async function refreshSeriesDetail() {
     window.scrollTo(0, scroll.window);
 }
 
+function seriesRowHtml(r, src, i) {
+    const other = r.other
+        ? ` <span class="muted" title="You have the ${esc(EDITION_LABELS[r.other.edition] || '')} edition">· ${esc(EDITION_LABELS[r.other.edition] || '')}: ${esc(r.other.status)}</span>` : '';
+    const status = r.book_id
+        ? `<span class="library-status ${esc(statusClass(r.status))} inline-status">${esc(r.status)}</span>`
+        : `<span class="muted">Not in library</span> <button class="link-btn add-row" data-src="${src}" data-index="${i}">Add</button>${other}`;
+    return `<tr class="${r.book_id ? 'clickable' : 'not-owned'}" data-src="${src}" data-index="${i}">
+        <td class="muted">${esc(r.sequence)}</td>
+        <td>${esc(r.title)} ${editionOf(r) !== 'narrated' ? `<span class="edition-badge edition-${editionOf(r)}">${EDITION_LABELS[editionOf(r)]}</span>` : ''}</td>
+        <td class="muted" title="${esc(r.narrators || '')}">${esc(shortNames(r.narrators))}</td>
+        <td class="muted nowrap">${esc(releaseDate(r.release_date))}</td>
+        <td class="muted nowrap">${esc(formatRuntime(r.runtime_min))}</td>
+        <td class="nowrap">${status}</td>
+    </tr>`;
+}
+
+// "A, B, C, D, E" -> "A, B +3 more" (full-cast productions list dozens of narrators)
+function shortNames(names) {
+    const list = String(names || '').split(',').map(n => n.trim()).filter(n => n && !/full[\s-]?cast/i.test(n));
+    return list.length > 3 ? `${list.slice(0, 2).join(', ')} +${list.length - 2} more` : list.join(', ');
+}
+
 function renderSeriesDetail() {
     const sr = currentSeries;
     const box = document.getElementById('seriesDetail');
@@ -1277,21 +1361,19 @@ function renderSeriesDetail() {
         ${sr.unresolved ? '<p class="lookup-banner">Couldn\'t find this series on Audible, so only the books in your library are shown. Match one of its books on Audible, then open this page again.</p>' : ''}
         <div class="table-container series-books-table"><table class="data-table">
             <thead><tr><th class="col-num">#</th><th>Title</th><th>Narrator</th><th class="col-date">Released</th><th class="col-len">Length</th><th class="col-status">Status</th></tr></thead>
-            <tbody>${sr.rows.map((r, i) => `<tr class="${r.book_id ? 'clickable' : 'not-owned'}" data-index="${i}">
-                <td class="muted">${esc(r.sequence)}</td>
-                <td>${esc(r.title)}</td>
-                <td class="muted">${esc(r.narrators || '')}</td>
-                <td class="muted nowrap">${esc(releaseDate(r.release_date))}</td>
-                <td class="muted nowrap">${esc(formatRuntime(r.runtime_min))}</td>
-                <td class="nowrap">${r.book_id
-                    ? `<span class="library-status ${esc(statusClass(r.status))} inline-status">${esc(r.status)}</span>`
-                    : `<span class="muted">Not in library</span> <button class="link-btn add-row" data-index="${i}">Add</button>`}</td>
-            </tr>`).join('')}</tbody></table></div>`;
+            <tbody>${sr.rows.map((r, i) => seriesRowHtml(r, 'rows', i)).join('')}</tbody></table></div>
+        ${(sr.alternates || []).length ? `<details class="other-editions"${(sr.alternates || []).some(a => a.book_id) ? ' open' : ''}>
+            <summary>Other editions (${sr.alternates.length}): dramatized and abridged versions of these books</summary>
+            <div class="table-container series-books-table"><table class="data-table">
+                <thead><tr><th class="col-num">#</th><th>Title</th><th>Narrator</th><th class="col-date">Released</th><th class="col-len">Length</th><th class="col-status">Status</th></tr></thead>
+                <tbody>${sr.alternates.map((r, i) => seriesRowHtml(r, 'alternates', i)).join('')}</tbody></table></div>
+        </details>` : ''}`;
 
-    box.querySelectorAll('tr.clickable').forEach(tr => tr.addEventListener('click', () => openBookModal(sr.rows[tr.dataset.index].book_id)));
+    const rowOf = el => sr[el.dataset.src][el.dataset.index];
+    box.querySelectorAll('tr.clickable').forEach(tr => tr.addEventListener('click', () => openBookModal(rowOf(tr).book_id)));
     box.querySelectorAll('.add-row').forEach(btn => btn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const row = sr.rows[btn.dataset.index];
+        const row = rowOf(btn);
         btn.disabled = true;
         const res = await postJSON('/api/library', row.catalog);
         if (!res.ok) {
@@ -1304,7 +1386,7 @@ function renderSeriesDetail() {
     }));
 
     const monitorOpen = document.getElementById('seriesMonitorOpen');
-    if (monitorOpen) monitorOpen.addEventListener('click', () => openMonitorDialog(missing));
+    if (monitorOpen) monitorOpen.addEventListener('click', () => openMonitorDialog(sr.monitor_candidates || missing));
     const toggle = document.getElementById('seriesMonitoredToggle');
     if (toggle) toggle.addEventListener('change', async () => {
         await postJSON(`/api/series/${encodeURIComponent(tracked.id)}`, { monitored: toggle.checked }, 'PATCH');
@@ -1337,11 +1419,11 @@ function openMonitorDialog(missingRows) {
     const list = document.getElementById('seriesPickList');
     list.innerHTML = missingRows.length ? missingRows.map(r => `
         <label class="pick-row">
-            <input type="checkbox" value="${esc(r.asin)}" checked>
+            <input type="checkbox" value="${esc(r.asin)}" ${r.other ? '' : 'checked'}>
             <span class="muted pick-seq">${esc(r.sequence ? '#' + r.sequence : '')}</span>
-            <span class="pick-title">${esc(r.title)}</span>
+            <span class="pick-title">${esc(r.title)}${editionOf(r) !== 'narrated' ? ` <span class="edition-badge edition-${editionOf(r)}">${EDITION_LABELS[editionOf(r)]}</span>` : ''}${r.other ? ` <span class="muted">(you have the ${esc((EDITION_LABELS[r.other.edition] || '').toLowerCase())} edition)</span>` : ''}</span>
             <span class="muted">${esc(releaseDate(r.release_date, 4))}</span>
-        </label>`).join('') : '<p class="muted">You already have every book in this series.</p>';
+        </label>`).join('') : '<p class="muted">You already have every book in this series (in the editions your settings ask for).</p>';
     list.querySelectorAll('input').forEach(cb => cb.addEventListener('change', updateMonitorButton));
     updateMonitorButton();
     showModal(seriesModal);
@@ -1528,7 +1610,9 @@ function renderResults(data) {
             runtime_min: product.runtime_length_min || 0,
             description: product.publisher_summary || "",
             publisher: product.publisher_name || "",
-            language: product.language ? product.language[0].toUpperCase() + product.language.slice(1) : ""
+            language: product.language ? product.language[0].toUpperCase() + product.language.slice(1) : "",
+            edition: product.edition || "",
+            edition_reason: product.edition_reason || ""
         };
 
         if (product.series && product.series.length > 0) {
@@ -1594,6 +1678,7 @@ function renderGroup(title, books) {
             <img src="${safeUrl(book.imageUrl, '')}" alt="${esc(book.title)}" class="book-cover">
             <div class="book-info">
                 <div class="book-title" title="${esc(book.title)}">${esc(book.title)}</div>
+                ${editionBadge(book) ? `<div class="edition-badges">${editionBadge(book)}</div>` : ''}
                 <div class="book-author">${esc(book.authors)}</div>
                 <div class="book-narrator">Narrated by: ${esc(book.narrators)}</div>
                 <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px;">Release: ${esc(released || 'Unknown')}</div>
@@ -2050,6 +2135,7 @@ function openCalendarEvent(ev) {
     const facts = [
         ['Release', b.release_date],
         ['Length', b.runtime_min ? formatDuration(b.runtime_min * 60) : ''],
+        ['Edition', editionOf(b) !== 'narrated' ? EDITION_LABELS[editionOf(b)] : ''],
         ['Narrated by', b.narrators],
         ['Series', b.series ? `${b.series}${b.sequence ? ' #' + b.sequence : ''}` : ''],
         ['Genres', [...(b.genres || []), ...(b.subgenres || [])].join(', ')],

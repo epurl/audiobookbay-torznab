@@ -81,6 +81,9 @@
                         <option value="">All statuses</option>
                         <option value="__wanted">Wanted (not on disk)</option>
                         <option value="__unmatched">Not matched on Audible</option>
+                        <option value="__dramatized">Dramatized editions</option>
+                        <option value="__abridged">Abridged editions</option>
+                        <option value="__checkedition">Check edition</option>
                         <option value="Monitored">Monitored</option><option value="Unmonitored">Unmonitored</option><option value="Unreleased">Unreleased</option><option value="Downloading">Downloading</option><option value="Downloaded">Downloaded</option><option value="Needs Review">Needs Review</option><option value="Imported">Imported</option><option value="Missing">Missing</option>
                     </select>
                     <select id="libSort" class="form-select">
@@ -99,6 +102,11 @@
                     <select id="bulkStatus" class="form-select" aria-label="Set status">
                         <option value="">Set status…</option>
                         <option value="Monitored">Monitored</option><option value="Unmonitored">Unmonitored</option><option value="Imported">Imported</option><option value="Missing">Missing</option>
+                    </select>
+                    <select id="bulkEdition" class="form-select" aria-label="Set edition">
+                        <option value="">Set edition…</option>
+                        <option value="narrated">Narrated</option><option value="dramatized">Dramatized</option><option value="abridged">Abridged</option>
+                        <option value="__detect">Detect again</option>
                     </select>
                     <button class="secondary-btn" id="bulkMatch">Match on Audible</button>
                     <button class="danger-btn" id="bulkRemove">Remove</button>
@@ -254,6 +262,15 @@
                                 <option value="any">Any format</option>
                             </select>
                             <p class="settings-hint">How automatic downloads treat the file format. "M4B only" never grabs MP3 releases.</p>
+                        </div>
+                        <div class="settings-group">
+                            <label for="setEditionPref">Editions</label>
+                            <select id="setEditionPref" class="form-select">
+                                <option value="narrated">Narrated only</option>
+                                <option value="dramatized">Dramatized only</option>
+                                <option value="both">Both</option>
+                            </select>
+                            <p class="settings-hint">Which editions Monitor Series offers and series syncs add. Narrated editions are read by one or a few narrators; dramatized ones are full-cast productions such as GraphicAudio. Every book is searched for, matched and checked in its own edition.</p>
                         </div>
                         <div class="settings-group">
                             <label class="checkbox-label">
@@ -505,6 +522,8 @@
                     <label>Status<select id="bookStatus" class="form-select"><option value="Monitored">Monitored</option><option value="Unmonitored">Unmonitored</option><option value="Unreleased">Unreleased</option><option value="Downloading">Downloading</option><option value="Downloaded">Downloaded</option><option value="Needs Review">Needs Review</option><option value="Imported">Imported</option><option value="Missing">Missing</option></select></label>
                     <label>ASIN<input type="text" id="bookAsin" class="form-input"></label>
                     <label>Runtime (min)<input type="number" id="bookRuntime" class="form-input" min="0"></label>
+                    <label>Edition<select id="bookEdition" class="form-select"><option value="narrated">Narrated</option><option value="dramatized">Dramatized</option><option value="abridged">Abridged</option></select></label>
+                    <div class="book-edition-reason" id="bookEditionReason"></div>
                 </div>
             </div>
             <div class="modal-body">
@@ -555,7 +574,7 @@
                 <button type="button" class="secondary-btn browse-btn" data-target="importPath">Browse</button>
                 <button id="scanBtn" class="primary-btn">Scan</button>
             </div>
-            <p class="settings-hint">Finds every folder with audio files. Details come from Audiobookshelf's metadata.json when a folder has one, otherwise from the folder name (Author - Series N - Title). Files are not moved or renamed.</p>
+            <p class="settings-hint">Finds every folder with audio files. Details come from Audiobookshelf's metadata.json when a folder has one, otherwise from the folder name (Author - Series N - Title). The edition (narrated, dramatized or abridged) comes from metadata.json, the files' tags and names; change it before importing if it's wrong. Files are not moved or renamed.</p>
             <div id="importLoader" class="loader hidden"><div class="spinner"></div></div>
             <div id="importSummary" class="import-summary"></div>
             <div class="table-container import-table">
@@ -566,6 +585,7 @@
                             <th>Author</th>
                             <th>Series</th>
                             <th>Title</th>
+                            <th>Edition</th>
                             <th>Format</th>
                             <th>Size</th>
                             <th>Source</th>

@@ -23,8 +23,10 @@ def build_metadata(book):
         series.append(f"{book['series']} #{book['sequence']}" if book.get("sequence") else book["series"])
     release = book.get("release_date") or ""
     title, _, subtitle = (book.get("title") or "").partition(": ")
+    edition = book.get("edition")
     return {
-        "tags": [],
+        # Lets you filter dramatized editions in Audiobookshelf
+        "tags": ["Dramatized"] if edition == "dramatized" else [],
         "chapters": [],
         "title": title.strip(),
         "subtitle": subtitle.strip() or None,
@@ -40,7 +42,7 @@ def build_metadata(book):
         "asin": book.get("asin") or None,
         "language": book.get("language") or None,
         "explicit": False,
-        "abridged": False,
+        "abridged": edition == "abridged",
     }
 
 

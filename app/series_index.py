@@ -5,7 +5,8 @@ import logging
 from collections import Counter
 
 from app import audible, db
-from app.library import normalize, primary_author, series_entries, series_key
+from app.editions import DRAMATIZED, NARRATED, edition_of
+from app.library import normalize, primary_author, series_entries, series_key, title_key
 
 logger = logging.getLogger(__name__)
 
@@ -23,15 +24,16 @@ def _seq_sort(seq, release_date=""):
 
 class LibraryIndex:
     """Fast lookup of library books by ASIN, or by title and any shared author (books
-    don't always list their authors in the same order)."""
+    don't always list their authors in the same order) in the same edition: a dramatized
+    version is a different book from the narrated one."""
 
     def __init__(self, library):
         self.by_asin = {b["asin"]: b for b in library if b.get("asin")}
         self.by_title = {}
         for b in library:
-            title = normalize((b.get("title") or "").split(":")[0])
+            title = title_key(b.get("title"))
             for author in self._authors(b):
-                self.by_title.setdefault((title, author), b)
+                self.by_title.setdefault((title, author, edition_of(b)), b)
 
     @staticmethod
     def _authors(book):
@@ -39,17 +41,19 @@ class LibraryIndex:
 
     def _by_title(self, title, book):
         for author in self._authors(book):
-            found = self.by_title.get((normalize(title), author))
+            found = self.by_title.get((title_key(title), author, edition_of(book)))
             if found:
                 return found
         return None
 
     def find(self, book):
-        found = self.by_asin.get(book.get("asin"))
-        if found:
-            return found
+        # Editions sold in parts: your copy may have any part's ASIN
+        for asin in [book.get("asin")] + list(book.get("part_asins") or []):
+            found = self.by_asin.get(asin)
+            if found:
+                return found
         title = book.get("title") or ""
-        found = self._by_title(title.split(":")[0], book)
+        found = self._by_title(title, book)
         if found:
             return found
         # Audible titles can carry the series name: "Universe: Book Title"
@@ -100,20 +104,38 @@ def build_groups():
     return groups
 
 
-def _rows(group, index):
-    """Every book in the series: Audible's list merged with the library's books."""
-    rows, used = [], set()
+def _all_rows(group, index):
+    """(rows, other editions): every book in the series, from Audible's list merged with
+    the library's books, and the books' other editions (dramatized, abridged)."""
+    rows, alternates, used = [], [], set()
     for cb in (group["catalog"] or {}).get("books", []):
         owned = index.find(cb)
         if owned:
             used.add(owned["id"])
         rows.append({"book": owned, "catalog": cb, "sequence": cb.get("catalog_sequence") or cb.get("sequence", "")})
+    for cb in (group["catalog"] or {}).get("alternates", []):
+        owned = index.find(cb)
+        if owned:
+            used.add(owned["id"])
+        alternates.append({"book": owned, "catalog": cb, "sequence": cb.get("catalog_sequence") or cb.get("sequence", "")})
     for b, seq in group["books"]:
         if b["id"] not in used:
             used.add(b["id"])
-            rows.append({"book": b, "catalog": None, "sequence": seq})
-    rows.sort(key=lambda r: _seq_sort(r["sequence"], (r["book"] or r["catalog"]).get("release_date")))
-    return rows
+            # A library book Audible doesn't list: another edition goes with the other editions
+            row = {"book": b, "catalog": None, "sequence": seq}
+            (alternates if group["catalog"] and edition_of(b) != NARRATED else rows).append(row)
+    order = lambda r: _seq_sort(r["sequence"], (r["book"] or r["catalog"]).get("release_date"))
+    rows.sort(key=order)
+    alternates.sort(key=order)
+    # A book counts as had when you have any edition of it
+    for r in rows:
+        if not r["book"]:
+            r["other"] = next((a["book"] for a in alternates if a["book"] and a["sequence"] and a["sequence"] == r["sequence"]), None)
+    return rows, alternates
+
+
+def _rows(group, index):
+    return _all_rows(group, index)[0]
 
 
 def _cover(rows):
@@ -136,9 +158,14 @@ def series_author(rows):
     return votes.most_common(1)[0][0] if votes else ""
 
 
+def _held(row):
+    """The library book for a row: its own edition, or another edition you have."""
+    return row["book"] or row.get("other")
+
+
 def summarize(group, index):
     rows = _rows(group, index)
-    statuses = [r["book"]["status"] for r in rows if r["book"]]
+    statuses = [_held(r)["status"] for r in rows if _held(r)]
     tracked = group["tracked"]
     return {
         "key": group["key"],
@@ -153,7 +180,7 @@ def summarize(group, index):
         "wanted": sum(1 for st in statuses if st in WANTED),
         # Unknown until Audible's list for the series has been loaded
         "total": len(rows) if group["catalog"] else None,
-        "missing": sum(1 for r in rows if not r["book"]) if group["catalog"] else None,
+        "missing": sum(1 for r in rows if not _held(r)) if group["catalog"] else None,
         # Audible dates books without a release date 2200-01-01
         "latest": max((d for r in rows if (d := (r["book"] or r["catalog"]).get("release_date") or "") < "2100"),
                       default=""),
@@ -182,9 +209,9 @@ async def ensure_catalog(asin, force=False):
     catalog = db.get_catalog(asin)
     if catalog and not force and db.catalog_is_fresh(catalog):
         return catalog
-    title, books = await audible.get_series_books(asin, db.get_settings().get("language", "All"))
-    db.save_catalog(asin, title, books)
-    _attach_owned(asin, title, books)
+    title, books, alternates = await audible.get_series_books(asin, db.get_settings().get("language", "All"))
+    db.save_catalog(asin, title, books, alternates)
+    _attach_owned(asin, title, books + alternates)
     return db.get_catalog(asin)
 
 
@@ -248,22 +275,49 @@ async def detail(key):
             fresh["title"] = group["title"]
             group = fresh
     lib_index = LibraryIndex(db.get_library())
-    rows = _rows(group, lib_index)
+    rows, alternates = _all_rows(group, lib_index)
     summary = summarize(group, lib_index)
-    summary["rows"] = [{
-        "sequence": r["sequence"],
-        "book_id": (r["book"] or {}).get("id", ""),
-        "status": (r["book"] or {}).get("status", ""),
-        "title": (r["book"] or r["catalog"]).get("title", ""),
-        "authors": (r["book"] or r["catalog"]).get("authors", ""),
-        "narrators": (r["book"] or r["catalog"]).get("narrators", ""),
-        "release_date": (r["book"] or r["catalog"]).get("release_date", ""),
-        "runtime_min": (r["book"] or {}).get("runtime_min") or (r["catalog"] or {}).get("runtime_min") or 0,
-        "asin": (r["book"] or {}).get("asin") or (r["catalog"] or {}).get("asin", ""),
-        "catalog": r["catalog"] if not r["book"] else None,
-    } for r in rows]
+    summary["rows"] = [_row_json(r) for r in rows]
+    summary["alternates"] = [_row_json(r) for r in alternates]
+    wanted = wanted_editions()
+    summary["monitor_candidates"] = [r for r in summary["rows"] + summary["alternates"]
+                                     if not r["book_id"] and r["catalog"] and r["edition"] in wanted]
+    summary["edition_preference"] = db.get_settings().get("edition_preference", "narrated")
     summary["unresolved"] = not group["asin"]
     return summary
+
+
+def _row_json(r):
+    book, catalog = r["book"], r["catalog"]
+    shown = book or catalog
+    other = r.get("other")
+    return {
+        "sequence": r["sequence"],
+        "book_id": (book or {}).get("id", ""),
+        "status": (book or {}).get("status", ""),
+        "title": shown.get("title", ""),
+        "authors": shown.get("authors", ""),
+        "narrators": shown.get("narrators", ""),
+        "release_date": shown.get("release_date", ""),
+        "runtime_min": (book or {}).get("runtime_min") or (catalog or {}).get("runtime_min") or 0,
+        "asin": (book or {}).get("asin") or (catalog or {}).get("asin", ""),
+        "edition": edition_of(shown),
+        "catalog": catalog if not book else None,
+        # Another edition of this book that you have
+        "other": {"book_id": other["id"], "status": other.get("status", ""), "edition": edition_of(other)} if other else None,
+    }
+
+
+def wanted_editions(preference=None):
+    """The editions Monitor Series offers and series syncs add, from the edition setting.
+    Abridged editions count with narrated ones: a book is only listed abridged when
+    Audible has no unabridged narration of it."""
+    preference = preference or db.get_settings().get("edition_preference", "narrated")
+    if preference == "dramatized":
+        return {DRAMATIZED}
+    if preference == "both":
+        return {NARRATED, DRAMATIZED, "abridged"}
+    return {NARRATED, "abridged"}
 
 
 # Background lookup of Audible ids and book lists for every series in the library

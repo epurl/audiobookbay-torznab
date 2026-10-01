@@ -81,7 +81,7 @@ def _item(product):
     return {
         **{k: book[k] for k in ("asin", "title", "subtitle", "authors", "narrators", "imageUrl", "release_date",
                                 "series", "sequence", "series_asin", "series_list", "runtime_min", "publisher",
-                                "language")},
+                                "language", "edition")},
         "genres": tops,
         "subgenres": subs,
         "rating": float(rating.get("display_average_rating") or 0),

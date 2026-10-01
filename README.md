@@ -11,6 +11,7 @@ An audiobook manager in the style of Sonarr and Radarr, built around AudiobookBa
 - **Import:** finished downloads are hardlinked or copied (so seeding continues), renamed, and checked against Audible's runtime.
 - **Existing library:** import the audiobooks you already have, from Audiobookshelf's `metadata.json` or folder names. Files are never moved.
 - **Series:** a Sonarr-style page with every series, Audible's full book list and what you're missing. Monitor a series to get the books you pick and every new release.
+- **Editions:** narrated, dramatized (full cast, GraphicAudio) and abridged editions are told apart, matched, searched for and imported separately.
 - **Calendar:** your books on their release dates, coloured by status like Sonarr's calendar, plus trending Audible releases filtered by trend and genre.
 - **Activity:** live download queue and history. **Audiobookshelf:** metadata, covers and library scans.
 
@@ -41,9 +42,9 @@ Changes are saved with the **Save Changes** bar at the bottom.
 | Security | A username and password. Until one is set, only local network addresses can connect. |
 | Download Client | qBittorrent's URL (often `http://qbittorrent:8080`), username and password; **Test Connection** checks them. **Stalled Downloads:** a download with no progress for 6 hours (0 turns this off) is removed with its partial files, and the next-best release is grabbed. |
 | Downloads Folder | Only when qBittorrent and Bayarr see downloads at different paths: Bayarr's path to qBittorrent's `audiobooks` save folder. If qBittorrent reports `/data/torrents/audiobooks/Book` and this is `/downloads/audiobooks`, Bayarr reads `/downloads/audiobooks/Book`. |
-| Media Management | **Root Folder** for imported books. **Book Folder Format**, default `{Author} - {Series} {SeriesNumber} - {Title}` (also `{Authors}`, `{Year}`; empty parts are dropped). **Rename Audio Files:** `Title.m4b`, or `Title - Part 01.mp3`… in disc and track order. **Use Hardlinks:** works when downloads and the Root Folder are in one mounted volume (e.g. `/data/downloads` and `/data/audiobooks`); otherwise files are copied. Don't run Audiobookshelf's "embed metadata" on hardlinked books. |
+| Media Management | **Root Folder** for imported books. **Book Folder Format**, default `{Author} - {Series} {SeriesNumber} - {Title}` (also `{Authors}`, `{Year}`, `{Edition}`; empty parts are dropped; dramatized and abridged books get "(Dramatized)" / "(Abridged)" at the end even without `{Edition}`). **Rename Audio Files:** `Title.m4b`, or `Title - Part 01.mp3`… in disc and track order. **Use Hardlinks:** works when downloads and the Root Folder are in one mounted volume (e.g. `/data/downloads` and `/data/audiobooks`); otherwise files are copied. Don't run Audiobookshelf's "embed metadata" on hardlinked books. |
 | Download Checks | Allowed difference from Audible's runtime (10% by default). |
-| General | Language; *Prefer M4B*, *M4B only* or *Any format*; whether a matching narrator ranks releases higher. |
+| General | Language; *Prefer M4B*, *M4B only* or *Any format*; whether a matching narrator ranks releases higher; **Editions**: *Narrated only* (default), *Dramatized only* or *Both* for series monitoring (see [Editions](#editions)). |
 | Audiobookshelf | See [Audiobookshelf](#audiobookshelf). |
 | Backup | Download or restore the database. A daily copy of the last 7 days is kept in `config/backups`. Backups include your passwords and tokens. |
 
@@ -65,11 +66,12 @@ Changes are saved with the **Save Changes** bar at the bottom.
    | Series number | `[Series 7]`, `Book 7`, `#7` must match. |
    | Narrator, format | A matching narrator and M4B (when preferred) score higher. |
    | Size | Compared with Audible's runtime: far too small or large is ruled out. |
-   | Ruled out | Box sets (`Books 1-6`, collections), dramatized/full-cast/GraphicAudio, abridged, other languages, releases rejected before. |
+   | Edition | Must be the book's edition: a narrated book rules out GraphicAudio/full-cast/dramatized and abridged releases, a dramatized book rules out plain ones. |
+   | Ruled out | Box sets (`Books 1-6`, collections), other languages, releases rejected before. |
 
    A release is grabbed only if nothing rules it out and it scores 45 or more. Among clear matches within 10 points, M4B wins when preferred. **Manual Search** shows each release's score; hover for the reasons, or tick **Show rejected** to see what was ruled out and why.
 3. **Download.** The magnet goes to qBittorrent with the `audiobooks` category and a `bayarr-` tag.
-4. **Check and import.** Every minute Bayarr looks for finished downloads. The audio files' real length is compared with Audible's runtime, and with *M4B only* the format is checked. A release that fails becomes **Needs Review** in Activity, where you can **Import Anyway** or **Reject & Search Again** (that release is never grabbed again). Otherwise it's imported into the Root Folder with `metadata.json` and the cover, and Audiobookshelf is asked to scan.
+4. **Check and import.** Every minute Bayarr looks for finished downloads. The audio files' real length is compared with Audible's runtime, their tags and names must not say they're another edition (e.g. GraphicAudio for a narrated book), and with *M4B only* the format is checked. A release that fails becomes **Needs Review** in Activity, where you can **Import Anyway** or **Reject & Search Again** (that release is never grabbed again). Otherwise it's imported into the Root Folder with `metadata.json` and the cover, and Audiobookshelf is asked to scan.
 
 Searches are spaced a second apart and cached for 15 minutes. If AudiobookBay stops responding, searches pause for 5 minutes.
 
@@ -103,6 +105,15 @@ Managing books:
 | Downloading / Downloaded | In qBittorrent / finished, waiting for import. |
 | Needs Review | Files failed a check; waiting for you in Activity. |
 | Imported / Missing | On disk / folder gone (set to Monitored to download again). |
+
+## Editions
+
+A book can be **narrated** (one or a few narrators), **dramatized** (full-cast productions such as GraphicAudio, radio plays, Audible Original performances) or **abridged**. Audible labels dramatizations "unabridged" too, so Bayarr combines several signs: "full cast" or many narrators, GraphicAudio or BBC radio publishers, radio-production and performance listings, and words like "Dramatized Adaptation" in titles.
+
+- **Separate books:** each edition is its own library entry, matched to its own Audible edition (with its own runtime), searched for in its own edition, and imported into its own folder, e.g. `Author - Series 1 - Title (Dramatized)`. Audiobookshelf gets a `Dramatized` tag and its `abridged` flag.
+- **Import Existing:** the edition comes from `metadata.json`, the files' tags, and folder and file names (e.g. "Graphic Audio"). The preview shows it with the reason; change it before importing if it's wrong. Unclear ones (many narrators, or a folder that says GraphicAudio but an ASIN for the narrated edition) are highlighted.
+- **Your library:** books from before editions existed are checked once in the background (Audible's edition by ASIN, plus what the files say). Filter the Library by **Dramatized**, **Abridged** or **Check edition**; change one in a book's details, or many with **Select** → **Set edition** (or **Detect again**).
+- **Series:** the main list shows each book once (its narrated edition where there is one). **Other editions** below lists dramatized and abridged versions; editions Audible sells in parts ("Part 1 of 2") are one book. Having any edition of a book counts it as had. The **Editions** setting decides which editions **Monitor Series** offers and series syncs add.
 
 ## Series
 

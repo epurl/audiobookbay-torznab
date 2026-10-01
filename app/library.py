@@ -4,6 +4,8 @@ import logging
 import os
 import re
 
+from app.editions import classify_local, edition_of
+
 logger = logging.getLogger(__name__)
 
 # .mp4 and .mka are audio-only containers some releases use (e.g. "001 Author (2020) Title.mp4")
@@ -24,6 +26,9 @@ def is_system_folder(path):
     return os.path.normpath(path).replace("\\", "/") in SYSTEM_FOLDERS
 
 DEFAULT_NAMING_FORMAT = "{Author} - {Series} {SeriesNumber} - {Title}"
+# Added after the title for dramatized and abridged books when the format has no {Edition},
+# so two editions of a book never share a folder
+EDITION_SUFFIX = {"dramatized": "(Dramatized)", "abridged": "(Abridged)"}
 
 
 def display_name(text):
@@ -116,6 +121,18 @@ def normalize(text):
     text = (text or "").lower()
     text = re.sub(r"^(the|a|an)\s+", "", text)
     return re.sub(r"[^a-z0-9]+", "", text)
+
+
+# Edition words in titles ("Storm Front Dramatized", "Book - Graphic Audio")
+_EDITION_WORDS = re.compile(r"\b(dramati[sz]ed|adaptation|graphic\s?audio|full[\s-]?cast|(un)?abridged)\b", re.IGNORECASE)
+
+
+def title_key(title):
+    """A title for matching: the main title, without bracketed tags, edition words or a
+    subtitle: "Storm Front (Dramatized Adaptation): Series, Book 1" -> "stormfront"."""
+    plain = re.sub(r"\s*[\(\[][^\)\]]*[\)\]]", "", title or "")
+    plain = _EDITION_WORDS.sub("", plain).strip(" -") or (title or "")
+    return normalize(plain.split(":")[0])
 
 
 def primary_author(authors):
@@ -211,12 +228,18 @@ def read_abs_metadata(folder):
     release_date = data.get("publishedDate") or data.get("publishedYear") or ""
     return {
         "title": str(data["title"]).strip(),
+        "subtitle": str(data.get("subtitle") or ""),
         "authors": _names(data.get("authors"), skip_contributors=True),
         "narrators": _names(data.get("narrators")),
         **main_series_fields(entries),
         "asin": data.get("asin") or "",
         "release_date": str(release_date),
         "description": data.get("description") or "",
+        "publisher": str(data.get("publisher") or ""),
+        # Used to tell the edition
+        "abridged": data.get("abridged") is True,
+        "genres": [str(g) for g in data.get("genres") or [] if g],
+        "tags": [str(t) for t in data.get("tags") or [] if t],
     }
 
 
@@ -280,7 +303,9 @@ def _make_candidate(path, name, cover="", parents=()):
     else:
         info = {**parsed, **main_series_fields(parsed_series), "narrators": "", "asin": "", "release_date": "", "description": ""}
         source = "folder name"
-    return {**info, "path": path, "cover": cover, "source": source, **describe_files(path)}
+    found = classify_local(meta, [f for f, _ in audio_files(path)], path)
+    return {**info, "path": path, "cover": cover, "source": source, **describe_files(path),
+            "edition": found["edition"], "edition_reason": found["reason"], "edition_check": not found["sure"]}
 
 
 def scan_library(root):
@@ -316,8 +341,14 @@ def same_path(a, b):
     return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
 
 
+def author_keys(authors):
+    keys = {normalize(a) for a in (authors or "").split(",") if normalize(a)}
+    return keys or {""}
+
+
 def find_match(library, book):
-    """Finds the library entry for a book by path, ASIN, or title + first author."""
+    """Finds the library entry for a book by path, ASIN, or title + a shared author in the
+    same edition (a dramatized version is a separate entry from the narrated one)."""
     for entry in library:
         if same_path(entry.get("path"), book.get("path")):
             return entry
@@ -326,13 +357,14 @@ def find_match(library, book):
         for entry in library:
             if entry.get("asin") == asin:
                 return entry
-    title_key = normalize((book.get("title") or "").split(":")[0])
-    author_key = normalize(primary_author(book.get("authors")))
-    if not title_key:
+    key = title_key(book.get("title"))
+    authors = author_keys(book.get("authors"))
+    edition = edition_of(book)
+    if not key:
         return None
     for entry in library:
-        if (normalize((entry.get("title") or "").split(":")[0]) == title_key
-                and normalize(primary_author(entry.get("authors"))) == author_key):
+        if (title_key(entry.get("title")) == key
+                and author_keys(entry.get("authors")) & authors and edition_of(entry) == edition):
             return entry
     return None
 
@@ -484,6 +516,10 @@ def plan_import_files(content_path, title, rename=True, expected_min=0, toleranc
 
 def build_folder_name(template, book):
     """Fills the naming template; segments left empty (e.g. no series) are dropped."""
+    edition = EDITION_SUFFIX.get(book.get("edition") or "", "")
+    name = template or DEFAULT_NAMING_FORMAT
+    if edition and "{Edition}" not in name:
+        name += " {Edition}"
     values = {
         "{Author}": primary_author(book.get("authors")),
         "{Authors}": book.get("authors") or "",
@@ -491,8 +527,8 @@ def build_folder_name(template, book):
         "{Series}": book.get("series") or "",
         "{SeriesNumber}": format_sequence(book.get("sequence")),
         "{Year}": (book.get("release_date") or "")[:4],
+        "{Edition}": edition,
     }
-    name = template or DEFAULT_NAMING_FORMAT
     for token, value in values.items():
         name = name.replace(token, value)
     segments = [re.sub(r"\s+", " ", s).strip() for s in name.split(" - ")]

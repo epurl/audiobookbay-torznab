@@ -2414,3 +2414,67 @@ tr.clickable {
 .cal-event.ranked .cal-event-title {
     padding-right: 26px;
 }
+
+/* Editions: narrated (no badge), dramatized, abridged, and books whose edition needs a look */
+.edition-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 2px 0 4px;
+}
+
+.edition-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    border: 1px solid currentColor;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+.edition-dramatized {
+    color: #c084fc;
+}
+
+.edition-abridged {
+    color: #fbbf24;
+}
+
+.edition-check {
+    color: var(--error);
+    border-style: dashed;
+}
+
+.book-edition-reason {
+    grid-column: 1 / -1;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.book-edition-reason:empty {
+    display: none;
+}
+
+.import-edition {
+    min-width: 120px;
+    padding: 4px 8px;
+}
+
+.import-edition.check {
+    border-color: var(--error);
+}
+
+.other-editions {
+    margin-top: 16px;
+}
+
+.other-editions > summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    padding: 6px 0 10px;
+}

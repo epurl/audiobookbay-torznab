@@ -2,10 +2,11 @@
 
 Each release gets a score from 0 to 100, the reasons behind it, and the problems that
 would stop it being downloaded automatically (wrong book, wrong number in the series,
-a box set, a dramatized version, abridged, too small for the book's length...)."""
+a box set, another edition (dramatized or abridged), too small for the book's length...)."""
 import re
 import unicodedata
 
+from app import editions
 from app.db import extract_infohash
 from app.scraper import split_release_title
 
@@ -27,9 +28,6 @@ NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "phd", "md"}
 
 BUNDLE_WORDS = {"collection", "boxset", "omnibus", "compilation", "novels", "audiobooks", "trilogy", "duology",
                 "quartet", "quintet", "anthology", "shorts", "complete"}
-DRAMATIZED_PHRASES = ("graphic audio", "graphicaudio", "dramatized", "dramatised", "dramatization", "dramatisation",
-                      "full cast", "fullcast", "soundbooth", "cinematic audio", "radio drama", "audio drama",
-                      "audio play", "bbc radio", "booktrack", "audio movie")
 VARIOUS_AUTHORS = {"various", "various authors", "multiple authors", "multiple", "anthology", "unknown", "va"}
 
 
@@ -145,7 +143,6 @@ def evaluate(book, result, settings, blocklist=None):
     body_words = tokens(body)
     body_set = set(body_words)
     body_norm = " ".join(body_words)
-    extra_text = norm(" ".join([raw] + list(result.get("keywords") or []) + list(result.get("categories") or [])))
 
     title = book.get("title") or ""
     main_title = title.split(":")[0]
@@ -241,18 +238,22 @@ def evaluate(book, result, settings, blocklist=None):
         what = f"Books {ranges[0][0]}-{ranges[0][1]}" if ranges else ", ".join(sorted(bundle_words - {"range"})) or "several books"
         problems.append(f"Box set or collection ({what})")
 
-    # --- Dramatized and full-cast versions ---
-    book_text = norm(f"{title} {book.get('narrators', '')} {book.get('publisher', '')}")
-    dramatized = [p for p in DRAMATIZED_PHRASES if p in extra_text and p not in book_text]
-    if dramatized:
-        score -= 40
-        problems.append(f"Dramatized or full-cast version ({dramatized[0]})")
-
-    # --- Abridged ---
-    abridged = result.get("abridged") or bool(re.search(r"(?<!un)abridged", raw, re.IGNORECASE))
-    if abridged and "abridged" not in title.lower():
-        score -= 30
-        problems.append("Abridged")
+    # --- Edition: narrated, dramatized or abridged, matched both ways ---
+    wanted = book.get("edition") if book.get("edition") in editions.EDITIONS else         (editions.classify_fields(book) or {}).get("edition", editions.NARRATED)
+    found = editions.release_edition(raw, result.get("keywords"), result.get("categories"),
+                                     result.get("narrators") or [], result.get("abridged"))
+    if found["edition"] != wanted:
+        many_voices_book = len(narrator_names) >= editions.MANY_NARRATORS
+        if found["sure"]:
+            score -= 40
+            why = f" ({found['reason']})" if found["reason"] else ""
+            if found["edition"] == editions.NARRATED:
+                problems.append(f"Not a {editions.label(wanted).lower()} edition; you want the {editions.label(wanted).lower()} one")
+            else:
+                problems.append(f"{editions.label(found['edition'])} edition{why}")
+        elif not many_voices_book:
+            score -= 15
+            reasons.append(f"May be {editions.label(found['edition']).lower()} ({found['reason']})")
 
     # --- Words that aren't the title, author or series (a different book?) ---
     allowed = title_all | series_words | rel_author_words | {w for n in author_names for w in n} \

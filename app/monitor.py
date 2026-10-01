@@ -3,8 +3,9 @@ import logging
 import datetime
 import os
 import shutil
-from . import audible, audiobookshelf, book_search, db, release_match, scraper
-from .library import build_folder_name, describe_files, find_match, plan_import_files, total_duration_min
+from . import audible, audiobookshelf, book_search, db, editions, release_match, scraper
+from .library import (audio_files, build_folder_name, describe_files, find_match, plan_import_files,
+                      read_abs_metadata, total_duration_min)
 from .scraper import fetch_detail_info
 from .qbittorrent import delete_torrents, get_completed_torrents, get_torrents, send_to_qbittorrent
 
@@ -29,6 +30,11 @@ async def _search_loop():
         except Exception as e:
             logger.error(f"Daily backup failed: {e}")
         try:
+            # Books from before editions existed (a no-op once they all have one)
+            await classify_editions()
+        except Exception as e:
+            logger.error(f"Edition detection failed: {e}", exc_info=True)
+        try:
             await check_library()
         except Exception as e:
             logger.error(f"Error in search loop: {e}", exc_info=True)
@@ -45,6 +51,46 @@ async def _import_loop():
         except Exception as e:
             logger.error(f"Error in import loop: {e}", exc_info=True)
         await asyncio.sleep(IMPORT_INTERVAL)
+
+
+def _local_edition(book):
+    """What a book's folder says about its edition (metadata.json, tags, names)."""
+    path = book.get("path") or ""
+    meta = read_abs_metadata(path) if os.path.isdir(path) else None
+    return editions.classify_local(meta, [f for f, _ in audio_files(path)], path)
+
+
+async def classify_editions(book_ids=None):
+    """Works out the edition of books that don't have one yet, or of book_ids (again):
+    Audible's edition for books with an ASIN, and what their files say. A folder tagged
+    as a dramatization wins over a narrated ASIN, and is flagged for checking."""
+    books = [b for b in db.get_library()
+             if (b["id"] in book_ids if book_ids is not None else b.get("edition") not in editions.EDITIONS)]
+    if not books:
+        return 0
+    products = {}
+    asins = [b["asin"] for b in books if b.get("asin")]
+    if asins:
+        try:
+            products = {p["asin"]: p for p in await audible.get_products(asins) if p.get("asin")}
+        except Exception as e:
+            logger.warning(f"Couldn't look up editions on Audible: {e}")
+    changes = {}
+    for book in books:
+        on_audible = editions.classify_product(products[book["asin"]]) if book.get("asin") in products else None
+        if book.get("path") and os.path.exists(book["path"]):
+            local = await asyncio.to_thread(_local_edition, book)
+        else:
+            local = editions.classify_fields(book)
+        found = editions.combine(on_audible, local)
+        changes[book["id"]] = {"edition": found["edition"], "edition_reason": found["reason"],
+                               "edition_check": not found["sure"]}
+    db.update_books(changes)
+    flagged = sum(1 for c in changes.values() if c["edition_check"])
+    counts = {e: sum(1 for c in changes.values() if c["edition"] == e) for e in editions.EDITIONS}
+    logger.info(f"Editions: {counts['narrated']} narrated, {counts['dramatized']} dramatized, "
+                f"{counts['abridged']} abridged; {flagged} to check")
+    return len(changes)
 
 
 def _run_in_background(coro):
@@ -101,27 +147,31 @@ def find_missing_books():
 async def sync_series(series, settings, selected=None):
     """Refreshes a monitored series from Audible. Books already in the library get the
     series recorded on them. Books are only added when chosen (selected, when the series is
-    first monitored) or new: ones Audible didn't list before. Returns the added books."""
-    from app.series_index import LibraryIndex, ensure_catalog, series_author
+    first monitored) or new: ones Audible didn't list before, in the editions the edition
+    setting asks for. Returns the added books."""
+    from app.series_index import LibraryIndex, ensure_catalog, series_author, wanted_editions
     catalog = await ensure_catalog(series["asin"], force=True)
     books = catalog.get("books", [])
+    every_edition = books + catalog.get("alternates", [])
+    editions_wanted = wanted_editions(settings.get("edition_preference"))
     title = series.get("title") or catalog.get("title", "")
     index = LibraryIndex(db.get_library())
     known = series.get("known_asins")
     added = []
-    for book in books:
+    for book in every_edition:
         if index.find(book):
             continue
         if selected is not None:
             wanted = book.get("asin") in selected
         else:
             # Series monitored before known_asins existed: treat today's list as known
-            wanted = known is not None and book.get("asin") not in known
+            wanted = (known is not None and book.get("asin") not in known
+                      and editions.edition_of(book) in editions_wanted)
         if not wanted:
             continue
         entry = db.add_to_library({**book, "description": ""})
         added.append(entry)
-    all_asins = {b.get("asin") for b in books if b.get("asin")}
+    all_asins = {b.get("asin") for b in every_edition if b.get("asin")}
     author = series_author([{"catalog": b, "book": None} for b in books]) or series.get("author", "")
     db.update_series(series["id"], title=title, author=author,
                      known_asins=sorted(set(known or []) | all_asins),
@@ -318,9 +368,16 @@ async def check_active_downloads(settings):
         schedule_search(db.get_book(book["id"]))
 
 
-def check_download(book, audio_files, settings):
+def check_download(book, audio_files, settings, folder=""):
     """Checks the downloaded files rather than trusting the AudiobookBay listing.
     Returns a reason to hold the book for review, or '' if it looks right."""
+    # The edition: the length can't tell a dramatization from the narration (they often
+    # run about as long), but the files' tags and names usually can
+    wanted = editions.edition_of(book)
+    found = editions.classify_files(audio_files, folder)
+    if found and found["edition"] != wanted and wanted != editions.DRAMATIZED:
+        return (f"You wanted the {editions.label(wanted).lower()} edition, but this looks "
+                f"{editions.label(found['edition']).lower()} ({found['reason']}).")
     if settings.get("format_preference") == "m4b_only":
         not_m4b = sorted({os.path.splitext(f)[1].lower() for f in audio_files} - {".m4b", ".m4a"})
         if not_m4b:
@@ -393,7 +450,7 @@ async def import_completed_downloads(settings):
             continue
 
         if not book.get("skip_verify"):
-            reason = await asyncio.to_thread(check_download, book, [src for src, _ in audio], settings)
+            reason = await asyncio.to_thread(check_download, book, [src for src, _ in audio], settings, content_path)
             if reason:
                 logger.warning(f"Holding {title} for review: {reason}")
                 db.update_book(book["id"], status="Needs Review", review_reason=reason)
