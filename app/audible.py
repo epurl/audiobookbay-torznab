@@ -31,6 +31,13 @@ async def search(title="", author="", num_results=None):
     return await _get(API, params)
 
 
+async def search_keywords(query, num_results=50):
+    """Audible's general search: matches titles, authors, narrators and series names,
+    so "Series Name", "Author" and "Title Author" all work."""
+    return await _get(API, {"keywords": query, "response_groups": RESPONSE_GROUPS, "image_sizes": "500",
+                            "num_results": num_results, "products_sort_by": "Relevance"})
+
+
 async def get_products(asins):
     products = []
     asins = list(asins)

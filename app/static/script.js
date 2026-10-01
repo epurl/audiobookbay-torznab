@@ -1158,7 +1158,12 @@ function drawSeriesList() {
         return;
     }
     if (!list.length) {
-        container.innerHTML = '<div class="empty-state"><h3>No series match</h3><p>Nothing matches this filter.</p></div>';
+        // This page only has series you own books in; others are found by searching Audible
+        const text = document.getElementById('seriesFilter').value.trim();
+        container.innerHTML = `<div class="empty-state"><h3>No series match</h3>
+            <p>${text ? 'None of your series match. Series you have no books from are found on Audible.' : 'Nothing matches this filter.'}</p>
+            ${text ? `<button class="primary-btn" id="seriesSearchAudible">Search Audible for "${esc(text)}"</button>` : ''}</div>`;
+        document.getElementById('seriesSearchAudible')?.addEventListener('click', () => navigate('/search/' + encodeURIComponent(text)));
         return;
     }
     if (seriesViewMode === 'table') {

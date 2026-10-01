@@ -594,11 +594,12 @@ async def browse_directory(path: str = ""):
 
 @app.get("/api/search_audible")
 async def search_audible(title: str = ""):
-    """Proxies search request to Audible API."""
-    if not title:
+    """Searches Audible by title, author, narrator or series (the query is named title for
+    older clients)."""
+    if not title.strip():
         return {"products": []}
     try:
-        return await audible.search(title=title)
+        return await audible.search_keywords(title.strip())
     except Exception as e:
         logger.error(f"Error fetching from Audible: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch from Audible")
