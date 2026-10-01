@@ -53,6 +53,64 @@ def format_sequence(seq):
         return text
 
 
+def series_key(name):
+    """Groups series names: "The Witcher" and "Witcher Series" are the same series."""
+    return normalize(re.sub(r"\s+series$", "", name or "", flags=re.IGNORECASE))
+
+
+def _seq_number(seq):
+    try:
+        return float(str(seq).lstrip("#"))
+    except (TypeError, ValueError):
+        return None
+
+
+def series_entries(book):
+    """All series a book belongs to, as [{"name", "asin", "sequence"}]. Older entries only
+    have the single series/sequence/series_asin fields."""
+    entries = [e for e in book.get("series_list") or [] if e.get("name")]
+    if not entries and book.get("series"):
+        entries = [{"name": book["series"], "asin": book.get("series_asin", ""), "sequence": book.get("sequence", "")}]
+    return entries
+
+
+def pick_main_series(entries):
+    """The most specific series, used for folder names and card subtitles: a numbered
+    series beats an unnumbered umbrella ("The Cosmere"), and the lowest number wins
+    ("Wax and Wayne #1" over "The Mistborn Saga #4")."""
+    numbered = [e for e in entries if _seq_number(e.get("sequence")) is not None]
+    if numbered:
+        return min(numbered, key=lambda e: _seq_number(e["sequence"]))
+    return entries[0] if entries else {}
+
+
+def merge_series_lists(*lists):
+    """Combines series lists, one entry per series (matched by Audible id or name),
+    keeping the Audible id and number wherever one list has them."""
+    merged = []
+    for entries in lists:
+        for entry in entries or []:
+            if not entry.get("name"):
+                continue
+            entry = {"name": entry["name"], "asin": entry.get("asin", ""), "sequence": format_sequence(entry.get("sequence", ""))}
+            same = next((m for m in merged if (entry["asin"] and m["asin"] == entry["asin"])
+                         or series_key(m["name"]) == series_key(entry["name"])), None)
+            if same is None:
+                merged.append(entry)
+                continue
+            for key in ("asin", "sequence"):
+                if entry[key] and not same[key]:
+                    same[key] = entry[key]
+    return merged
+
+
+def main_series_fields(entries):
+    """The single-series fields kept on a book for its main series."""
+    main = pick_main_series(entries)
+    return {"series_list": entries, "series": main.get("name", ""),
+            "sequence": main.get("sequence", ""), "series_asin": main.get("asin", "")}
+
+
 def normalize(text):
     text = (text or "").lower()
     text = re.sub(r"^(the|a|an)\s+", "", text)
@@ -133,27 +191,28 @@ def read_abs_metadata(folder):
     if not isinstance(data, dict) or not data.get("title"):
         return None
 
-    series, sequence = "", ""
+    # Audiobookshelf can list several series: ["Universe", "Saga #4", "Sub-series #1"]
+    entries = []
     raw_series = data.get("series") or []
     if isinstance(raw_series, (str, dict)):
         raw_series = [raw_series]
-    if raw_series:
-        first = raw_series[0]
-        if isinstance(first, dict):
-            series, sequence = first.get("name", ""), first.get("sequence", "")
+    for item in raw_series:
+        if isinstance(item, dict):
+            name, sequence = item.get("name", ""), item.get("sequence", "")
         else:
             # "Series Name #3.5"
-            series, _, sequence = str(first).rpartition(" #")
-            if not series:
-                series, sequence = str(first), ""
+            name, _, sequence = str(item).rpartition(" #")
+            if not name:
+                name, sequence = str(item), ""
+        if name and name.strip():
+            entries.append({"name": name.strip(), "asin": "", "sequence": format_sequence(sequence)})
 
     release_date = data.get("publishedDate") or data.get("publishedYear") or ""
     return {
         "title": str(data["title"]).strip(),
         "authors": _names(data.get("authors"), skip_contributors=True),
         "narrators": _names(data.get("narrators")),
-        "series": (series or "").strip(),
-        "sequence": format_sequence(sequence),
+        **main_series_fields(entries),
         "asin": data.get("asin") or "",
         "release_date": str(release_date),
         "description": data.get("description") or "",
@@ -208,15 +267,17 @@ def _make_candidate(path, name, cover="", parents=()):
             parsed["series"] = with_number.group("series").strip(" ,") if with_number else parents[-1]
     else:
         parsed = parse_folder_name(name)
+    parsed_series = [{"name": parsed["series"], "asin": "", "sequence": parsed["sequence"]}] if parsed["series"] else []
     if meta:
         info = meta
         # metadata.json sometimes lacks fields the folder name has
-        for key in ("authors", "series", "sequence"):
-            if not info.get(key) and parsed.get(key):
-                info[key] = parsed[key]
+        if not info.get("authors") and parsed.get("authors"):
+            info["authors"] = parsed["authors"]
+        if not info.get("series_list"):
+            info.update(main_series_fields(parsed_series))
         source = "metadata.json"
     else:
-        info = {**parsed, "narrators": "", "asin": "", "release_date": "", "description": ""}
+        info = {**parsed, **main_series_fields(parsed_series), "narrators": "", "asin": "", "release_date": "", "description": ""}
         source = "folder name"
     return {**info, "path": path, "cover": cover, "source": source, **describe_files(path)}
 

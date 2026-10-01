@@ -110,13 +110,39 @@
             <div class="content-wrapper" id="seriesView" hidden>
                 <div class="page-header">
                     <h2>Series</h2>
+                    <div class="page-actions">
+                        <div class="view-toggle" role="group" aria-label="View">
+                            <button class="secondary-btn" data-series-view="posters" title="Posters">Posters</button>
+                            <button class="secondary-btn" data-series-view="table" title="Table">Table</button>
+                        </div>
+                        <button id="seriesRefreshBtn" class="secondary-btn" title="Look up every series on Audible again">Refresh</button>
+                    </div>
                 </div>
-                <p class="page-intro">Every series in your library. Monitoring a series adds the books you're missing from Audible and picks up new releases every 6 hours.</p>
                 <div class="library-toolbar">
                     <input type="search" id="seriesFilter" class="form-input" placeholder="Filter by series or author..." autocomplete="off" aria-label="Filter series">
+                    <select id="seriesShow" class="form-select" aria-label="Show">
+                        <option value="">All series</option>
+                        <option value="monitored">Monitored</option>
+                        <option value="unmonitored">Not monitored</option>
+                        <option value="missing">Missing books</option>
+                        <option value="complete">Complete</option>
+                    </select>
+                    <select id="seriesSort" class="form-select" aria-label="Sort">
+                        <option value="title">Sort: Title</option>
+                        <option value="author">Sort: Author</option>
+                        <option value="missing">Sort: Most missing</option>
+                        <option value="latest">Sort: Latest release</option>
+                    </select>
                     <span id="seriesStats" class="library-stats"></span>
                 </div>
+                <div id="seriesLookup" class="lookup-banner" hidden></div>
                 <div id="seriesContainer"></div>
+            </div>
+
+            <!-- Series details (opened from the Series list) -->
+            <div class="content-wrapper" id="seriesDetailView" hidden>
+                <button class="link-btn back-link" id="seriesBackBtn">&larr; Series</button>
+                <div id="seriesDetail"></div>
             </div>
 
             <!-- Activity View -->
@@ -440,6 +466,7 @@
                     </div>
                     <div id="matchResults" class="match-results"></div>
                 </div>
+                <div class="book-series-links" id="bookSeriesLinks" hidden></div>
                 <div class="book-path" id="bookPath"></div>
                 <div class="table-container book-files">
                     <table class="data-table">
@@ -451,7 +478,6 @@
                     <button id="removeBookBtn" class="danger-btn">Remove</button>
                     <span id="bookStatusMsg" class="action-status"></span>
                     <button id="matchBookBtn" class="secondary-btn">Match on Audible</button>
-                    <button id="monitorSeriesBtn" class="secondary-btn">Monitor Series</button>
                     <button id="manualSearchBtn" class="secondary-btn">Manual Search</button>
                     <button id="searchNowBtn" class="secondary-btn">Search Now</button>
                     <button id="saveBookBtn" class="primary-btn">Save</button>
@@ -500,19 +526,22 @@
     </div>
 
     <div id="seriesModal" class="modal">
-        <div class="modal-content modal-small">
+        <div class="modal-content modal-medium">
             <div class="modal-header">
-                <h2>Monitor Series</h2>
+                <h2>Monitor <span id="seriesModalName"></span></h2>
                 <button type="button" class="close-btn" id="closeSeriesModal" aria-label="Close">&times;</button>
             </div>
             <div class="modal-pad">
-                <p class="modal-lead">Add every book in <b id="seriesModalName"></b> to the library. Which books should be downloaded?</p>
-                <div class="series-choice">
-                    <button class="primary-btn" data-mode="all">All books I don't have</button>
-                    <button class="secondary-btn" data-mode="future">Only new releases</button>
+                <p class="modal-lead">Choose the books you're missing that should be downloaded. Books Audible adds to this series later are downloaded automatically.</p>
+                <div class="pick-actions">
+                    <button class="link-btn" id="seriesPickAll">Select all</button>
+                    <button class="link-btn" id="seriesPickNone">Select none</button>
                 </div>
-                <p class="settings-hint">Books you don't want are added as Unmonitored, so they still show where the gaps are. You can change any book later.</p>
-                <p class="action-status" id="seriesModalStatus"></p>
+                <div id="seriesPickList" class="pick-list"></div>
+            </div>
+            <div class="modal-footer">
+                <span class="action-status" id="seriesModalStatus"></span>
+                <button class="primary-btn" id="seriesMonitorBtn">Monitor</button>
             </div>
         </div>
     </div>

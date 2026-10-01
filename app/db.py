@@ -9,7 +9,8 @@ import tempfile
 import logging
 import uuid
 
-from app.library import _CONTRIBUTOR_ROLE, DEFAULT_NAMING_FORMAT, find_match
+from app.library import (_CONTRIBUTOR_ROLE, DEFAULT_NAMING_FORMAT, find_match, main_series_fields,
+                         merge_series_lists, series_entries, series_key)
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +106,10 @@ def _load_db():
             if not book.get("id"):
                 book["id"] = uuid.uuid4().hex
                 changed = True
+            # Books used to have a single series; keep it as a one-entry series list
+            if "series_list" not in book:
+                book["series_list"] = series_entries(book)
+                changed = True
             # Earlier imports kept translators etc. in the author list
             authors = book.get("authors") or ""
             if _CONTRIBUTOR_ROLE.search(authors):
@@ -152,7 +157,7 @@ def get_book(book_id):
 
 
 BOOK_FIELDS = {"title", "authors", "narrators", "imageUrl", "release_date", "sequence", "series", "asin",
-               "series_asin", "runtime_min", "description", "publisher", "language"}
+               "series_asin", "series_list", "runtime_min", "description", "publisher", "language"}
 # Fields the book editor may change
 EDITABLE_BOOK_FIELDS = {"title", "authors", "narrators", "release_date", "sequence", "series", "asin", "status",
                         "runtime_min"}
@@ -172,6 +177,9 @@ def _clean_description(text):
 def add_to_library(book, status=None):
     """Adds a book if it isn't tracked yet. Returns the stored entry."""
     book = {k: v for k, v in book.items() if k in BOOK_FIELDS}
+    if not isinstance(book.get("series_list"), list):
+        book.pop("series_list", None)
+    book["series_list"] = merge_series_lists(series_entries(book))
     if book.get("description"):
         book["description"] = _clean_description(book["description"])
     with _lock:
@@ -198,6 +206,7 @@ def import_books(books):
                 for key in ("asin", "series", "sequence", "narrators"):
                     if book.get(key) and not existing.get(key):
                         existing[key] = book[key]
+                existing["series_list"] = merge_series_lists(series_entries(existing), series_entries(book))
                 linked += 1
             else:
                 db["library"].append(_new_entry(book, "Imported"))
@@ -226,7 +235,54 @@ def apply_audible_match(book_id, audible_book):
     fields = {k: audible_book.get(k) for k in AUDIBLE_FIELDS if audible_book.get(k)}
     if fields.get("description"):
         fields["description"] = _clean_description(fields["description"])
+    book = get_book(book_id) or {}
+    # Keep every series from both sides; the main one is what Audible matching chose
+    entries = merge_series_lists(series_entries(audible_book), series_entries(book))
+    fields["series_list"] = entries
+    if not fields.get("series"):
+        fields.update({k: v for k, v in main_series_fields(entries).items() if k != "series_list"})
     return update_book(book_id, **fields)
+
+
+def add_series_to_books(entry, book_ids):
+    """Records that these books belong to a series (e.g. after a series sync)."""
+    with _lock:
+        db = _load_db()
+        changed = False
+        for b in db["library"]:
+            if b.get("id") not in book_ids:
+                continue
+            merged = merge_series_lists(series_entries(b), [entry])
+            if merged != b.get("series_list"):
+                b["series_list"] = merged
+                if not b.get("series"):
+                    b.update({k: v for k, v in main_series_fields(merged).items() if k != "series_list"})
+                else:
+                    # Fill in the id and number of the main series once Audible confirms them
+                    main = next((e for e in merged if series_key(e["name"]) == series_key(b["series"])), None)
+                    if main:
+                        b["series_asin"] = b.get("series_asin") or main.get("asin", "")
+                        b["sequence"] = b.get("sequence") or main.get("sequence", "")
+                changed = True
+        if changed:
+            _save_db(db)
+
+
+def set_series_asin(name, asin):
+    """Fills in the Audible id for a series that books only know by name."""
+    key = series_key(name)
+    with _lock:
+        db = _load_db()
+        changed = False
+        for b in db["library"]:
+            for e in b.get("series_list") or []:
+                if not e.get("asin") and series_key(e.get("name")) == key:
+                    e["asin"] = asin
+                    if series_key(b.get("series")) == key and not b.get("series_asin"):
+                        b["series_asin"] = asin
+                    changed = True
+        if changed:
+            _save_db(db)
 
 
 def update_books(changes):
@@ -283,17 +339,71 @@ def get_series(series_id):
     return next((s for s in get_series_list() if s.get("id") == series_id), None)
 
 
-def add_series(asin, title, author, mode):
-    """Starts tracking an Audible series. mode: 'all' (want every missing book) or 'future'."""
+# --- Audible series lists ------------------------------------------------------
+# Every book Audible lists for a series, so the Series page can show totals and the
+# books you don't have. Refreshed when older than CATALOG_MAX_AGE_DAYS.
+
+CATALOG_MAX_AGE_DAYS = 7
+_CATALOG_BOOK_FIELDS = ("title", "authors", "narrators", "imageUrl", "release_date", "asin", "series", "series_asin",
+                        "sequence", "series_list", "runtime_min", "publisher", "language", "catalog_sequence")
+
+
+CATALOG_FILE = os.path.join(CONFIG_DIR, "series_catalog.json")
+_catalogs = None  # Kept in memory; this file can grow large and rarely changes
+
+
+def get_catalogs():
+    global _catalogs
+    with _lock:
+        if _catalogs is None:
+            try:
+                with open(CATALOG_FILE, "r", encoding="utf-8") as f:
+                    _catalogs = json.load(f)
+            except (OSError, ValueError):
+                _catalogs = {}
+        return _catalogs
+
+
+def get_catalog(asin):
+    return get_catalogs().get(asin)
+
+
+def catalog_is_fresh(catalog):
+    if not catalog or not catalog.get("fetched"):
+        return False
+    age = datetime.datetime.now() - datetime.datetime.fromisoformat(catalog["fetched"])
+    return age < datetime.timedelta(days=CATALOG_MAX_AGE_DAYS)
+
+
+def save_catalog(asin, title, books):
+    with _lock:
+        catalogs = get_catalogs()
+        catalogs[asin] = {
+            "title": title,
+            "fetched": datetime.datetime.now().isoformat(timespec="seconds"),
+            "books": [{k: b.get(k) for k in _CATALOG_BOOK_FIELDS} for b in books],
+        }
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(dir=CONFIG_DIR, prefix=".catalog-", suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(catalogs, f)
+        os.replace(tmp_path, CATALOG_FILE)
+
+
+def add_series(asin, title, author, known_asins=None):
+    """Starts monitoring an Audible series. known_asins are the books that existed when it
+    was added; later syncs only add books that weren't among them (new releases)."""
     with _lock:
         db = _load_db()
         existing = next((s for s in db["series"] if s.get("asin") == asin), None)
         if existing:
-            existing.update(monitored=True, mode=mode)
+            existing["monitored"] = True
+            if known_asins is not None:
+                existing["known_asins"] = sorted(set(existing.get("known_asins") or []) | set(known_asins))
             _save_db(db)
             return existing
         entry = {"id": uuid.uuid4().hex, "asin": asin, "title": title, "author": author,
-                 "monitored": True, "mode": mode,
+                 "monitored": True, "known_asins": sorted(set(known_asins or [])),
                  "added": datetime.datetime.now().isoformat(timespec="seconds"), "last_sync": ""}
         db["series"].append(entry)
         _save_db(db)

@@ -102,35 +102,36 @@ def find_missing_books():
     return missing, restored
 
 
-async def sync_series(series, settings):
-    """Adds books from a monitored Audible series that aren't in the library yet, and fills
-    in Audible details (ASIN, runtime, series) on books that are. Returns the new books."""
-    title, books = await audible.get_series_books(series["asin"], settings.get("language", "All"))
-    library = db.get_library()
+async def sync_series(series, settings, selected=None):
+    """Refreshes a monitored series from Audible. Books already in the library get the
+    series recorded on them. Books are only added when chosen (selected, when the series is
+    first monitored) or new: ones Audible didn't list before. Returns the added books."""
+    from app.series_index import LibraryIndex, ensure_catalog
+    catalog = await ensure_catalog(series["asin"], force=True)
+    books = catalog.get("books", [])
+    title = series.get("title") or catalog.get("title", "")
+    index = LibraryIndex(db.get_library())
+    known = series.get("known_asins")
     added = []
     for book in books:
-        existing = find_match(library, book)
-        if existing:
-            fill = {k: book[k] for k in ("asin", "series_asin", "series", "sequence", "runtime_min", "narrators",
-                                         "description", "publisher", "imageUrl")
-                    if book.get(k) and not existing.get(k)}
-            if fill:
-                db.update_book(existing["id"], **fill)
+        if index.find(book):
             continue
-        # 'future' only wants books released after the series was added
-        status = db.initial_status(book.get("release_date"))
-        if series.get("mode") == "future" and status != "Unreleased" \
-                and (book.get("release_date") or "") < series["added"][:10]:
-            status = "Unmonitored"
-        entry = db.add_to_library(book, status=status)
-        library.append(entry)
+        if selected is not None:
+            wanted = book.get("asin") in selected
+        else:
+            # Series monitored before known_asins existed: treat today's list as known
+            wanted = known is not None and book.get("asin") not in known
+        if not wanted:
+            continue
+        entry = db.add_to_library({**book, "description": ""})
         added.append(entry)
-    db.update_series(series["id"], title=title or series.get("title"),
+    all_asins = {b.get("asin") for b in books if b.get("asin")}
+    db.update_series(series["id"], title=title,
+                     known_asins=sorted(set(known or []) | all_asins),
                      last_sync=datetime.datetime.now().isoformat(timespec="seconds"))
     if added:
-        wanted = sum(1 for b in added if b["status"] in ("Monitored", "Unreleased"))
-        db.add_history("series", {"title": series.get("title")},
-                       f"Added {len(added)} book{'s' if len(added) != 1 else ''} from the series ({wanted} wanted)")
+        db.add_history("series", {"title": title},
+                       f"Added {len(added)} book{'s' if len(added) != 1 else ''} from the series")
     return added
 
 

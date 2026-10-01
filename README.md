@@ -32,7 +32,7 @@ It also still works as a plain **Torznab indexer** for AudiobookBay, so apps lik
   - Edit a book's details and status.
   - See its files on disk, search for it on demand, or remove it (files are kept).
   - Books whose folder disappears are flagged as **Missing**.
-- **Series monitoring:** monitor a whole Audible series and see which books you're missing. New releases are added automatically.
+- **Series:** a Sonarr-style page with every series in your library (books can be in several), each with Audible's full list of books and the ones you're missing. Monitor a series to download the books you pick and every new release.
 - **Download checks:** before importing, the downloaded files' real length is compared with Audible's runtime, so a wrong or abridged release is held for review instead of being imported.
 - **Activity:** a live download queue with progress from qBittorrent, plus a history of everything grabbed, imported, rejected or flagged.
 - **Audiobookshelf:** imported books get a `metadata.json` and Audible cover in Audiobookshelf's format, and Bayarr can start an Audiobookshelf library scan after each import.
@@ -157,14 +157,15 @@ The preview lists everything found before anything is imported. Each book is mar
 
 ## Series
 
-Click **Monitor Series** on a series in Search results, or in a book's details in the Library. This also works for books imported from folder names: Bayarr looks the book up on Audible to find its series. Then choose which books to download:
+The **Series** page lists every series your books belong to, like Sonarr's list of shows. Each series shows its cover and a bar with how many of Audible's books for it you have. The bar is orange when the series is monitored and green once you have every book. Switch between **Posters** and **Table**, filter by monitored, not monitored, missing books or complete, and sort by title, author, most missing or latest release.
 
-- **All books I don't have:** every missing book becomes Monitored.
-- **Only new releases:** books already out are added as Unmonitored, so the gaps are visible but nothing is downloaded. Future books are downloaded when they come out.
+Books can be in several series at once, as Audible lists them. For example, a book can be #4 of a saga, #1 of its sub-series, and part of the wider universe. It appears in each of those series. Folder names use the most specific numbered series. Series from Audiobookshelf's `metadata.json` are all kept on import. Books imported from folder names are looked up on Audible in the background to find their series; **Refresh** repeats that.
 
-Series are checked against Audible every 6 hours, and newly announced books are added. Bayarr keeps one entry per book: dramatized adaptations (GraphicAudio), box sets and duplicate UK/US editions are left out. Books you already have are matched and filled in with Audible's details (ASIN, runtime, narrators), which makes the download check below work for them too.
+Click a series to see every book Audible lists for it, in order, with release date, length and narrator. Books you have show their status; the rest show **Not in library** with an **Add** button. Bayarr keeps one entry per book: duplicate UK/US editions and retitled ones are merged, box sets are left out, and dramatized, full-cast and music-enhanced versions are only listed when there's no regular edition.
 
-The **Series** page shows each series with how many books are on disk, and lists every book with its status. From there you can sync a series now, pause it by unticking Monitored, or remove it. Removing a series keeps its books in your library.
+**Monitor Series** (on the series page, or **View Series** in Search results) lists the books you're missing, all ticked. Untick any you don't want, then **Monitor & Add**. Monitored series are checked against Audible every 6 hours. Books Audible adds to a series later are added and downloaded automatically. Books you didn't pick are not added again. Syncing also fills in Audible's details (ASIN, runtime, narrators) on books you already have, which makes the download check below work for them too.
+
+From a monitored series' page you can sync it now, pause it by unticking Monitored, or **Stop Tracking**. Stopping keeps its books in your library. A book's details link to each series it's in.
 
 ## Download checks
 

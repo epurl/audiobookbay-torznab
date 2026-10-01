@@ -30,6 +30,12 @@ function esc(value) {
     }[c]));
 }
 
+// Release date as Audible gives it, minus its "2200-01-01" placeholder for books without one
+function releaseDate(value, length = 10) {
+    const date = String(value || '');
+    return date >= '2100' ? 'TBA' : date.slice(0, length);
+}
+
 // Only allow link/image URLs with expected schemes
 function safeUrl(url, fallback = '#') {
     const value = String(url ?? '');
@@ -160,8 +166,7 @@ async function initApp() {
     setupNavigation();
     setupSettings();
     setupLibrary();
-    setupSeriesModal();
-    document.getElementById('seriesFilter').addEventListener('input', renderSeries);
+    setupSeriesPages();
 }
 
 function setupNavigation() {
@@ -681,11 +686,7 @@ async function openBookModal(bookId) {
     const review = document.getElementById('bookReview');
     review.hidden = book.status !== 'Needs Review';
     document.getElementById('bookReviewReason').textContent = book.review_reason || '';
-    const seriesBtn = document.getElementById('monitorSeriesBtn');
-    const seriesTracked = book.series_asin && appSeries.some(sr => sr.asin === book.series_asin && sr.monitored);
-    seriesBtn.hidden = !book.series;
-    seriesBtn.disabled = Boolean(seriesTracked);
-    seriesBtn.textContent = seriesTracked ? 'Series Monitored' : 'Monitor Series';
+    renderBookSeriesLinks(book);
     document.getElementById('matchPanel').hidden = true;
     document.getElementById('matchBookBtn').textContent = book.asin ? 'Rematch on Audible' : 'Match on Audible';
     setActionStatus(document.getElementById('bookStatusMsg'), '');
@@ -775,11 +776,6 @@ function setupBookModal() {
     document.getElementById('matchQuery').addEventListener('keypress', (e) => { if (e.key === 'Enter') searchMatches(); });
     document.getElementById('matchCloseBtn').addEventListener('click', () => { document.getElementById('matchPanel').hidden = true; });
 
-    document.getElementById('monitorSeriesBtn').addEventListener('click', () => {
-        const book = appLibrary.find(b => b.id === currentBookId);
-        if (book) openSeriesModal({ book_id: book.id, title: book.series });
-    });
-
     document.getElementById('bookImportAnyway').addEventListener('click', () => reviewAction(currentBookId, 'import_anyway', msg));
     document.getElementById('bookReject').addEventListener('click', () => reviewAction(currentBookId, 'reject', msg));
 
@@ -824,7 +820,7 @@ async function searchMatches() {
     }
     results.innerHTML = data.candidates.map((c, i) => {
         const runtime = c.runtime_min ? `${Math.floor(c.runtime_min / 60)}h ${c.runtime_min % 60}m` : '';
-        const details = [c.authors, c.narrators && `read by ${c.narrators}`, seriesLabel(c), runtime, (c.release_date || '').slice(0, 4)].filter(Boolean).join(' · ');
+        const details = [c.authors, c.narrators && `read by ${c.narrators}`, seriesLabel(c), runtime, releaseDate(c.release_date, 4)].filter(Boolean).join(' · ');
         return `<div class="match-result">
             <img src="${esc(safeUrl(c.imageUrl, PLACEHOLDER_COVER))}" alt="">
             <div class="match-info"><b>${esc(c.title)}</b><span class="muted">${esc(details)}</span></div>
@@ -1011,199 +1007,342 @@ async function fetchSeries() {
     }
 }
 
-const openSeriesCards = new Set();
-const WANTED_IN_SERIES = ['Monitored', 'Unreleased', 'Downloading', 'Downloaded', 'Needs Review', 'Missing'];
-
-// "The Witcher" and "Witcher Series" are the same series
+// "The Witcher" and "Witcher Series" are the same series (matches the server)
 function seriesKey(name) {
     return normKey(String(name || '').replace(/\s+series$/i, ''));
 }
 
-function bySequence(a, b) {
-    return (parseFloat(a.sequence) || 999) - (parseFloat(b.sequence) || 999) || normKey(a.title).localeCompare(normKey(b.title));
+function seriesEntries(book) {
+    if (Array.isArray(book.series_list) && book.series_list.length) return book.series_list;
+    return book.series ? [{ name: book.series, asin: book.series_asin || '', sequence: book.sequence || '' }] : [];
 }
 
-// Groups the library by series: monitored Audible series first (matched by Audible id, or
-// by name for books imported from folders), then every other series found in the library
-function buildSeriesGroups() {
-    const tracked = appSeries.map(sr => ({ key: sr.id, title: sr.title, author: sr.author, series: sr, books: [] }));
-    const byAsin = new Map(tracked.map(g => [g.series.asin, g]));
-    const byName = new Map(tracked.map(g => [seriesKey(g.title), g]));
-    const others = new Map();
-    appLibrary.forEach(b => {
-        if (!b.series) return;
-        const group = byAsin.get(b.series_asin) || byName.get(seriesKey(b.series));
-        if (group) {
-            group.books.push(b);
-            return;
-        }
-        const key = seriesKey(b.series);
-        if (!others.has(key)) others.set(key, { key: 'lib:' + key, title: b.series, author: '', series: null, books: [] });
-        others.get(key).books.push(b);
-    });
-    const all = [...tracked, ...others.values()];
-    all.forEach(g => {
-        g.books.sort(bySequence);
-        g.author = g.author || primaryAuthor((g.books[0] || {}).authors);
+function seriesPageKey(entry) {
+    return entry.asin ? 'asin:' + entry.asin : 'name:' + seriesKey(entry.name);
+}
+
+// Book details: every series the book is in, each opening its series page
+function renderBookSeriesLinks(book) {
+    const box = document.getElementById('bookSeriesLinks');
+    const entries = seriesEntries(book);
+    box.hidden = !entries.length;
+    box.innerHTML = entries.length ? `<span class="muted">Series:</span> ` + entries.map((e, i) =>
+        `<button class="series-chip" data-index="${i}">${esc(e.name)}${e.sequence ? ' #' + esc(e.sequence) : ''}</button>`).join('') : '';
+    box.querySelectorAll('.series-chip').forEach(chip => chip.addEventListener('click', () => {
+        hideModal(bookModal);
+        openSeriesDetail(seriesPageKey(entries[chip.dataset.index]));
+    }));
+}
+
+function showView(viewId, navView) {
+    views.forEach(v => { v.hidden = v.id !== viewId; });
+    navItems.forEach(n => n.classList.toggle('active', n.dataset.view === navView));
+    clearInterval(activityTimer);
+    window.scrollTo(0, 0);
+}
+
+let seriesIndexData = [];
+let seriesViewMode = 'posters';
+try { seriesViewMode = localStorage.getItem('bayarr.seriesView') || 'posters'; } catch (e) { /* storage unavailable */ }
+let seriesLookupTimer = null;
+let seriesLookupStartedThisVisit = false;
+
+function seriesProgress(sr) {
+    const total = sr.total ?? sr.in_library;
+    const pct = total ? Math.round(sr.owned / total * 100) : 0;
+    const complete = sr.total != null && sr.owned >= sr.total && sr.total > 0;
+    const kind = complete ? 'complete' : sr.monitored ? 'monitored' : 'unmonitored';
+    const label = sr.total == null ? `${sr.owned} / …` : `${sr.owned} / ${sr.total}`;
+    return `<div class="series-bar ${kind}" title="${sr.owned} on disk${sr.total != null ? ` of ${sr.total} books` : ''}">
+        <div class="series-bar-fill" style="width: ${pct}%"></div><span>${esc(label)}</span></div>`;
+}
+
+function seriesBookmark(sr) {
+    return `<span class="bookmark ${sr.monitored ? 'on' : ''}" title="${sr.monitored ? 'Monitored' : 'Not monitored'}">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 3h12v18l-6-4-6 4z"></path></svg></span>`;
+}
+
+function filteredSeries() {
+    const text = document.getElementById('seriesFilter').value.trim().toLowerCase();
+    const show = document.getElementById('seriesShow').value;
+    const sort = document.getElementById('seriesSort').value;
+    let list = seriesIndexData.filter(sr => {
+        if (text && !`${sr.title} ${sr.author}`.toLowerCase().includes(text)) return false;
+        if (show === 'monitored') return sr.monitored;
+        if (show === 'unmonitored') return !sr.monitored;
+        if (show === 'missing') return (sr.missing ?? 0) > 0;
+        if (show === 'complete') return sr.total != null && sr.owned >= sr.total;
+        return true;
     });
     const byTitle = (a, b) => normKey(a.title).localeCompare(normKey(b.title));
-    return { tracked: tracked.sort(byTitle), others: [...others.values()].sort(byTitle) };
-}
-
-function seriesBookRows(books) {
-    return books.map(b => `
-        <div class="series-book" data-id="${esc(b.id)}">
-            <span class="seq">${esc(b.sequence ? '#' + b.sequence : '')}</span>
-            <span class="name">${esc(b.title)}<span class="muted">${b.release_date ? ' · ' + esc(String(b.release_date).slice(0, 4)) : ''}</span></span>
-            <span class="library-status ${esc(statusClass(b.status))}">${esc(b.status)}</span>
-        </div>`).join('');
-}
-
-function seriesCard(group) {
-    const { series, books } = group;
-    const owned = books.filter(b => b.status === 'Imported').length;
-    const wanted = books.filter(b => WANTED_IN_SERIES.includes(b.status)).length;
-    const card = document.createElement('div');
-    card.className = 'series-card';
-    let middle, actions;
-    if (series) {
-        const pct = books.length ? Math.round(owned / books.length * 100) : 0;
-        middle = `<div class="progress"><div class="progress-bar" style="width: ${pct}%"></div></div>
-            <div class="muted">${owned} of ${books.length} on disk${wanted ? ` · ${wanted} wanted` : ''}</div>`;
-        actions = `<label class="checkbox-label muted"><input type="checkbox" class="series-monitored" ${series.monitored ? 'checked' : ''}> Monitored</label>
-            <button class="secondary-btn series-sync">Sync</button>
-            <button class="danger-btn series-remove">Remove</button>`;
-    } else {
-        middle = `<div class="muted">${owned} book${owned === 1 ? '' : 's'} on disk${books.length > owned ? ` · ${books.length - owned} other` : ''} · not monitored</div>`;
-        actions = `<button class="secondary-btn series-monitor">Monitor Series</button>`;
-    }
-    card.innerHTML = `
-        <div class="series-card-header">
-            <div class="series-name">
-                <h3>${esc(group.title)}</h3>
-                <div class="muted">${esc(group.author || '')}${series && series.mode === 'future' ? ' · new releases only' : ''}</div>
-            </div>
-            <div class="series-progress">${middle}</div>
-            <div class="series-card-actions">${actions}</div>
-        </div>
-        <div class="series-books" ${openSeriesCards.has(group.key) ? '' : 'hidden'}>
-            ${seriesBookRows(books) || '<div class="no-results">No books yet. Click Sync.</div>'}
-        </div>`;
-
-    const list = card.querySelector('.series-books');
-    card.querySelector('.series-card-header').addEventListener('click', (e) => {
-        if (e.target.closest('.series-card-actions')) return;
-        list.hidden = !list.hidden;
-        list.hidden ? openSeriesCards.delete(group.key) : openSeriesCards.add(group.key);
-    });
-    card.querySelectorAll('.series-book').forEach(row => row.addEventListener('click', () => openBookModal(row.dataset.id)));
-
-    if (!series) {
-        card.querySelector('.series-monitor').addEventListener('click', () =>
-            openSeriesModal({ book_id: books[0].id, title: group.title }));
-        return card;
-    }
-    card.querySelector('.series-monitored').addEventListener('change', async (e) => {
-        await postJSON(`/api/series/${encodeURIComponent(series.id)}`, { monitored: e.target.checked }, 'PATCH');
-        await fetchSeries();
-    });
-    card.querySelector('.series-sync').addEventListener('click', async (e) => {
-        const btn = e.currentTarget;
-        btn.disabled = true;
-        btn.textContent = 'Syncing...';
-        const { ok, data } = await postJSON(`/api/series/${encodeURIComponent(series.id)}/sync`);
-        toast(ok ? `${series.title}: ${data.added} new book${data.added === 1 ? '' : 's'} added` : (data.detail || 'Sync failed'), ok ? 'ok' : 'error');
-        renderSeries();
-    });
-    card.querySelector('.series-remove').addEventListener('click', async () => {
-        const confirmed = await confirmDialog(`Stop tracking "${series.title}"?\n\nIts books stay in your library.`,
-            { title: 'Remove series', confirmText: 'Remove', danger: true });
-        if (!confirmed) return;
-        await fetch(`/api/series/${encodeURIComponent(series.id)}`, { method: 'DELETE' });
-        renderSeries();
-    });
-    return card;
+    const sorters = {
+        title: byTitle,
+        author: (a, b) => normKey(a.author).localeCompare(normKey(b.author)) || byTitle(a, b),
+        missing: (a, b) => (b.missing ?? -1) - (a.missing ?? -1) || byTitle(a, b),
+        latest: (a, b) => String(b.latest || '').localeCompare(String(a.latest || '')) || byTitle(a, b),
+    };
+    return list.sort(sorters[sort] || byTitle);
 }
 
 async function renderSeries() {
-    await Promise.all([fetchSeries(), fetchLibrary()]);
-    const container = document.getElementById('seriesContainer');
-    const filter = document.getElementById('seriesFilter').value.trim().toLowerCase();
-    const { tracked, others } = buildSeriesGroups();
-    const matches = g => !filter || `${g.title} ${g.author}`.toLowerCase().includes(filter);
-    const shownTracked = tracked.filter(matches);
-    const shownOthers = others.filter(matches);
-    document.getElementById('seriesStats').textContent =
-        `${tracked.length} monitored · ${others.length} more in your library`;
-
-    container.innerHTML = '';
-    if (!tracked.length && !others.length) {
-        container.innerHTML = `<div class="empty-state">
-            <h3>No series yet</h3>
-            <p>Books with a series show up here once they're in your library. Use Monitor Series on a series in Search results to add a whole series.</p>
-        </div>`;
+    let data;
+    try {
+        data = await fetch('/api/series/index').then(r => r.json());
+    } catch (err) {
+        console.error('Failed to load series', err);
         return;
     }
-    if (!shownTracked.length && !shownOthers.length) {
+    seriesIndexData = data.series || [];
+    const monitored = seriesIndexData.filter(sr => sr.monitored).length;
+    document.getElementById('seriesStats').textContent = `${seriesIndexData.length} series · ${monitored} monitored`;
+    document.querySelectorAll('[data-series-view]').forEach(b => b.classList.toggle('active', b.dataset.seriesView === seriesViewMode));
+    drawSeriesList();
+    updateSeriesLookup(data.refresh);
+
+    // Totals come from Audible: look up series that haven't been yet, once per visit
+    if (!seriesLookupStartedThisVisit && !data.refresh.running && seriesIndexData.some(sr => !sr.catalog_loaded)) {
+        seriesLookupStartedThisVisit = true;
+        const res = await postJSON('/api/series/refresh');
+        updateSeriesLookup(res.data);
+    }
+}
+
+function updateSeriesLookup(job) {
+    const banner = document.getElementById('seriesLookup');
+    clearTimeout(seriesLookupTimer);
+    if (job && job.running) {
+        banner.hidden = false;
+        banner.textContent = `Looking up series on Audible… ${job.done} of ${job.total}`;
+        seriesLookupTimer = setTimeout(() => {
+            if (!document.getElementById('seriesView').hidden) renderSeries();
+        }, 3000);
+    } else {
+        banner.hidden = true;
+    }
+}
+
+function drawSeriesList() {
+    const container = document.getElementById('seriesContainer');
+    const list = filteredSeries();
+    if (!seriesIndexData.length) {
+        container.innerHTML = `<div class="empty-state"><h3>No series yet</h3>
+            <p>Series show up here once books that belong to one are in your library, or when you open a series from Search results.</p></div>`;
+        return;
+    }
+    if (!list.length) {
         container.innerHTML = '<div class="empty-state"><h3>No series match</h3><p>Nothing matches this filter.</p></div>';
         return;
     }
-    const section = (title, groups) => {
-        if (!groups.length) return;
-        const h = document.createElement('h3');
-        h.className = 'section-title';
-        h.textContent = title;
-        container.appendChild(h);
-        const fragment = document.createDocumentFragment();
-        groups.forEach(g => fragment.appendChild(seriesCard(g)));
-        container.appendChild(fragment);
-    };
-    section(`Monitored (${shownTracked.length})`, shownTracked);
-    section(`In your library (${shownOthers.length})`, shownOthers);
+    if (seriesViewMode === 'table') {
+        container.innerHTML = `<div class="table-container series-table"><table class="data-table">
+            <thead><tr><th class="col-check"></th><th>Series</th><th>Author</th><th class="col-progress">Books</th><th class="col-seeds">Missing</th><th class="col-when">Latest release</th></tr></thead>
+            <tbody>${list.map(sr => `<tr class="clickable" data-key="${esc(sr.key)}">
+                <td>${seriesBookmark(sr)}</td>
+                <td><b>${esc(sr.title)}</b></td>
+                <td class="muted">${esc(sr.author || '')}</td>
+                <td>${seriesProgress(sr)}</td>
+                <td>${sr.missing == null ? '<span class="muted">…</span>' : esc(sr.missing)}</td>
+                <td class="muted">${esc(releaseDate(sr.latest))}</td>
+            </tr>`).join('')}</tbody></table></div>`;
+        container.querySelectorAll('tr[data-key]').forEach(tr => tr.addEventListener('click', () => openSeriesDetail(tr.dataset.key)));
+        return;
+    }
+    container.innerHTML = `<div class="results-grid series-grid">${list.map(sr => `
+        <div class="series-poster" data-key="${esc(sr.key)}" tabindex="0" role="button" aria-label="${esc(sr.title)}">
+            <div class="poster-art">
+                <img src="${esc(safeUrl(sr.cover, PLACEHOLDER_COVER))}" alt="" loading="lazy">
+                ${seriesBookmark(sr)}
+            </div>
+            ${seriesProgress(sr)}
+            <div class="poster-info">
+                <div class="book-title" title="${esc(sr.title)}">${esc(sr.title)}</div>
+                <div class="book-author">${esc(sr.author || '')}</div>
+            </div>
+        </div>`).join('')}</div>`;
+    container.querySelectorAll('.series-poster').forEach(card => {
+        card.querySelector('img').addEventListener('error', e => { e.target.src = PLACEHOLDER_COVER; }, { once: true });
+        card.addEventListener('click', () => openSeriesDetail(card.dataset.key));
+        card.addEventListener('keypress', e => { if (e.key === 'Enter') openSeriesDetail(card.dataset.key); });
+    });
 }
 
-// Monitor-series dialog
-const seriesModal = document.getElementById('seriesModal');
-let pendingSeries = null;
+// ---- Series details page ----
+let currentSeries = null;
 
-function openSeriesModal(target) {
-    pendingSeries = target;
-    document.getElementById('seriesModalName').textContent = target.title || 'this series';
+function formatRuntime(min) {
+    if (!min) return '';
+    return `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, '0')}m`;
+}
+
+async function openSeriesDetail(key) {
+    showView('seriesDetailView', 'seriesView');
+    const box = document.getElementById('seriesDetail');
+    box.innerHTML = '<div class="loader"><div class="spinner"></div></div>';
+    const res = await fetch(`/api/series/detail?key=${encodeURIComponent(key)}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        box.innerHTML = `<div class="empty-state"><h3>Couldn't load this series</h3><p>${esc(data.detail || 'Try again in a moment.')}</p></div>`;
+        return;
+    }
+    currentSeries = data;
+    await Promise.all([fetchLibrary(), fetchSeries()]);
+    renderSeriesDetail();
+}
+
+function renderSeriesDetail() {
+    const sr = currentSeries;
+    const box = document.getElementById('seriesDetail');
+    const missing = sr.rows.filter(r => !r.book_id);
+    const tracked = sr.series_id ? appSeries.find(x => x.id === sr.series_id) : null;
+    const actions = sr.asin ? (tracked
+        ? `<label class="checkbox-label"><input type="checkbox" id="seriesMonitoredToggle" ${tracked.monitored ? 'checked' : ''}> Monitored</label>
+           <button class="secondary-btn" id="seriesSyncBtn">Sync</button>
+           <button class="danger-btn" id="seriesRemoveBtn">Stop Tracking</button>`
+        : `<button class="primary-btn" id="seriesMonitorOpen">Monitor Series</button>`) : '';
+    box.innerHTML = `
+        <div class="series-hero">
+            <img src="${esc(safeUrl(sr.cover, PLACEHOLDER_COVER))}" alt="" class="series-hero-cover">
+            <div class="series-hero-info">
+                <h2>${esc(sr.title)}</h2>
+                <div class="muted">${esc(sr.author || '')}</div>
+                <div class="series-hero-stats">
+                    ${seriesProgress(sr)}
+                    <span class="stat"><b>${sr.owned}</b> on disk</span>
+                    ${sr.wanted ? `<span class="stat"><b>${sr.wanted}</b> wanted</span>` : ''}
+                    ${sr.missing != null ? `<span class="stat"><b>${sr.missing}</b> not in library</span>` : ''}
+                    ${tracked ? `<span class="stat">${tracked.monitored ? 'Monitored' : 'Paused'}${tracked.last_sync ? ' · synced ' + esc(new Date(tracked.last_sync).toLocaleDateString()) : ''}</span>` : ''}
+                </div>
+                <div class="series-hero-actions">${actions}</div>
+            </div>
+        </div>
+        ${sr.unresolved ? '<p class="lookup-banner">Couldn\'t find this series on Audible, so only the books in your library are shown. Match one of its books on Audible, then open this page again.</p>' : ''}
+        <div class="table-container series-books-table"><table class="data-table">
+            <thead><tr><th class="col-num">#</th><th>Title</th><th>Narrator</th><th class="col-date">Released</th><th class="col-len">Length</th><th class="col-status">Status</th></tr></thead>
+            <tbody>${sr.rows.map((r, i) => `<tr class="${r.book_id ? 'clickable' : 'not-owned'}" data-index="${i}">
+                <td class="muted">${esc(r.sequence)}</td>
+                <td>${esc(r.title)}</td>
+                <td class="muted">${esc(r.narrators || '')}</td>
+                <td class="muted nowrap">${esc(releaseDate(r.release_date))}</td>
+                <td class="muted nowrap">${esc(formatRuntime(r.runtime_min))}</td>
+                <td class="nowrap">${r.book_id
+                    ? `<span class="library-status ${esc(statusClass(r.status))} inline-status">${esc(r.status)}</span>`
+                    : `<span class="muted">Not in library</span> <button class="link-btn add-row" data-index="${i}">Add</button>`}</td>
+            </tr>`).join('')}</tbody></table></div>`;
+
+    box.querySelectorAll('tr.clickable').forEach(tr => tr.addEventListener('click', () => openBookModal(sr.rows[tr.dataset.index].book_id)));
+    box.querySelectorAll('.add-row').forEach(btn => btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const row = sr.rows[btn.dataset.index];
+        btn.disabled = true;
+        const res = await postJSON('/api/library', row.catalog);
+        if (!res.ok) {
+            toast(res.data.detail || 'Could not add the book', 'error');
+            btn.disabled = false;
+            return;
+        }
+        toast(`Added "${row.title}" (${res.data.status})${res.data.status === 'Monitored' && appSettings.qbt_enabled ? '; searching now' : ''}`, 'ok');
+        openSeriesDetail(sr.key);
+    }));
+
+    const monitorOpen = document.getElementById('seriesMonitorOpen');
+    if (monitorOpen) monitorOpen.addEventListener('click', () => openMonitorDialog(missing));
+    const toggle = document.getElementById('seriesMonitoredToggle');
+    if (toggle) toggle.addEventListener('change', async () => {
+        await postJSON(`/api/series/${encodeURIComponent(tracked.id)}`, { monitored: toggle.checked }, 'PATCH');
+        toast(toggle.checked ? 'Monitoring resumed' : 'Monitoring paused: new releases won\'t be added', 'ok');
+        await fetchSeries();
+    });
+    const syncBtn = document.getElementById('seriesSyncBtn');
+    if (syncBtn) syncBtn.addEventListener('click', async () => {
+        syncBtn.disabled = true;
+        const { ok, data } = await postJSON(`/api/series/${encodeURIComponent(tracked.id)}/sync`);
+        toast(ok ? `${data.added} new book${data.added === 1 ? '' : 's'} added` : (data.detail || 'Sync failed'), ok ? 'ok' : 'error');
+        openSeriesDetail(sr.key);
+    });
+    const removeBtn = document.getElementById('seriesRemoveBtn');
+    if (removeBtn) removeBtn.addEventListener('click', async () => {
+        const confirmed = await confirmDialog(`Stop tracking "${sr.title}"?\n\nNew releases won't be added any more. Books already in your library stay.`,
+            { title: 'Stop tracking series', confirmText: 'Stop Tracking', danger: true });
+        if (!confirmed) return;
+        await fetch(`/api/series/${encodeURIComponent(tracked.id)}`, { method: 'DELETE' });
+        openSeriesDetail(sr.key);
+    });
+}
+
+// ---- Monitor dialog: choose which missing books to add ----
+const seriesModal = document.getElementById('seriesModal');
+
+function openMonitorDialog(missingRows) {
+    document.getElementById('seriesModalName').textContent = currentSeries.title;
     setActionStatus(document.getElementById('seriesModalStatus'), '');
-    seriesModal.querySelectorAll('[data-mode]').forEach(b => { b.disabled = false; });
+    const list = document.getElementById('seriesPickList');
+    list.innerHTML = missingRows.length ? missingRows.map(r => `
+        <label class="pick-row">
+            <input type="checkbox" value="${esc(r.asin)}" checked>
+            <span class="muted pick-seq">${esc(r.sequence ? '#' + r.sequence : '')}</span>
+            <span class="pick-title">${esc(r.title)}</span>
+            <span class="muted">${esc(releaseDate(r.release_date, 4))}</span>
+        </label>`).join('') : '<p class="muted">You already have every book in this series.</p>';
+    list.querySelectorAll('input').forEach(cb => cb.addEventListener('change', updateMonitorButton));
+    updateMonitorButton();
     showModal(seriesModal);
 }
 
-function setupSeriesModal() {
+function pickedAsins() {
+    return [...document.querySelectorAll('#seriesPickList input:checked')].map(cb => cb.value);
+}
+
+function updateMonitorButton() {
+    const n = pickedAsins().length;
+    document.getElementById('seriesMonitorBtn').textContent = n ? `Monitor & Add ${n} Book${n === 1 ? '' : 's'}` : 'Monitor (New Releases Only)';
+}
+
+function setupSeriesPages() {
+    document.getElementById('seriesFilter').addEventListener('input', drawSeriesList);
+    document.getElementById('seriesShow').addEventListener('change', drawSeriesList);
+    document.getElementById('seriesSort').addEventListener('change', drawSeriesList);
+    document.querySelectorAll('[data-series-view]').forEach(btn => btn.addEventListener('click', () => {
+        seriesViewMode = btn.dataset.seriesView;
+        try { localStorage.setItem('bayarr.seriesView', seriesViewMode); } catch (e) { /* storage unavailable */ }
+        document.querySelectorAll('[data-series-view]').forEach(b => b.classList.toggle('active', b === btn));
+        drawSeriesList();
+    }));
+    document.getElementById('seriesRefreshBtn').addEventListener('click', async () => {
+        const { data } = await postJSON('/api/series/refresh');
+        updateSeriesLookup(data);
+        toast('Looking up series on Audible in the background');
+    });
+    document.getElementById('seriesBackBtn').addEventListener('click', () => {
+        showView('seriesView', 'seriesView');
+        renderSeries();
+    });
+
     document.getElementById('closeSeriesModal').addEventListener('click', () => hideModal(seriesModal));
     seriesModal.addEventListener('click', (e) => { if (e.target === seriesModal) hideModal(seriesModal); });
-    seriesModal.querySelectorAll('[data-mode]').forEach(btn => btn.addEventListener('click', async () => {
-        const status = document.getElementById('seriesModalStatus');
-        seriesModal.querySelectorAll('[data-mode]').forEach(b => { b.disabled = true; });
-        setActionStatus(status, 'Loading the series from Audible...');
-        const res = await fetch('/api/series', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...pendingSeries, mode: btn.dataset.mode })
+    document.getElementById('seriesPickAll').addEventListener('click', () => {
+        document.querySelectorAll('#seriesPickList input').forEach(cb => { cb.checked = true; });
+        updateMonitorButton();
+    });
+    document.getElementById('seriesPickNone').addEventListener('click', () => {
+        document.querySelectorAll('#seriesPickList input').forEach(cb => { cb.checked = false; });
+        updateMonitorButton();
+    });
+    document.getElementById('seriesMonitorBtn').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        setActionStatus(document.getElementById('seriesModalStatus'), 'Adding…');
+        const { ok, data } = await postJSON('/api/series', {
+            series_asin: currentSeries.asin, title: currentSeries.title, author: currentSeries.author, add_asins: pickedAsins(),
         });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-            setActionStatus(status, data.detail || 'Failed', 'error');
-            seriesModal.querySelectorAll('[data-mode]').forEach(b => { b.disabled = false; });
+        btn.disabled = false;
+        if (!ok) {
+            setActionStatus(document.getElementById('seriesModalStatus'), data.detail || 'Failed', 'error');
             return;
         }
-        await Promise.all([fetchLibrary(), fetchSeries()]);
-        setActionStatus(status, `Monitoring ${data.series.title}: added ${data.added} book${data.added === 1 ? '' : 's'}.`, 'ok');
-        const btnInModal = document.getElementById('monitorSeriesBtn');
-        btnInModal.disabled = true;
-        btnInModal.textContent = 'Series Monitored';
-        document.querySelectorAll('.series-group-header button').forEach(b => {
-            if (b.previousSibling && b.previousSibling.textContent === pendingSeries.title) { b.disabled = true; b.textContent = 'Series Monitored'; }
-        });
-        renderLibrary();
-        if (!document.getElementById('seriesView').hidden) renderSeries();
-        setTimeout(() => hideModal(seriesModal), 1500);
-    }));
+        hideModal(seriesModal);
+        toast(`Monitoring ${data.series.title}${data.added ? `: added ${data.added} book${data.added === 1 ? '' : 's'}` : ''}`, 'ok');
+        openSeriesDetail('asin:' + currentSeries.asin);
+    });
 }
 
 // -----------------
@@ -1358,9 +1497,8 @@ function renderGroup(title, books) {
         const tracked = appSeries.find(sr => sr.asin === seriesAsin && sr.monitored);
         const btn = document.createElement('button');
         btn.className = 'secondary-btn';
-        btn.textContent = tracked ? 'Series Monitored' : 'Monitor Series';
-        btn.disabled = Boolean(tracked);
-        btn.addEventListener('click', () => openSeriesModal({ series_asin: seriesAsin, title, author: primaryAuthor(books[0].authors) }));
+        btn.textContent = tracked ? 'View Series (Monitored)' : 'View Series';
+        btn.addEventListener('click', () => openSeriesDetail('asin:' + seriesAsin));
         header.appendChild(btn);
     }
     section.appendChild(header);
@@ -1369,7 +1507,7 @@ function renderGroup(title, books) {
     grid.className = 'results-grid';
 
     books.forEach(book => {
-        const releaseDate = book.release_date || "";
+        const released = releaseDate(book.release_date);
         const tracked = findInLibrary(book);
         const isTracked = Boolean(tracked);
         const card = document.createElement('div');
@@ -1388,7 +1526,7 @@ function renderGroup(title, books) {
                 <div class="book-title" title="${esc(book.title)}">${esc(book.title)}</div>
                 <div class="book-author">${esc(book.authors)}</div>
                 <div class="book-narrator">Narrated by: ${esc(book.narrators)}</div>
-                <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px;">Release: ${esc(releaseDate || 'Unknown')}</div>
+                <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px;">Release: ${esc(released || 'Unknown')}</div>
                 ${addBtnHtml}
             </div>
         `;

@@ -4,7 +4,7 @@ import re
 
 import httpx
 
-from app.library import format_sequence, normalize, primary_author
+from app.library import format_sequence, main_series_fields, normalize, primary_author, series_key
 
 logger = logging.getLogger(__name__)
 
@@ -46,33 +46,33 @@ _CONTRIBUTOR_ROLE = re.compile(r"\s-\s*(translator|editor|foreword|introduction|
                                r"illustrator|adapter|adaptation|preface|compiler)\b", re.IGNORECASE)
 
 
-def _pick_series(product, prefer=""):
-    """A book can be in several series (a whole "Universe" and its "Prequel Trilogy");
-    keep the one matching what the library already has, else Audible's first."""
-    all_series = product.get("series") or []
-    if prefer:
-        want = normalize(prefer)
-        for s in all_series:
-            name = normalize(s.get("title", ""))
-            if name and (name == want or name in want or want in name):
-                return s
-    return all_series[0] if all_series else {}
+def product_series(product):
+    """Every series Audible lists for a product, as [{"name", "asin", "sequence"}]."""
+    return [{"name": x.get("title", ""), "asin": x.get("asin", ""), "sequence": format_sequence(x.get("sequence", ""))}
+            for x in product.get("series") or [] if x.get("title")]
 
 
-def product_to_book(product, sequence=None, prefer_series=""):
-    """Converts an Audible product into a library book."""
-    series = _pick_series(product, prefer_series)
+def product_to_book(product, prefer_series=""):
+    """Converts an Audible product into a library book. Its main series is the one matching
+    prefer_series (what the library already has), else the most specific one."""
+    entries = product_series(product)
+    fields = main_series_fields(entries)
+    if prefer_series:
+        want = series_key(prefer_series)
+        chosen = next((e for e in entries if series_key(e["name"]) == want), None) or next(
+            (e for e in entries if want and (want in series_key(e["name"]) or series_key(e["name"]) in want)), None)
+        if chosen:
+            fields.update(series=chosen["name"], sequence=chosen["sequence"], series_asin=chosen["asin"])
     authors = [a["name"] for a in product.get("authors") or [] if not _CONTRIBUTOR_ROLE.search(a.get("name", ""))]
     return {
         "title": product.get("title") or "",
+        "subtitle": product.get("subtitle") or "",
         "authors": ", ".join(authors),
         "narrators": ", ".join(n["name"] for n in product.get("narrators") or []),
         "imageUrl": (product.get("product_images") or {}).get("500", ""),
         "release_date": product.get("release_date") or product.get("issue_date") or "",
         "asin": product.get("asin") or "",
-        "series": series.get("title", ""),
-        "series_asin": series.get("asin", ""),
-        "sequence": format_sequence(sequence if sequence is not None else series.get("sequence", "")),
+        **fields,
         "runtime_min": product.get("runtime_length_min") or 0,
         "description": product.get("publisher_summary") or "",
         "publisher": product.get("publisher_name") or "",
@@ -80,9 +80,40 @@ def product_to_book(product, sequence=None, prefer_series=""):
     }
 
 
+def _title_keys(title):
+    """A title and its parts around a colon: "Mistborn: The Final Empire" also matches
+    "Mistborn" and "The Final Empire"."""
+    main, _, rest = title.partition(":")
+    return {k for k in (normalize(title), normalize(main), normalize(rest)) if k}
+
+
+def _strip_edition(title):
+    """ "Blood of Elves (Full Cast Edition)" -> "Blood of Elves" """
+    return re.sub(r"\s*[\(\[][^\)\]]*(edition|adaptation|dramati[sz]ed)[^\)\]]*[\)\]]", "", title, flags=re.IGNORECASE).strip()
+
+
+def _same_book(a, b):
+    """Two Audible products in one series slot that are the same book: overlapping titles,
+    the same subtitle ("Mistborn Book 1" / "Mistborn, Book 1"), or the same narrator at
+    nearly the same length (one recording sold under two titles)."""
+    if not a["catalog_sequence"]:
+        return normalize(a["title"]) == normalize(b["title"])
+    if _title_keys(a["title"]) & _title_keys(b["title"]):
+        return True
+    if a.get("subtitle") and normalize(a["subtitle"]) == normalize(b.get("subtitle")):
+        return True
+    ra, rb = a.get("runtime_min") or 0, b.get("runtime_min") or 0
+    return bool(a.get("narrators") and a["narrators"] == b.get("narrators")
+                and ra and rb and abs(ra - rb) <= 0.05 * max(ra, rb))
+
+
 def _is_dramatized(product):
-    text = f"{product.get('title', '')} {product.get('publisher_name', '')}".lower()
-    return "dramatized" in text or "graphicaudio" in text.replace(" ", "")
+    """Alternate versions of a book, not the book itself: dramatized and full-cast
+    adaptations (e.g. GraphicAudio) and music-enhanced "Booktrack" editions."""
+    narrators = " ".join(n.get("name", "") for n in product.get("narrators") or [])
+    text = f"{product.get('title', '')} {product.get('publisher_name', '')} {narrators}".lower()
+    return any(word in text.replace("-", " ") for word in ("dramatized", "full cast", "booktrack")) \
+        or "graphicaudio" in text.replace(" ", "")
 
 
 async def get_series_books(series_asin, language="All"):
@@ -95,31 +126,57 @@ async def get_series_books(series_asin, language="All"):
     sequences = {r["asin"]: r.get("sequence", "") for r in children}
     products = await get_products(sequences)
 
-    best = {}
+    kept, alternates = [], []
     for product in products:
         seq = sequences.get(product.get("asin"), "")
-        if re.search(r"[-,]", seq) or _is_dramatized(product):
-            continue  # "1-3" box sets and full-cast adaptations
+        if re.search(r"[-,]", seq):
+            continue  # "1-3" box sets
         if language.lower() != "all" and product.get("language") and product["language"].lower() != language.lower():
             continue
-        book = product_to_book(product, seq)
-        book["series"] = book["series"] or series.get("title", "")
-        book["series_asin"] = series_asin
-        key = (book["sequence"], normalize(book["title"].split(":")[0]))
-        current = best.get(key)
-        if current is None or (book["release_date"] or "9999") < (current["release_date"] or "9999"):
-            best[key] = book
-    return series.get("title", ""), list(best.values())
+        book = product_to_book(product)
+        # This book's number within the series being listed (it may be in several)
+        book["catalog_sequence"] = format_sequence(seq)
+        if not any(e["asin"] == series_asin for e in book["series_list"]):
+            book["series_list"].append({"name": series.get("title", ""), "asin": series_asin, "sequence": format_sequence(seq)})
+        # Regional editions and retitled ones ("The Final Empire" / "Mistborn: The Final
+        # Empire") are one book: same number and an overlapping title. Keep the earliest.
+        if _is_dramatized(product):
+            alternates.append(book)
+            continue
+        same = next((k for k in kept if k["catalog_sequence"] == book["catalog_sequence"]
+                     and _same_book(k, book)), None)
+        if same is None:
+            kept.append(book)
+        elif (book["release_date"] or "9999") < (same["release_date"] or "9999"):
+            kept[kept.index(same)] = book
+    # Full-cast and dramatized versions are only listed when there's no regular edition
+    for book in alternates:
+        regular = any(k["catalog_sequence"] == book["catalog_sequence"] and
+                      (not book["catalog_sequence"] or _title_keys(k["title"]) & _title_keys(book["title"]))
+                      or _title_keys(k["title"]) & _title_keys(_strip_edition(book["title"])) for k in kept)
+        if not regular and not any(k["catalog_sequence"] == book["catalog_sequence"] and k["catalog_sequence"]
+                                   for k in kept):
+            kept.append(book)
+    return series.get("title", ""), kept
 
 
-async def find_series_for_book(title, author):
-    """Looks up a book on Audible to find its series (for books imported from folders)."""
+async def find_series_for_book(title, author, series_name=""):
+    """Looks up a book on Audible to find a series it belongs to (for books imported from
+    folders). With series_name, returns that series if Audible lists it for the book."""
     data = await search(title=title.split(":")[0], author=author, num_results=10)
     want = normalize(title.split(":")[0])
     for product in data.get("products") or []:
-        if normalize((product.get("title") or "").split(":")[0]) == want and product.get("series"):
-            s = product["series"][0]
-            return s.get("asin"), s.get("title")
+        if _title_rank(want, product.get("title") or "") is None or not product.get("series"):
+            continue
+        entries = product_series(product)
+        if series_name:
+            key = series_key(series_name)
+            chosen = next((e for e in entries if series_key(e["name"]) == key), None) or next(
+                (e for e in entries if key in series_key(e["name"]) or series_key(e["name"]) in key), None)
+        else:
+            chosen = entries[0]
+        if chosen and chosen["asin"]:
+            return chosen["asin"], chosen["name"]
     return None, None
 
 

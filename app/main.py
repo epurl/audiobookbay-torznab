@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import audible, audiobookshelf, auth, db, library
+from app import audible, audiobookshelf, auth, db, library, series_index
 from app.monitor import (auto_download_book, find_missing_books, grab, match_job, run_monitor_loop, schedule_search,
                          schedule_searches, start_match_job, sync_series)
 from app.qbittorrent import get_torrents, test_connection
@@ -315,29 +315,48 @@ async def api_history(limit: int = 200):
 async def api_series():
     return {"series": db.get_series_list()}
 
+@app.get("/api/series/index")
+async def api_series_index():
+    """Every series in the library (and every monitored one), for the Series page."""
+    return {"series": await asyncio.to_thread(series_index.index), "refresh": dict(series_index.refresh_job)}
+
+@app.get("/api/series/detail")
+async def api_series_detail(key: str):
+    """One series with every book Audible lists for it, owned or not."""
+    try:
+        detail = await series_index.detail(key)
+    except Exception as e:
+        logger.error(f"Series details failed: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail="Couldn't load the series from Audible.")
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Series not found")
+    return detail
+
+@app.post("/api/series/refresh")
+async def api_series_refresh():
+    """Looks up Audible's book lists for the library's series in the background."""
+    series_index.start_refresh()
+    return dict(series_index.refresh_job)
+
 @app.post("/api/series")
 async def api_add_series(request: Request):
-    """Monitors an Audible series, given its ASIN or a library book that belongs to it."""
+    """Monitors an Audible series. add_asins are the missing books to add now; books the
+    series gets later on Audible are added automatically."""
     data = await request.json()
-    mode = data.get("mode") if data.get("mode") in ("all", "future") else "all"
-    asin, title, author = data.get("series_asin"), data.get("title", ""), data.get("author", "")
-    if data.get("book_id"):
-        book = _get_book_or_404(data["book_id"])
-        author = library.primary_author(book.get("authors"))
-        asin, title = book.get("series_asin"), book.get("series", "")
-        if not asin:
-            # Books imported from folders have no Audible series id; look the book up
-            asin, found_title = await audible.find_series_for_book(book.get("title", ""), author)
-            title = title or found_title or ""
+    asin = data.get("series_asin") or ""
     if not asin:
-        raise HTTPException(status_code=404, detail="Couldn't find this series on Audible.")
-
-    series = db.add_series(asin, title, author, mode)
+        raise HTTPException(status_code=400, detail="Open the series first so its Audible id is known.")
     try:
-        added = await sync_series(series, db.get_settings())
+        catalog = await series_index.ensure_catalog(asin)
     except Exception as e:
-        logger.error(f"Series sync failed: {e}", exc_info=True)
+        logger.error(f"Series lookup failed: {e}", exc_info=True)
         raise HTTPException(status_code=502, detail="Couldn't load the series from Audible.")
+    title = data.get("title") or catalog.get("title", "")
+    # Today's books count as known, so if this first sync fails, later ones still only add
+    # new releases rather than everything that wasn't chosen
+    series = db.add_series(asin, title, data.get("author", ""),
+                           known_asins=[b["asin"] for b in catalog.get("books", []) if b.get("asin")])
+    added = await sync_series(series, db.get_settings(), selected=set(data.get("add_asins") or []))
     schedule_searches([b for b in added if b["status"] == "Monitored"])
     return {"success": True, "series": db.get_series(series["id"]), "added": len(added)}
 
