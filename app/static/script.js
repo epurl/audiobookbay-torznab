@@ -187,10 +187,10 @@ function navigate(path) {
 function route() {
     // Going Back from a page with a dialog open leaves the dialog behind
     document.querySelectorAll('.modal.show').forEach(hideModal);
-    const [name = 'search', ...rest] = location.hash.replace(/^#\/?/, '').split('/');
+    const [name = 'library', ...rest] = location.hash.replace(/^#\/?/, '').split('/');
     const arg = rest.length ? decodeURIComponent(rest.join('/')) : '';
     if (!PAGES[name]) {
-        history.replaceState(null, '', '#/search');
+        history.replaceState(null, '', '#/library');  // The landing page
         return route();
     }
     if (name === 'series' && arg) {
