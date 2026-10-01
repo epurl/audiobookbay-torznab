@@ -2,16 +2,16 @@
 1 of 2.m4b", "Book 2 Other Part 1 of 2.m4b", ...) into one folder per book, matched to
 the books of its series on Audible.
 
-The original folder is never changed: each book's files are hardlinked (copied when the
-drive doesn't allow it) into a new folder next to it, so nothing is lost, no extra space
-is used, and a torrent of the original keeps seeding."""
+The original folder is never changed: each book's files are copied into a new folder next
+to it, so nothing is lost and a torrent of the original keeps seeding. Remove the original
+once you're happy with the split."""
 import asyncio
 import logging
 import os
 import re
 
 from app import audible, audiobookshelf, db, editions, series_index
-from app.monitor import _copy_files  # Hardlinks, falling back to copies
+from app.monitor import _copy_files
 from app.library import (DISC_FOLDER_RE, _natural_key, audio_files, build_folder_name, describe_files,
                          series_entries, series_key, titles_match)
 
@@ -241,11 +241,11 @@ async def apply(book_id, choices):
         if os.path.exists(dest) and os.listdir(dest):
             raise ValueError(f'A folder named "{folder}" already exists.')
         plan = [(os.path.join(source, rel), os.path.basename(rel)) for rel in group["files"]]
-        await asyncio.to_thread(_copy_files, plan, dest, True)
+        await asyncio.to_thread(_copy_files, plan, dest)
         cover = await audiobookshelf.download_cover(new.get("imageUrl", ""), dest)
         if not cover and cover_src and os.path.isfile(cover_src):
             ext = os.path.splitext(cover_src)[1].lower() or ".jpg"
-            await asyncio.to_thread(_copy_files, [(cover_src, "cover" + ext)], dest, True)
+            await asyncio.to_thread(_copy_files, [(cover_src, "cover" + ext)], dest)
             cover = "cover" + ext
         audiobookshelf.write_metadata(new, dest)
         made.append({**new, "path": dest, "cover": cover or "", **describe_files(dest)})

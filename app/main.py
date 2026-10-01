@@ -429,7 +429,7 @@ async def api_split_proposal(book_id: str):
 
 @app.post("/api/library/{book_id}/split")
 async def api_split(book_id: str, request: Request):
-    """Creates a folder per chosen book (hardlinks; the original folder isn't changed)."""
+    """Creates a folder per chosen book (copies; the original folder isn't changed)."""
     _get_book_or_404(book_id)
     choices = (await request.json()).get("books") or []
     try:

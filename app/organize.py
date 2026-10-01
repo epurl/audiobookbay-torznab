@@ -2,8 +2,8 @@
 Folder Format, like Sonarr's Organize. Nothing changes until a proposed change is approved.
 
 Books inside the Root Folder end up directly in it; books elsewhere are renamed where they
-are. Folders are renamed or moved on the same drive only (instantly, so hardlinks and
-Audiobookshelf's file ids are kept); a move that would need copying is refused."""
+are. Folders are renamed or moved on the same drive only (instantly, so Audiobookshelf's
+file ids are kept); a move that would need copying is refused."""
 import logging
 import os
 

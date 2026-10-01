@@ -4,8 +4,8 @@ converted in the background one at a time: queued by hand, in bulk, or automatic
 after a download is imported (Settings > Media Management).
 
 The original files are kept, renamed to "<name>.original" (Audiobookshelf and Bayarr
-ignore them), until you delete them. If a file is a hardlink of a seeding download,
-renaming it doesn't affect the download."""
+ignore them), until you delete them. Imported files are copies, so a seeding download
+isn't affected."""
 import asyncio
 import datetime
 import json

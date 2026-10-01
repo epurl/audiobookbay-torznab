@@ -544,11 +544,10 @@ async def _place_book(book, audio, cover, settings, root_folder, unpacked=False,
     dest_dir = os.path.join(root_folder, build_folder_name(settings.get("naming_format"), book))
     logger.info(f"Importing {title} into {dest_dir}")
     try:
-        # Large copies run in a thread so the web UI stays responsive. Unpacked files sit on
-        # the same drive as the library, so they're always hardlinked (the copies are removed)
+        # Large copies run in a thread so the web UI stays responsive. Unpacked files are
+        # Bayarr's own temporary copies on the library's drive, so they're moved instead
         plan = audio + ([cover] if cover else [])
-        copied = await asyncio.to_thread(_copy_files, plan, dest_dir,
-                                         settings.get("use_hardlinks", True) or unpacked)
+        copied = await asyncio.to_thread(_copy_files, plan, dest_dir, unpacked)
         cover_name = cover[1] if cover else ""
         if settings.get("write_metadata", True):
             cover_name = await audiobookshelf.download_cover(book.get("imageUrl", ""), dest_dir) or cover_name
@@ -638,27 +637,24 @@ async def _import_pack_sibling(book, group, source, settings, root_folder, unpac
         return
 
 
-def _copy_files(plan, dest_dir, hardlink=False):
-    """Hardlinks or copies (never moves) files so the client keeps seeding. A hardlink is
-    instant and takes no extra space, but only works on the same drive, so it falls back
-    to copying. Copies are written under a temporary name first, so an interrupted copy is
-    redone on the next check rather than mistaken for a finished one. Returns the number
-    of files added."""
+def _copy_files(plan, dest_dir, move=False):
+    """Copies files so the client keeps seeding the originals. Copies are written under a
+    temporary name first, so an interrupted copy is redone on the next check rather than
+    mistaken for a finished one. With move (files Bayarr unpacked itself), they're moved
+    instead when they're on the same drive. Returns the number of files added."""
     copied = 0
     for src, rel in plan:
         dest = os.path.join(dest_dir, rel)
         if os.path.exists(dest):
             continue
         os.makedirs(os.path.dirname(dest), exist_ok=True)
-        if hardlink:
+        if move:
             try:
-                os.link(src, dest)
+                os.replace(src, dest)
                 copied += 1
                 continue
-            except OSError as e:
-                # Usually a different drive; the rest of this book won't link either
-                logger.info(f"Can't hardlink into {dest_dir} ({e}); copying instead")
-                hardlink = False
+            except OSError:
+                move = False  # Another drive: copy instead
         partial = dest + ".partial"
         shutil.copy2(src, partial)
         os.replace(partial, dest)

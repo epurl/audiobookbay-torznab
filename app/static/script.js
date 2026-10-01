@@ -318,7 +318,6 @@ async function fetchSettings() {
         document.getElementById('setDownloadsFolder').value = appSettings.downloads_folder || "";
         document.getElementById('setNamingFormat').value = appSettings.naming_format || "";
         document.getElementById('setRenameFiles').checked = appSettings.rename_files ?? true;
-        document.getElementById('setHardlinks').checked = appSettings.use_hardlinks ?? true;
         document.getElementById('setStallHours').value = appSettings.stall_hours ?? 6;
         document.getElementById('setRemoveStalled').checked = appSettings.remove_stalled ?? true;
         document.getElementById('setVerifyRuntime').checked = appSettings.verify_runtime ?? true;
@@ -395,7 +394,6 @@ function setupSettings() {
             downloads_folder: document.getElementById('setDownloadsFolder').value,
             naming_format: document.getElementById('setNamingFormat').value,
             rename_files: document.getElementById('setRenameFiles').checked,
-            use_hardlinks: document.getElementById('setHardlinks').checked,
             stall_hours: parseInt(document.getElementById('setStallHours').value, 10) || 0,
             remove_stalled: document.getElementById('setRemoveStalled').checked,
             verify_runtime: document.getElementById('setVerifyRuntime').checked,

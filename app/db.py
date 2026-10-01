@@ -40,7 +40,6 @@ DEFAULT_SETTINGS = {
     "downloads_folder": "",
     "naming_format": DEFAULT_NAMING_FORMAT,
     "rename_files": True,
-    "use_hardlinks": True,
     "stall_hours": 6,  # 0 = never give up on a stalled download
     "remove_stalled": True,
     "verify_runtime": True,
@@ -74,7 +73,7 @@ DEFAULT_SETTINGS = {
 EDITABLE_SETTINGS = {
     "language", "auto_match_narrator", "format_preference", "qbt_enabled",
     "qbt_host", "qbt_user", "root_folder", "downloads_folder", "naming_format",
-    "rename_files", "use_hardlinks", "stall_hours", "remove_stalled",
+    "rename_files", "stall_hours", "remove_stalled",
     "verify_runtime", "runtime_tolerance", "write_metadata", "edition_preference",
     "auto_convert_m4b", "delete_originals_after_convert",
     "pref_narrators", "avoid_narrators", "preferred_words", "blocked_words", "blocked_uploaders",

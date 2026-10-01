@@ -326,7 +326,7 @@
                 <div class="manual-import-footer" id="manualImportFooter" hidden>
                     <label class="inline-select">How
                         <select id="manualImportMode">
-                            <option value="copy">Hardlink or copy (the originals stay and keep seeding)</option>
+                            <option value="copy">Copy (the originals stay and keep seeding)</option>
                             <option value="move">Move (the originals are deleted)</option>
                         </select>
                     </label>
@@ -411,13 +411,6 @@
                             </label>
                             <p class="settings-hint">"Title.m4b", or "Title - Part 01.mp3", "Part 02"… in disc and track order. When off, files keep their original names and subfolders.</p>
                         </div>
-                        <div class="settings-group">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="setHardlinks">
-                                Use Hardlinks Instead of Copies
-                            </label>
-                            <p class="settings-hint">When the downloads and the Root Folder are on the same drive, imported files take no extra space, and qBittorrent keeps seeding. Falls back to copying when they're on different drives. In Docker, both must be inside the same mounted volume. Don't use Audiobookshelf's "embed metadata" tool on hardlinked books: it would change the files qBittorrent is seeding.</p>
-                        </div>
 
                         <h3>Download Checks</h3>
                         <div class="settings-group">
@@ -446,7 +439,7 @@
                                 <input type="checkbox" id="setDeleteOriginals">
                                 Delete the Original Files After Converting
                             </label>
-                            <p class="settings-hint">Only once the M4B has passed its checks (length, chapters, plays through). Off: the originals are kept as .original files (Audiobookshelf ignores them) until you delete them from the book's details. When imported with hardlinks, the originals take no extra space.</p>
+                            <p class="settings-hint">Only once the M4B has passed its checks (length, chapters, plays through). Off: the originals are kept as .original files (Audiobookshelf ignores them) until you delete them from the book's details.</p>
                         </div>
                         <div class="settings-group inline-actions">
                             <button type="button" class="secondary-btn" id="convertQueueAllBtn">Queue Existing Books</button>
@@ -883,7 +876,7 @@
                 <button type="button" class="close-btn" id="closeOrganizeModal" aria-label="Close">&times;</button>
             </div>
             <div class="modal-pad">
-                <p class="modal-lead">Proposed changes to match your Book Folder Format <code id="organizeFormat"></code>. Nothing changes until you approve it. Folders are renamed or moved on the same drive only, so it's instant and hardlinks are kept; Audiobookshelf is asked to rescan afterwards.</p>
+                <p class="modal-lead">Proposed changes to match your Book Folder Format <code id="organizeFormat"></code>. Nothing changes until you approve it. Folders are renamed or moved on the same drive only, so it's instant; Audiobookshelf is asked to rescan afterwards.</p>
                 <div class="organize-options">
                     <label class="check-label"><input type="checkbox" id="organizeRenameFiles"> Also rename audio files ("Title.m4b", "Title - Part 01.mp3"…)</label>
                     <span id="organizeSummary" class="muted"></span>
@@ -913,7 +906,7 @@
                         <tbody id="splitRows"></tbody>
                     </table>
                 </div>
-                <p class="settings-hint">Each book's files are hardlinked into a new folder next to the original (copied if the drive doesn't allow hardlinks), with its own cover and metadata.json, and added to the library. The original folder and its files aren't changed or deleted: remove it yourself (and from Audiobookshelf) once you're happy. Its entry is removed from Bayarr.</p>
+                <p class="settings-hint">Each book's files are copied into a new folder next to the original, with its own cover and metadata.json, and added to the library. The original folder and its files aren't changed or deleted: remove it yourself (and from Audiobookshelf) once you're happy. Its entry is removed from Bayarr.</p>
             </div>
             <div class="modal-footer">
                 <span id="splitStatus" class="action-status"></span>
@@ -938,7 +931,7 @@
                 <label class="inline-select">Files
                     <select id="importMode">
                         <option value="in_place">Keep them where they are</option>
-                        <option value="copy">Hardlink or copy into the Root Folder</option>
+                        <option value="copy">Copy into the Root Folder</option>
                         <option value="move">Move into the Root Folder</option>
                     </select>
                 </label>

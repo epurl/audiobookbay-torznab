@@ -3,9 +3,9 @@ pick another), guesses which book each item is, and imports the ones you choose 
 book you choose: a library book, or an Audible book (added to the library).
 
 An item is a folder of audio files, a single audio file, an archive (or a folder of them),
-or one book of a folder holding several (a pack). Files are hardlinked or copied into the
-library like any import; with Move, the originals are deleted afterwards (a torrent of
-them stops seeding)."""
+or one book of a folder holding several (a pack). Files are copied into the library like
+any import; with Move, the originals are deleted afterwards (a torrent of them stops
+seeding)."""
 import asyncio
 import hashlib
 import logging
