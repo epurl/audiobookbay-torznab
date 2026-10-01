@@ -2,20 +2,16 @@ import asyncio
 import logging
 import datetime
 import os
-import re
 import shutil
-from . import audible, audiobookshelf, db
+from . import audible, audiobookshelf, book_search, db, release_match, scraper
 from .library import build_folder_name, describe_files, find_match, plan_import_files, total_duration_min
-from .scraper import search_for_book, fetch_detail_info
+from .scraper import fetch_detail_info
 from .qbittorrent import delete_torrents, get_completed_torrents, get_torrents, send_to_qbittorrent
 
 logger = logging.getLogger(__name__)
 
 SEARCH_INTERVAL = 6 * 60 * 60  # Series syncs, release checks and searches for Monitored books
 IMPORT_INTERVAL = 60           # Polling qBittorrent for finished downloads
-
-# Words that mark multi-book bundles, which should never be grabbed for a single book
-BUNDLE_WORDS = {"collection", "complete", "boxset", "box", "omnibus", "novels", "audiobooks"}
 
 # Keep references to fire-and-forget tasks so they aren't garbage collected mid-run
 _background_tasks = set()
@@ -169,83 +165,40 @@ async def check_library():
         if status == "Monitored":
             if not settings.get("qbt_enabled"):
                 continue
+            if scraper.is_paused():
+                continue  # AudiobookBay isn't responding; try again next round
             logger.info(f"Searching for Monitored book: {title}")
             await auto_download_book(book, settings)
 
 
-def _words(text):
-    return re.findall(r"[a-z0-9]+", (text or "").lower())
-
-
 def score_result(book, result, settings):
     """Scores an ABB result for a library book. Returns None if it should not be grabbed."""
-    # Releases rejected before for this book
-    result_hash = db.extract_infohash(result.get("magnet_url"))
-    if result_hash and result_hash in (book.get("blocklist") or []):
-        return None
-
-    # Language
-    pref_lang = settings.get("language", "All").lower()
-    if pref_lang != "all" and result.get("language") and result["language"].lower() != pref_lang:
-        return None
-
-    # Format
-    is_m4b = (result.get("format") or "").upper() == "M4B"
-    format_pref = settings.get("format_preference", "prefer_m4b")
-    if format_pref == "m4b_only" and not is_m4b:
-        return None
-
-    # Title relevance: every word of the main title (before any subtitle) must appear
-    main_title = (book.get("title") or "").split(":")[0]
-    title_words = set(_words(main_title))
-    result_words = set(_words(result.get("title")))
-    if not title_words or not title_words.issubset(result_words):
-        return None
-
-    # Skip multi-book bundles and dramatized versions unless the library book is one
-    if (result_words & BUNDLE_WORDS) - title_words:
-        return None
-    if "dramatized" in result_words and "dramatized" not in title_words:
-        return None
-
-    score = 0
-    if is_m4b and format_pref == "prefer_m4b":
-        score += 5
-
-    narrators = book.get("narrators", "")
-    abb_narrator = result.get("abb_narrator", "Unknown")
-    if settings.get("auto_match_narrator", True) and narrators and narrators != "Unknown Narrator" and abb_narrator != "Unknown":
-        aud_last_name = narrators.split(",")[0].split()[-1] if narrators.split() else ""
-        if aud_last_name and aud_last_name in abb_narrator:
-            score += 10
-
-    return score
+    evaluation = release_match.evaluate(book, result, settings)
+    return evaluation["score"] if release_match.is_acceptable(evaluation) else None
 
 
 def choose_best_result(book, results, settings):
-    best_match, best_score = None, None
-    for res in results:
-        score = score_result(book, res, settings)
-        if score is not None and (best_score is None or score > best_score):
-            best_match, best_score = res, score
-    return best_match
+    return release_match.choose_best(book, results, settings)
 
 
 async def auto_download_book(book, settings):
     title = book.get("title")
-    author = book.get("authors", "").split(',')[0].strip()  # Primary author
-
-    results = await search_for_book(title.split(":")[0], author)
+    try:
+        results, _ = await book_search.find_releases(book, settings, mode="auto")
+    except RuntimeError as e:
+        logger.warning(f"Couldn't search for {title}: {e}")
+        return False
     if not results:
         logger.info(f"No results found for {title}")
         return False
 
-    best_match = choose_best_result(book, results, settings)
+    best_match = next((r for r in results if release_match.is_acceptable(r)), None)
     if not best_match:
-        logger.info(f"No suitable match found for {title} based on filters.")
+        closest = "; ".join(book_search.describe(r) for r in results[:3])
+        logger.info(f"No suitable match found for {title}. Closest: {closest}")
         return False
 
-    logger.info(f"Found match for {title}: {best_match.get('title')} ({best_match.get('format')})")
+    logger.info(f"Found match for {title}: {book_search.describe(best_match)}")
     magnet = best_match.get("magnet_url")
     if not magnet:
         detail_info = await fetch_detail_info(best_match.get("link"), best_match.get("title"))

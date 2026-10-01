@@ -81,20 +81,20 @@ def product_to_book(product, prefer_series=""):
 
 
 def _title_keys(title):
-    """A title and its parts around a colon: "Mistborn: The Final Empire" also matches
-    "Mistborn" and "The Final Empire"."""
+    """A title and its parts around a colon: "Series: Book Title" also matches
+    "Series" and "Book Title"."""
     main, _, rest = title.partition(":")
     return {k for k in (normalize(title), normalize(main), normalize(rest)) if k}
 
 
 def _strip_edition(title):
-    """ "Blood of Elves (Full Cast Edition)" -> "Blood of Elves" """
+    """ "Book Title (Full Cast Edition)" -> "Book Title" """
     return re.sub(r"\s*[\(\[][^\)\]]*(edition|adaptation|dramati[sz]ed)[^\)\]]*[\)\]]", "", title, flags=re.IGNORECASE).strip()
 
 
 def _same_book(a, b):
     """Two Audible products in one series slot that are the same book: overlapping titles,
-    the same subtitle ("Mistborn Book 1" / "Mistborn, Book 1"), or the same narrator at
+    the same subtitle ("Series Book 1" / "Series, Book 1"), or the same narrator at
     nearly the same length (one recording sold under two titles)."""
     if not a["catalog_sequence"]:
         return normalize(a["title"]) == normalize(b["title"])
@@ -138,8 +138,8 @@ async def get_series_books(series_asin, language="All"):
         book["catalog_sequence"] = format_sequence(seq)
         if not any(e["asin"] == series_asin for e in book["series_list"]):
             book["series_list"].append({"name": series.get("title", ""), "asin": series_asin, "sequence": format_sequence(seq)})
-        # Regional editions and retitled ones ("The Final Empire" / "Mistborn: The Final
-        # Empire") are one book: same number and an overlapping title. Keep the earliest.
+        # Regional editions and retitled ones ("Book Title" / "Series: Book
+        # Title") are one book: same number and an overlapping title. Keep the earliest.
         if _is_dramatized(product):
             alternates.append(book)
             continue

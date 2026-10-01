@@ -9,11 +9,11 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import audible, audiobookshelf, auth, db, library, series_index
+from app import audible, audiobookshelf, auth, book_search, db, library, series_index
 from app.monitor import (auto_download_book, find_missing_books, grab, match_job, run_monitor_loop, schedule_search,
                          schedule_searches, start_match_job, sync_series)
 from app.qbittorrent import get_torrents, test_connection
-from app.scraper import fetch_detail_info, search_audiobooks, search_for_book
+from app.scraper import fetch_detail_info, search_audiobooks
 from app.torznab import build_caps, build_rss
 
 # Configure logging
@@ -603,15 +603,29 @@ async def search_audible(title: str = ""):
         logger.error(f"Error fetching from Audible: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch from Audible")
 
+async def _manual_search(book):
+    try:
+        results, queries = await book_search.find_releases(book, db.get_settings(), mode="manual")
+        return {"results": results, "queries": queries}
+    except Exception as e:
+        logger.error(f"Error searching ABB for UI: {e}", exc_info=True)
+        return {"results": [], "queries": [], "error": str(e) if isinstance(e, RuntimeError) else "AudiobookBay search failed. Check the log."}
+
 @app.get("/api/search_abb")
 async def search_abb(title: str = "", author: str = ""):
-    """JSON wrapper for Audiobookbay search, used by the UI."""
-    try:
-        results = await search_for_book(title, author)
-        return {"results": results}
-    except Exception as e:
-        logger.error(f"Error searching ABB for UI: {e}")
-        return {"results": []}
+    """AudiobookBay releases for a title and author, scored and best first."""
+    return await _manual_search({"title": title, "authors": author})
+
+@app.post("/api/search_abb")
+async def search_abb_for_book(request: Request):
+    """AudiobookBay releases for a book (series, number, narrator and length make the
+    scores more accurate), best first."""
+    book = (await request.json()).get("book") or {}
+    saved = db.get_book(book.get("id")) if book.get("id") else None
+    book = {**book, **(saved or {})}
+    if not book.get("title"):
+        raise HTTPException(status_code=400, detail="Missing book title")
+    return await _manual_search(book)
 
 if __name__ == "__main__":
     import uvicorn

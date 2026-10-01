@@ -54,7 +54,7 @@ def format_sequence(seq):
 
 
 def series_key(name):
-    """Groups series names: "The Witcher" and "Witcher Series" are the same series."""
+    """Groups series names: "The Name" and "Name Series" are the same series."""
     return normalize(re.sub(r"\s+series$", "", name or "", flags=re.IGNORECASE))
 
 
@@ -76,8 +76,8 @@ def series_entries(book):
 
 def pick_main_series(entries):
     """The most specific series, used for folder names and card subtitles: a numbered
-    series beats an unnumbered umbrella ("The Cosmere"), and the lowest number wins
-    ("Wax and Wayne #1" over "The Mistborn Saga #4")."""
+    series beats an unnumbered umbrella ("The Universe"), and the lowest number wins
+    ("Sub-Series #1" over "Main Saga #4")."""
     numbered = [e for e in entries if _seq_number(e.get("sequence")) is not None]
     if numbered:
         return min(numbered, key=lambda e: _seq_number(e["sequence"]))

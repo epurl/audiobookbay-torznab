@@ -11,12 +11,12 @@ const modalNarrator = document.getElementById('modalNarrator');
 const modalLoader = document.getElementById('modalLoader');
 const abbResults = document.getElementById('abbResults');
 const langFilter = document.getElementById('langFilter');
+const abbSearchInfo = document.getElementById('abbSearchInfo');
 
 const navItems = document.querySelectorAll('.nav-item');
 const views = document.querySelectorAll('.content-wrapper');
 
 let currentABBData = [];
-let currentAudibleNarrator = '';
 let currentModalBook = null;
 let appSettings = { language: "English", auto_match_narrator: true };
 let appLibrary = [];
@@ -1007,7 +1007,7 @@ async function fetchSeries() {
     }
 }
 
-// "The Witcher" and "Witcher Series" are the same series (matches the server)
+// "The Name" and "Name Series" are the same series (matches the server)
 function seriesKey(name) {
     return normKey(String(name || '').replace(/\s+series$/i, ''));
 }
@@ -1554,7 +1554,6 @@ function renderGroup(title, books) {
 async function openModal(book) {
     const { title, authors: author, narrators, imageUrl: coverUrl } = book;
     currentModalBook = book;
-    currentAudibleNarrator = narrators;
     modalTitle.textContent = title;
     modalAuthor.textContent = author;
     modalNarrator.textContent = `Narrated by: ${narrators}`;
@@ -1570,14 +1569,14 @@ async function openModal(book) {
 
     modalLoader.style.display = 'flex';
 
-    // Clean up title for ABB search (remove subtitles after colon)
-    let cleanTitle = title.split(':')[0].trim();
+    currentABBData = [];
+    abbSearchInfo.textContent = 'Searching AudiobookBay…';
 
     try {
-        // Search ABB using Title and Author params
-        const res = await fetch(`/api/search_abb?title=${encodeURIComponent(cleanTitle)}&author=${encodeURIComponent(author)}`);
-        const data = await res.json();
+        const { data } = await postJSON('/api/search_abb', { book });
         currentABBData = data.results || [];
+        abbSearchInfo.textContent = data.error ? data.error
+            : data.queries?.length ? `Searched for: ${data.queries.join(' · ')}` : '';
         renderABBResults();
     } catch (err) {
         console.error(err);
@@ -1590,6 +1589,9 @@ async function openModal(book) {
 langFilter.addEventListener('change', () => {
     renderABBResults();
 });
+document.getElementById('showRejected').addEventListener('change', renderABBResults);
+
+const VERDICT_LABELS = { match: 'Match', possible: 'Possible', weak: 'Weak', rejected: 'No' };
 
 function renderABBResults() {
     abbResults.innerHTML = '';
@@ -1600,42 +1602,31 @@ function renderABBResults() {
     }
 
     const filterVal = langFilter.value;
-
-    // Filter and score matches
-    let displayData = currentABBData.map(res => {
-        let score = 0;
-        let isMatch = false;
-        if (appSettings.auto_match_narrator && currentAudibleNarrator !== 'Unknown Narrator' && res.abb_narrator !== 'Unknown') {
-            // Very simple check: does the ABB narrator contain the Audible narrator's last name?
-            const audNames = currentAudibleNarrator.split(' ');
-            const audLastName = audNames[audNames.length - 1];
-            if (res.abb_narrator.includes(audLastName)) {
-                score = 10;
-                isMatch = true;
-            }
-        }
-        return { ...res, score, isMatch };
-    });
-
-    if (filterVal !== "All") {
-        displayData = displayData.filter(d => d.language && d.language.toLowerCase() === filterVal.toLowerCase());
-    }
-
-    // Sort by score (matches first)
-    displayData.sort((a, b) => b.score - a.score);
+    const showRejected = document.getElementById('showRejected').checked;
+    // The server sends releases best first, scored against this book
+    let displayData = currentABBData.filter(d => filterVal === 'All' || !d.language || d.language === 'Unknown'
+        || d.language.toLowerCase() === filterVal.toLowerCase());
+    const rejected = displayData.filter(d => d.verdict === 'rejected').length;
+    if (!showRejected) displayData = displayData.filter(d => d.verdict !== 'rejected');
 
     if (displayData.length === 0) {
-        abbResults.innerHTML = '<tr><td colspan="7" class="no-results">No downloads match the selected language filter.</td></tr>';
+        const hint = rejected ? `All ${rejected} release${rejected === 1 ? ' was' : 's were'} rejected. Tick "Show rejected" to see why.`
+            : 'No downloads match the selected language filter.';
+        abbResults.innerHTML = `<tr><td colspan="7" class="no-results">${esc(hint)}</td></tr>`;
         return;
     }
 
     displayData.forEach(res => {
         const tr = document.createElement('tr');
+        if (res.verdict === 'rejected') tr.className = 'release-rejected';
         const magnetUrl = safeUrl(res.magnet_url || `/api/download?url=${encodeURIComponent(res.link)}&title=${encodeURIComponent(res.title)}`);
         const isM4b = (res.format || '').toUpperCase() === 'M4B';
-
-        let matchBadge = res.isMatch ? `<span class="badge match">Match</span>` : '';
-        let narratorStyle = res.isMatch ? 'font-weight: 500; color: var(--success);' : '';
+        const narratorMatch = (res.reasons || []).includes('Narrator matches');
+        const why = [...(res.problems || []), ...(res.reasons || [])];
+        const verdict = res.verdict || 'weak';
+        const scoreBadge = `<span class="score-badge score-${esc(verdict)}" title="${esc(why.join('\n'))}">${esc(res.score ?? '')}<small>${esc(VERDICT_LABELS[verdict] || '')}</small></span>`;
+        const notes = (res.problems || []).length ? `<div class="release-problems">${esc(res.problems.join(' · '))}</div>` : '';
+        const posted = res.posted ? ` · posted ${esc(res.posted)}` : '';
 
         let actionsHtml = `
             <a href="${magnetUrl}" class="download-icon-btn" target="_blank" title="Manual Magnet Link">
@@ -1656,18 +1647,25 @@ function renderABBResults() {
 
         tr.innerHTML = `
             <td>
-                <div style="font-weight: 500; margin-bottom: 4px;">${esc(res.title)}</div>
-                <div style="font-size: 0.8rem; color: var(--text-muted);">${esc(res.author)}</div>
+                <a class="release-title" href="${safeUrl(res.link)}" target="_blank" rel="noopener noreferrer">${esc(res.raw_title || res.title)}</a>
+                <div class="release-meta">${esc(res.author || '')}${posted}</div>
+                ${notes}
             </td>
-            <td>${esc(res.size_str)}</td>
-            <td>${isM4b ? '<span class="badge match">M4B</span>' : esc(res.format || 'Unknown')}</td>
+            <td class="nowrap">${esc(res.size_str)}</td>
+            <td>${isM4b ? '<span class="badge match">M4B</span>' : esc(res.format || 'Unknown')}${res.bitrate && res.bitrate !== 'Unknown' ? `<div class="release-meta nowrap">${esc(res.bitrate)}</div>` : ''}</td>
             <td>${esc(res.language || 'Unknown')}</td>
-            <td style="${narratorStyle}">${esc(res.abb_narrator || 'Unknown')}</td>
-            <td>${matchBadge}</td>
+            <td class="${narratorMatch ? 'narrator-match' : ''}">${esc(res.abb_narrator || 'Not loaded')}</td>
+            <td>${scoreBadge}</td>
             <td>${actionsHtml}</td>
         `;
         abbResults.appendChild(tr);
     });
+
+    if (!showRejected && rejected) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td colspan="7" class="no-results">${rejected} rejected release${rejected === 1 ? '' : 's'} hidden.</td>`;
+        abbResults.appendChild(tr);
+    }
 
     // Add listeners for send to client buttons
     document.querySelectorAll('.send-to-client-btn').forEach(btn => {

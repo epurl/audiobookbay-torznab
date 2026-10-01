@@ -66,7 +66,11 @@ def build_rss(results: list, host_url: str, offset: int = 0) -> str:
         comments = res.get("link", "")
         etree.SubElement(item, "comments").text = comments
         
-        pub_date = datetime.datetime.now().strftime("%a, %d %b %Y %H:%M:%S +0000")
+        try:
+            posted = datetime.datetime.strptime(res.get("posted") or "", "%Y-%m-%d")
+        except ValueError:
+            posted = datetime.datetime.now()
+        pub_date = posted.strftime("%a, %d %b %Y %H:%M:%S +0000")
         etree.SubElement(item, "pubDate").text = pub_date
         
         size = str(res.get("size_bytes", 0))
