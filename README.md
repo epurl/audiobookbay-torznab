@@ -187,6 +187,7 @@ Click a trending book for its details, then **Add to Library** (upcoming books b
 
 - **Write metadata.json and Cover** (on by default): imported downloads get Audiobookshelf's `metadata.json` and Audible's 1000px cover. Folders imported where they are are never changed.
 - **Server URL, API Token, Library:** after each import, Bayarr asks Audiobookshelf to scan that library. The token needs admin rights and is never sent to the browser.
+- **Series order:** imported books are written so Audiobookshelf's series pages sort properly: dramatizations are a series of their own ("Name (Dramatized)"), and a book sold in parts is numbered by part (book 1 in two parts: #1.1 and #1.2; book 5 in three: #5.1–#5.3). **Fix Series Order** does the same for books already imported: it rewrites only the series in each book's existing `metadata.json` (other fields are kept; no file is created where there was none) and, with a server and library set, updates each book in Audiobookshelf through its API (found by ASIN or folder name), so no rescan is needed.
 
 ## Torznab indexer
 

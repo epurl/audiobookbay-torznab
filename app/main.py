@@ -686,6 +686,19 @@ async def api_seeding_remove(book_id: str, request: Request):
         raise HTTPException(status_code=400, detail=error)
     return {"success": True}
 
+@app.post("/api/audiobookshelf/series_order")
+async def api_abs_series_order():
+    """Rewrites the series of every imported book, in its metadata.json and in Audiobookshelf,
+    so series sort: dramatizations as their own series, parts numbered 1.1, 1.2..."""
+    books = [b for b in db.get_library() if b.get("status") == "Imported" and b.get("path") and b.get("series")]
+    if not audiobookshelf.start_fix_series_order(books, db.get_settings()):
+        raise HTTPException(status_code=409, detail="It's already running.")
+    return dict(audiobookshelf.order_job)
+
+@app.get("/api/audiobookshelf/series_order")
+async def api_abs_series_order_status():
+    return dict(audiobookshelf.order_job)
+
 @app.get("/api/history")
 async def api_history(limit: int = 200):
     return {"history": db.get_history(max(1, min(limit, db.HISTORY_LIMIT)))}

@@ -415,6 +415,12 @@ def part_number(title):
     return int(m.group(1)) if m else None
 
 
+def part_count(title):
+    """How many parts a book sold in parts has, or None."""
+    m = _PART_OF.search(title or "")
+    return int(m.group(2)) if m else None
+
+
 def find_match(library, book):
     """Finds the library entry for a book by path, ASIN, or title + a shared author in the
     same edition (a dramatized version is a separate entry from the narrated one)."""

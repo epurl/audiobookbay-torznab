@@ -3303,7 +3303,34 @@ function drawWatchedLists() {
     });
 }
 
+// Settings > Audiobookshelf: Fix Series Order
+async function runAbsSeriesOrder(e) {
+    const btn = e.currentTarget;
+    const status = document.getElementById('absSeriesOrderStatus');
+    btn.disabled = true;
+    const { ok, data } = await postJSON('/api/audiobookshelf/series_order');
+    if (!ok) {
+        setActionStatus(status, data.detail || 'Could not start', 'error');
+        btn.disabled = false;
+        return;
+    }
+    let st = data;
+    while (st.running) {
+        setActionStatus(status, `Updating ${Math.min(st.done + 1, st.total)} of ${st.total}…`);
+        await new Promise(r => setTimeout(r, 1000));
+        st = await fetch('/api/audiobookshelf/series_order').then(r => r.json()).catch(() => st);
+    }
+    btn.disabled = false;
+    const parts = [`${st.files} metadata.json file${st.files === 1 ? '' : 's'} updated`];
+    if (appSettings.abs_url && appSettings.abs_library_id) {
+        parts.push(`${st.abs_updated} book${st.abs_updated === 1 ? '' : 's'} updated in Audiobookshelf`);
+        if (st.abs_missing) parts.push(`${st.abs_missing} not found there`);
+    }
+    setActionStatus(status, parts.join(' · ') + (st.error ? ` · ${st.error}` : ''), st.error ? 'error' : 'ok');
+}
+
 function setupWatchedLists() {
+    document.getElementById('absSeriesOrderBtn').addEventListener('click', runAbsSeriesOrder);
     document.getElementById('wlAddBtn').addEventListener('click', async (e) => {
         const btn = e.currentTarget;
         const status = document.getElementById('wlStatus');
