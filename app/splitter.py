@@ -119,6 +119,35 @@ def _match(group, catalog, edition):
     return None
 
 
+_FILE_PART = re.compile(r"(?:part|pt)[\s._-]*0*(\d+)|(?<![\d.])0*(\d+)\s+of\s+\d+", re.IGNORECASE)
+
+
+def _by_release(group, catalog, edition, folder):
+    """A book Audible sells in parts ("Book Title (Part 1 of 2)"), split into its releases:
+    [(group of one part's files, that part's entry)], or None when the files don't say
+    which part they are or Audible doesn't sell this book in parts."""
+    entries = (catalog or {}).get("books", []) + (catalog or {}).get("alternates", [])
+    parts = {e["part"]: e for e in entries if e.get("part") and e.get("catalog_sequence") == group["number"]
+             and editions.edition_of(e) == edition}
+    if len(parts) < 2:
+        return None
+    by_part = {}
+    for rel in group["files"]:
+        m = _FILE_PART.search(os.path.splitext(os.path.basename(rel))[0])
+        number = int(m.group(1) or m.group(2)) if m else None
+        if number not in parts:
+            return None
+        by_part.setdefault(number, []).append(rel)
+    if len(by_part) < 2:
+        return None
+    result = []
+    for number in sorted(by_part):
+        files = by_part[number]
+        size = sum(os.path.getsize(os.path.join(folder, f)) for f in files if os.path.exists(os.path.join(folder, f)))
+        result.append(({**group, "files": files, "size": size, "part": number}, parts[number]))
+    return result
+
+
 def _new_book(original, group, match, settings, title=None, number=None):
     """The library entry (and folder name) for one book of the collection."""
     edition = editions.edition_of(original)
@@ -165,13 +194,17 @@ async def propose(book_id):
         logger.warning(f"Split: couldn't load the series from Audible: {e}")
     settings = db.get_settings()
     parent = os.path.dirname(os.path.normpath(book["path"]))
-    for i, g in enumerate(groups):
-        match = _match(g, catalog, proposal["edition"])
+    # Each release its own book: a book sold in parts becomes one book per part
+    releases = []
+    for g in groups:
+        releases += _by_release(g, catalog, proposal["edition"], book["path"]) or [(g, _match(g, catalog, proposal["edition"]))]
+    for i, (g, match) in enumerate(releases):
         new, folder = _new_book(book, g, match, settings)
         proposal["groups"].append({
-            "index": i, "number": g["number"], "title": new["title"], "files": g["files"], "size": g["size"],
+            "index": i, "number": g["number"], "part": g.get("part"), "title": new["title"], "files": g["files"],
+            "size": g["size"],
             "match": {k: match.get(k) for k in ("title", "asin", "edition", "runtime_min", "narrators", "imageUrl",
-                                                 "release_date", "catalog_sequence", "part_asins")} if match else None,
+                                                 "release_date", "catalog_sequence", "part", "part_count")} if match else None,
             "folder": folder, "exists": os.path.exists(os.path.join(parent, folder)),
             "_match": match,
         })

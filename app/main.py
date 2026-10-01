@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 
 from app import (audible, audiobookshelf, auth, authors, book_search, convert, db, editions, health, indexers, library,
-                 organize, reading_list, release_calendar, scraper, series_index, splitter, stats)
+                 manual_import, organize, reading_list, release_calendar, scraper, series_index, splitter, stats)
 from app.monitor import (auto_download_book, classify_editions, find_missing_books, grab, match_job, run_monitor_loop,
                          schedule_search, schedule_searches, start_match_job, sync_series)
 from app.qbittorrent import get_torrents, test_connection
@@ -193,6 +193,58 @@ async def api_match_book(book_id: str, request: Request):
     db.apply_audible_match(book_id, audible.product_to_book(products[0], prefer_series=book.get("series", "")))
     db.add_history("matched", book, f"Matched to Audible {asin}")
     return {"success": True, "book": db.get_book(book_id)}
+
+# --- Manual Import ---
+
+@app.post("/api/manual_import/scan")
+async def api_manual_import_scan(request: Request):
+    """What's in a folder (the downloads folder by default), with a guess at each item."""
+    path = (await request.json()).get("path") or db.get_settings().get("downloads_folder") or ""
+    try:
+        items = await asyncio.to_thread(manual_import.scan, path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"path": path, "items": items}
+
+@app.post("/api/manual_import/suggest")
+async def api_manual_import_suggest(request: Request):
+    """The Audible book an item probably is (only clear matches), or null."""
+    item_id = (await request.json()).get("id", "")
+    try:
+        return {"match": await manual_import.suggest(item_id)}
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Scan the folder again; it has changed.")
+    except Exception as e:
+        logger.warning(f"Manual import: Audible lookup failed: {e}")
+        return {"match": None}
+
+@app.get("/api/manual_import/candidates")
+async def api_manual_import_candidates(id: str = "", q: str = ""):
+    """Audible books for choosing an item's book by hand."""
+    query = q.strip() or manual_import.search_query(id)
+    if not query:
+        return {"query": "", "candidates": []}
+    try:
+        return {"query": query, "candidates": await audible.match_candidates(query)}
+    except Exception as e:
+        logger.error(f"Audible search failed: {e}")
+        raise HTTPException(status_code=502, detail="Couldn't search Audible.")
+
+@app.post("/api/manual_import/import")
+async def api_manual_import_start(request: Request):
+    """Imports the chosen items: [{"id", "book_id" | "asin" | "as_is"}], copied or moved."""
+    data = await request.json()
+    mode = "move" if data.get("mode") == "move" else "copy"
+    try:
+        return manual_import.start(data.get("items") or [], mode)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/manual_import/status")
+async def api_manual_import_status():
+    return dict(manual_import.job)
 
 @app.post("/api/lists/parse")
 async def api_list_parse(request: Request):

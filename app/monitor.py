@@ -143,6 +143,17 @@ def find_missing_books():
     return missing, restored
 
 
+def _known_part(book, every_edition, known):
+    """True for a part of a book sold in parts whose other parts were already known: series
+    lists used to record only a book's first part."""
+    if not book.get("part"):
+        return False
+    base = audible._split_part(book.get("title"))[0]
+    return any(o.get("asin") in known for o in every_edition
+               if o is not book and o.get("part") and o.get("catalog_sequence") == book.get("catalog_sequence")
+               and o.get("edition") == book.get("edition") and audible._split_part(o.get("title"))[0] == base)
+
+
 async def sync_series(series, settings, selected=None):
     """Refreshes a monitored series from Audible. Books already in the library get the
     series recorded on them. Books are only added when chosen (selected, when the series is
@@ -164,7 +175,7 @@ async def sync_series(series, settings, selected=None):
             wanted = book.get("asin") in selected
         else:
             # Series monitored before known_asins existed: treat today's list as known
-            wanted = (known is not None and book.get("asin") not in known
+            wanted = (known is not None and book.get("asin") not in known and not _known_part(book, every_edition, known)
                       and editions.edition_of(book) in editions_wanted)
         if not wanted:
             continue

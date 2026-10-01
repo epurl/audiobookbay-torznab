@@ -123,7 +123,8 @@ function formatDuration(seconds) {
 
 function seriesLabel(book) {
     if (!book.series) return '';
-    return book.sequence ? `${book.series} #${book.sequence}` : book.series;
+    const name = editionOf(book) === 'dramatized' ? `${book.series} (Dramatized)` : book.series;
+    return book.sequence ? `${name} #${book.sequence}` : name;
 }
 
 function formatSize(bytes) {
@@ -213,14 +214,29 @@ async function initApp() {
     setupSystem();
     setupIndexers();
     setupAuthors();
+    setupHistoryLimit();
+    setupManualImport();
     window.addEventListener('hashchange', route);
     route();
 }
 
 // Each page has its own address (#/library, #/series/<key>, ...), so the browser's
 // Back and Forward buttons, refreshing and bookmarks all work
-const PAGES = { search: 'searchView', library: 'libraryView', series: 'seriesView', calendar: 'calendarView', activity: 'activityView', system: 'systemView', settings: 'settingsView', author: 'authorView', authors: 'authorsView' };
+const PAGES = { book: 'libraryView', import: 'importView', search: 'searchView', library: 'libraryView', series: 'seriesView', calendar: 'calendarView', activity: 'activityView', system: 'systemView', settings: 'settingsView', author: 'authorView', authors: 'authorsView' };
 const PAGE_NAMES = Object.fromEntries(Object.entries(PAGES).map(([name, view]) => [view, name]));
+
+function bookLink(id, title) {
+    if (!id || !appLibrary.some(b => b.id === id)) return esc(title);
+    return `<a href="#/book/${encodeURIComponent(id)}" class="book-link" data-id="${esc(id)}">${esc(title)}</a>`;
+}
+
+document.addEventListener('click', (e) => {
+    const link = e.target.closest('a.book-link');
+    if (!link || e.ctrlKey || e.metaKey || e.shiftKey || e.button) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openBookModal(link.dataset.id);
+}, true);
 
 function navigate(path) {
     if (location.hash === '#' + path) {
@@ -243,6 +259,13 @@ function route() {
         showSeriesDetail(arg);
         return;
     }
+    if (name === 'book') {
+        // A book's own address (opened in a new tab, or a bookmark): the Library with its details
+        history.replaceState(null, '', '#/library');
+        activateView('libraryView');
+        if (arg) openBookModal(arg);
+        return;
+    }
     if (name === 'author' && arg) {
         showAuthorPage(arg);
         return;
@@ -263,6 +286,7 @@ function activateView(viewId) {
     if (viewId === 'calendarView') renderCalendar();
     if (viewId === 'settingsView') pollSettingsQueue();
     if (viewId === 'authorsView') renderFollowedAuthors();
+    if (viewId === 'importView') openManualImport();
     if (viewId === 'activityView') {
         renderActivity();
         activityTimer = setInterval(renderActivity, 5000);
@@ -568,16 +592,29 @@ async function addToLibrary(e, bookData) {
 
 const STATUS_ORDER = ['Missing', 'Downloading', 'Downloaded', 'Monitored', 'Unreleased', 'Unmonitored', 'Imported'];
 
+let librarySeriesNames = {};  // Audible series id -> the name its books are sorted under
+
 function librarySortKey(book, sort) {
     const seq = parseFloat(book.sequence);
     const seqKey = isNaN(seq) ? '9999' : String(seq.toFixed(2)).padStart(8, '0');
     const title = normKey(book.title);
+    // Dramatizations after the narrated books, as their own series; parts in order. Books
+    // of one Audible series sort together even when they name it differently.
+    const name = (book.series_asin && librarySeriesNames[book.series_asin]) || book.series;
+    const series = book.series ? `0|${normKey(name)}|${editionOf(book) === 'dramatized' ? 1 : 0}` : '1';
+    const release = `${seqKey}|${String(partOf(book.title)).padStart(3, '0')}|${title}`;
     switch (sort) {
         case 'title': return title;
-        case 'series': return `${book.series ? normKey(book.series) : '~'}|${seqKey}|${title}`;
+        case 'series': return `${series}|${release}`;
         case 'added': return book.added || '';
-        default: return `${normKey(primaryAuthor(book.authors)) || '~'}|${normKey(book.series)}|${seqKey}|${title}`;
+        default: return `${normKey(primaryAuthor(book.authors)) ? '0|' + normKey(primaryAuthor(book.authors)) : '1'}|${series}|${release}`;
     }
+}
+
+// "Book Title (Part 2 of 3)" -> 2; books not sold in parts -> 0
+function partOf(title) {
+    const m = String(title || '').match(/[([]\s*(?:part\s+)?(\d+)\s+of\s+\d+\s*[)\]]/i);
+    return m ? parseInt(m[1], 10) : 0;
 }
 
 function renderLibrary() {
@@ -623,6 +660,8 @@ function renderLibrary() {
         if (!text) return true;
         return [b.title, b.authors, b.series, b.narrators].join(' ').toLowerCase().includes(text);
     });
+    librarySeriesNames = {};
+    appLibrary.forEach(b => { if (b.series_asin && b.series && !librarySeriesNames[b.series_asin]) librarySeriesNames[b.series_asin] = b.series; });
     books.sort((a, b) => librarySortKey(a, sort).localeCompare(librarySortKey(b, sort)));
     if (sort === 'added') books.reverse();
 
@@ -1190,8 +1229,9 @@ function seriesEntries(book) {
     return book.series ? [{ name: book.series, asin: book.series_asin || '', sequence: book.sequence || '' }] : [];
 }
 
-function seriesPageKey(entry) {
-    return entry.asin ? 'asin:' + entry.asin : 'name:' + seriesKey(entry.name);
+function seriesPageKey(entry, book) {
+    const key = entry.asin ? 'asin:' + entry.asin : 'name:' + seriesKey(entry.name);
+    return book && editionOf(book) === 'dramatized' ? key + '~dramatized' : key;
 }
 
 // Book details: every series the book is in, each opening its series page
@@ -1210,7 +1250,7 @@ function renderBookSeriesLinks(book) {
     }));
     box.querySelectorAll('.series-chip:not(.author-chip)').forEach(chip => chip.addEventListener('click', () => {
         hideModal(bookModal);
-        openSeriesDetail(seriesPageKey(entries[chip.dataset.index]));
+        openSeriesDetail(seriesPageKey(entries[chip.dataset.index], book));
     }));
 }
 
@@ -1399,7 +1439,7 @@ function seriesRowHtml(r, src, i) {
         : `<span class="muted">Not in library</span> <button class="link-btn add-row" data-src="${src}" data-index="${i}">Add</button>${other}`;
     return `<tr class="${r.book_id ? 'clickable' : 'not-owned'}" data-src="${src}" data-index="${i}">
         <td class="muted">${esc(r.sequence)}</td>
-        <td>${esc(r.title)} ${editionOf(r) !== 'narrated' ? `<span class="edition-badge edition-${editionOf(r)}">${EDITION_LABELS[editionOf(r)]}</span>` : ''}</td>
+        <td>${bookLink(r.book_id, r.title)} ${editionOf(r) !== 'narrated' ? `<span class="edition-badge edition-${editionOf(r)}">${EDITION_LABELS[editionOf(r)]}</span>` : ''}</td>
         <td class="muted" title="${esc(r.narrators || '')}">${esc(shortNames(r.narrators))}</td>
         <td class="muted nowrap">${esc(releaseDate(r.release_date))}</td>
         <td class="muted nowrap">${esc(formatRuntime(r.runtime_min))}</td>
@@ -1439,18 +1479,21 @@ function renderSeriesDetail() {
                 <div class="series-hero-actions">${actions}</div>
             </div>
         </div>
+        ${(sr.editions || []).length ? `<div class="edition-tabs" role="tablist">${sr.editions.map(ed =>
+            `<button class="edition-tab${ed.active ? ' active' : ''}" role="tab" aria-selected="${ed.active}" data-key="${esc(ed.key)}">${esc(ed.label)}</button>`).join('')}</div>` : ''}
         ${sr.unresolved ? '<p class="lookup-banner">Couldn\'t find this series on Audible, so only the books in your library are shown. Match one of its books on Audible, then open this page again.</p>' : ''}
         <div class="table-container series-books-table"><table class="data-table">
             <thead><tr><th class="col-num">#</th><th>Title</th><th>Narrator</th><th class="col-date">Released</th><th class="col-len">Length</th><th class="col-status">Status</th></tr></thead>
             <tbody>${sr.rows.map((r, i) => seriesRowHtml(r, 'rows', i)).join('')}</tbody></table></div>
         ${(sr.alternates || []).length ? `<details class="other-editions"${(sr.alternates || []).some(a => a.book_id) ? ' open' : ''}>
-            <summary>Other editions (${sr.alternates.length}): dramatized and abridged versions of these books</summary>
+            <summary>Abridged editions (${sr.alternates.length})</summary>
             <div class="table-container series-books-table"><table class="data-table">
                 <thead><tr><th class="col-num">#</th><th>Title</th><th>Narrator</th><th class="col-date">Released</th><th class="col-len">Length</th><th class="col-status">Status</th></tr></thead>
                 <tbody>${sr.alternates.map((r, i) => seriesRowHtml(r, 'alternates', i)).join('')}</tbody></table></div>
         </details>` : ''}`;
 
     const rowOf = el => sr[el.dataset.src][el.dataset.index];
+    box.querySelectorAll('.edition-tab:not(.active)').forEach(tab => tab.addEventListener('click', () => openSeriesDetail(tab.dataset.key)));
     box.querySelectorAll('tr.clickable').forEach(tr => tr.addEventListener('click', () => openBookModal(rowOf(tr).book_id)));
     box.querySelectorAll('.add-row').forEach(btn => btn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -1576,13 +1619,269 @@ const EVENT_LABELS = {
     rejected: 'Rejected', failed: 'Failed', missing: 'Missing', series: 'Series', released: 'Released',
 };
 
+// -----------------
+// MANUAL IMPORT
+// -----------------
+// Items from the last scan, and the book chosen for each: {kind: 'library', book_id, title},
+// {kind: 'audible', asin, title, authors}, or {kind: 'as_is'}
+let manualItems = [];
+let manualChoices = {};
+let manualChecked = new Set();
+let manualResults = {};
+let manualSuggestRun = 0;
+let manualMatchFor = null;
+
+function openManualImport() {
+    const input = document.getElementById('manualImportPath');
+    if (!input.value) input.value = appSettings.downloads_folder || '';
+    if (!manualItems.length && input.value) scanManualImport();
+}
+
+function setupManualImport() {
+    document.getElementById('manualImportOpen').addEventListener('click', () => navigate('/import'));
+    document.getElementById('manualImportScan').addEventListener('click', scanManualImport);
+    document.getElementById('manualImportPath').addEventListener('keypress', e => { if (e.key === 'Enter') scanManualImport(); });
+    document.getElementById('manualImportAll').addEventListener('change', e => {
+        manualItems.forEach(it => {
+            if (e.target.checked && manualChoices[it.id] && !manualResults[it.id]?.ok) manualChecked.add(it.id);
+            else manualChecked.delete(it.id);
+        });
+        drawManualImport();
+    });
+    document.getElementById('manualImportGo').addEventListener('click', runManualImport);
+    document.getElementById('manualImportMode').addEventListener('change', e => {
+        if (e.target.value === 'move') toast('Move deletes the originals after importing: a torrent of them stops seeding', 'error');
+    });
+    const modal = document.getElementById('manualMatchModal');
+    document.getElementById('closeManualMatch').addEventListener('click', () => hideModal(modal));
+    modal.addEventListener('click', e => { if (e.target === modal) hideModal(modal); });
+    document.getElementById('manualMatchSearch').addEventListener('click', searchManualMatch);
+    document.getElementById('manualMatchQuery').addEventListener('keypress', e => { if (e.key === 'Enter') searchManualMatch(); });
+    document.getElementById('manualMatchAsIs').addEventListener('click', () => {
+        setManualChoice(manualMatchFor, { kind: 'as_is' });
+        hideModal(modal);
+    });
+}
+
+async function scanManualImport() {
+    const path = document.getElementById('manualImportPath').value.trim();
+    const loader = document.getElementById('manualImportLoader');
+    const summary = document.getElementById('manualImportSummary');
+    manualItems = []; manualChoices = {}; manualChecked = new Set(); manualResults = {};
+    drawManualImport();
+    loader.classList.remove('hidden');
+    summary.textContent = '';
+    const { ok, data } = await postJSON('/api/manual_import/scan', { path });
+    loader.classList.add('hidden');
+    if (!ok) {
+        summary.textContent = data.detail || 'Could not scan that folder.';
+        return;
+    }
+    if (!path) document.getElementById('manualImportPath').value = data.path;
+    manualItems = data.items;
+    summary.textContent = manualItems.length ? `${manualItems.length} item${manualItems.length === 1 ? '' : 's'}`
+        : 'Nothing to import here: no audio files or archives.';
+    // A library book it matches (not on disk yet) is chosen; the rest are looked up on Audible
+    manualItems.forEach(it => {
+        if (it.match && !it.match.on_disk) {
+            manualChoices[it.id] = { kind: 'library', book_id: it.match.book_id, title: it.match.title };
+            manualChecked.add(it.id);
+        }
+    });
+    drawManualImport();
+    suggestManualMatches();
+}
+
+async function suggestManualMatches() {
+    const run = ++manualSuggestRun;
+    for (const it of manualItems) {
+        if (run !== manualSuggestRun) return;  // A new scan started
+        if (manualChoices[it.id] || it.match?.on_disk) continue;
+        it.looking = true;
+        drawManualImport();
+        const { ok, data } = await postJSON('/api/manual_import/suggest', { id: it.id });
+        it.looking = false;
+        if (run !== manualSuggestRun) return;
+        if (ok && data.match && !manualChoices[it.id]) {
+            manualChoices[it.id] = audibleChoice(data.match);
+            manualChecked.add(it.id);
+        }
+        drawManualImport();
+    }
+}
+
+function audibleChoice(b) {
+    return { kind: 'audible', asin: b.asin, title: b.title, authors: b.authors, edition: b.edition,
+             sequence: b.sequence, series: b.series };
+}
+
+function manualChoiceHtml(it) {
+    const c = manualChoices[it.id];
+    const change = `<button class="link-btn manual-choose" data-id="${esc(it.id)}">${c ? 'Change' : 'Choose…'}</button>`;
+    if (!c) {
+        if (it.looking) return '<span class="muted">Looking on Audible…</span>';
+        if (it.match?.on_disk) return `<span class="muted">Already on disk: ${bookLink(it.match.book_id, it.match.title)}</span> ${change}`;
+        return `<span class="muted">Not matched</span> ${change}`;
+    }
+    if (c.kind === 'library') return `${bookLink(c.book_id, c.title)} <span class="muted">· in your library</span> ${change}`;
+    if (c.kind === 'audible') {
+        const extra = [c.authors, c.series ? `${c.series}${c.sequence ? ' #' + c.sequence : ''}` : '', c.asin].filter(Boolean).join(' · ');
+        return `${esc(c.title)} ${c.edition && c.edition !== 'narrated' ? `<span class="edition-badge edition-${esc(c.edition)}">${esc(EDITION_LABELS[c.edition] || c.edition)}</span>` : ''}
+            <span class="muted">· Audible</span> ${change}<div class="muted">${esc(extra)}</div>`;
+    }
+    const g = it.guess;
+    return `${esc(g.title)} <span class="muted">· as named${g.authors ? ', by ' + esc(g.authors) : ''}</span> ${change}`;
+}
+
+function drawManualImport() {
+    const rows = document.getElementById('manualImportRows');
+    document.getElementById('manualImportTableBox').hidden = !manualItems.length;
+    document.getElementById('manualImportFooter').hidden = !manualItems.length;
+    rows.innerHTML = manualItems.map(it => {
+        const r = manualResults[it.id];
+        const result = !r ? '' : r.ok
+            ? `<span class="result-ok">Imported</span>${r.message ? `<div class="muted">${esc(r.message)}</div>` : ''}`
+            : `<span class="result-error">Failed</span><div class="muted">${esc(r.message)}</div>`;
+        const done = r && r.ok;
+        return `<tr>
+            <td class="col-check"><input type="checkbox" class="manual-check" data-id="${esc(it.id)}" ${manualChecked.has(it.id) ? 'checked' : ''} ${!manualChoices[it.id] || done ? 'disabled' : ''} aria-label="Import ${esc(it.name)}"></td>
+            <td class="item-name">${esc(it.name)}<div class="muted">${it.kind === 'archive' ? 'Archive · ' : ''}${it.file_count} file${it.file_count === 1 ? '' : 's'} · ${esc(formatSize(it.size))}</div></td>
+            <td>${done ? bookLink(r.book_id, (manualChoices[it.id] || {}).title || it.guess.title) : manualChoiceHtml(it)}</td>
+            <td>${result}</td>
+        </tr>`;
+    }).join('');
+    rows.querySelectorAll('.manual-check').forEach(box => box.addEventListener('change', () => {
+        box.checked ? manualChecked.add(box.dataset.id) : manualChecked.delete(box.dataset.id);
+        updateManualImportButton();
+    }));
+    rows.querySelectorAll('.manual-choose').forEach(btn => btn.addEventListener('click', () => openManualMatch(btn.dataset.id)));
+    updateManualImportButton();
+}
+
+function updateManualImportButton() {
+    const count = [...manualChecked].filter(id => manualChoices[id]).length;
+    const btn = document.getElementById('manualImportGo');
+    btn.disabled = !count || manualImportRunning;
+    btn.textContent = count ? `Import ${count}` : 'Import';
+}
+
+function setManualChoice(id, choice) {
+    manualChoices[id] = choice;
+    manualChecked.add(id);
+    drawManualImport();
+}
+
+function openManualMatch(id) {
+    const it = manualItems.find(x => x.id === id);
+    if (!it) return;
+    manualMatchFor = id;
+    document.getElementById('manualMatchItem').textContent = it.name;
+    document.getElementById('manualMatchQuery').value = `${String(it.guess.title || '').split(':')[0]} ${primaryAuthor(it.guess.authors)}`.trim();
+    document.getElementById('manualMatchAsIs').textContent = `Use it as named: "${it.guess.title}"${it.guess.authors ? ' by ' + it.guess.authors : ''}`;
+    document.getElementById('manualMatchAsIs').hidden = !it.guess.title;
+    showModal(document.getElementById('manualMatchModal'));
+    searchManualMatch();
+}
+
+function matchOptionHtml(cover, title, lines, data) {
+    return `<button type="button" class="match-option" ${data}>
+        <img src="${esc(safeUrl(cover, PLACEHOLDER_COVER))}" alt="" loading="lazy">
+        <span><b>${esc(title)}</b>${lines.filter(Boolean).map(l => `<span class="muted">${esc(l)}</span>`).join('')}</span></button>`;
+}
+
+async function searchManualMatch() {
+    const query = document.getElementById('manualMatchQuery').value.trim();
+    const words = normKey(query).split(' ').filter(w => w.length > 1);
+    // Library books not on disk yet first; ones on disk can't take another copy
+    const lib = appLibrary.filter(b => !b.path && words.length
+        && words.every(w => normKey([b.title, b.authors, b.series].join(' ')).includes(w))).slice(0, 20);
+    const libBox = document.getElementById('manualMatchLibrary');
+    libBox.innerHTML = lib.map(b => matchOptionHtml(coverUrl(b), b.title,
+        [[b.authors, seriesLabel(b)].filter(Boolean).join(' · '), `${b.status}${editionOf(b) !== 'narrated' ? ' · ' + EDITION_LABELS[editionOf(b)] : ''}`],
+        `data-book="${esc(b.id)}"`)).join('') || '<p class="muted">No books waiting for files match.</p>';
+    libBox.querySelectorAll('[data-book]').forEach(btn => btn.addEventListener('click', () => {
+        const b = appLibrary.find(x => x.id === btn.dataset.book);
+        setManualChoice(manualMatchFor, { kind: 'library', book_id: b.id, title: b.title });
+        hideModal(document.getElementById('manualMatchModal'));
+    }));
+    const box = document.getElementById('manualMatchAudible');
+    const loader = document.getElementById('manualMatchLoader');
+    box.innerHTML = '';
+    loader.classList.remove('hidden');
+    try {
+        const res = await fetch(`/api/manual_import/candidates?id=${encodeURIComponent(manualMatchFor)}&q=${encodeURIComponent(query)}`);
+        const data = await res.json();
+        const found = res.ok ? data.candidates : [];
+        box.innerHTML = found.map((b, i) => matchOptionHtml(b.imageUrl, b.title,
+            [[b.authors, b.series ? `${b.series}${b.sequence ? ' #' + b.sequence : ''}` : ''].filter(Boolean).join(' · '),
+             [b.narrators ? 'Narrated by ' + shortNames(b.narrators) : '', formatRuntime(b.runtime_min), releaseDate(b.release_date),
+              b.edition !== 'narrated' ? EDITION_LABELS[b.edition] : ''].filter(Boolean).join(' · ')],
+            `data-index="${i}"`)).join('') || `<p class="muted">${res.ok ? 'Nothing found on Audible.' : esc(data.detail || 'Audible search failed.')}</p>`;
+        box.querySelectorAll('[data-index]').forEach(btn => btn.addEventListener('click', () => {
+            setManualChoice(manualMatchFor, audibleChoice(found[btn.dataset.index]));
+            hideModal(document.getElementById('manualMatchModal'));
+        }));
+    } catch (err) {
+        box.innerHTML = '<p class="muted">Audible search failed.</p>';
+    } finally {
+        loader.classList.add('hidden');
+    }
+}
+
+let manualImportRunning = false;
+
+async function runManualImport() {
+    const mode = document.getElementById('manualImportMode').value;
+    const chosen = manualItems.filter(it => manualChecked.has(it.id) && manualChoices[it.id] && !manualResults[it.id]?.ok);
+    if (!chosen.length) return;
+    if (mode === 'move' && !await confirmDialog(`Move ${chosen.length} item${chosen.length === 1 ? '' : 's'} into the library? The originals are deleted afterwards, so a torrent of them stops seeding.`, { title: 'Move files?', confirmText: 'Move', danger: true })) return;
+    const items = chosen.map(it => {
+        const c = manualChoices[it.id];
+        return c.kind === 'library' ? { id: it.id, book_id: c.book_id } : c.kind === 'audible' ? { id: it.id, asin: c.asin } : { id: it.id, as_is: true };
+    });
+    const status = document.getElementById('manualImportStatus');
+    const { ok, data } = await postJSON('/api/manual_import/import', { items, mode });
+    if (!ok) {
+        setActionStatus(status, data.detail || 'Could not start the import', 'error');
+        return;
+    }
+    manualImportRunning = true;
+    updateManualImportButton();
+    let st = data;
+    while (st.running) {
+        setActionStatus(status, `Importing ${st.done + 1} of ${st.total}…`);
+        await new Promise(r => setTimeout(r, 1000));
+        st = await fetch('/api/manual_import/status').then(r => r.json()).catch(() => st);
+    }
+    manualImportRunning = false;
+    st.results.forEach(r => { manualResults[r.id] = r; if (r.ok) manualChecked.delete(r.id); });
+    await fetchLibrary();
+    setActionStatus(status, `${st.imported} imported${st.failed ? `, ${st.failed} failed` : ''}`, st.failed ? 'error' : 'ok');
+    drawManualImport();
+}
+
+function historyLimit() {
+    let value = '50';
+    try { value = localStorage.getItem('bayarr.historyLimit') || value; } catch (e) { /* storage unavailable */ }
+    return ['10', '20', '50', '100', 'all'].includes(value) ? value : '50';
+}
+
+function setupHistoryLimit() {
+    const select = document.getElementById('historyLimit');
+    select.value = historyLimit();
+    select.addEventListener('change', () => {
+        try { localStorage.setItem('bayarr.historyLimit', select.value); } catch (e) { /* storage unavailable */ }
+        renderActivity();
+    });
+}
+
 async function renderActivity() {
     renderConversions();
     let queueData, historyData;
     try {
         [queueData, historyData] = await Promise.all([
             fetch('/api/queue').then(r => r.json()),
-            fetch('/api/history?limit=200').then(r => r.json()),
+            fetch(`/api/history?limit=${historyLimit() === 'all' ? 1000 : historyLimit()}`).then(r => r.json()),
         ]);
     } catch (err) {
         console.error('Failed to load activity', err);
@@ -1603,7 +1902,7 @@ async function renderActivity() {
                 <button class="danger-btn" data-action="reject" data-id="${esc(q.id)}">Reject &amp; Search Again</button>
             </div>` : '';
         return `<tr>
-            <td><a href="#" class="queue-book" data-id="${esc(q.id)}">${esc(q.title)}</a>
+            <td>${bookLink(q.id, q.title)}
                 <div class="muted">${esc(q.release_title || q.authors || '')}</div>${actions}</td>
             <td><span class="library-status ${esc(statusClass(q.status))}" style="position: static; box-shadow: none;">${esc(q.status)}</span>
                 ${q.state ? `<div class="muted" style="margin-top: 4px;">${esc(q.state)}</div>` : ''}</td>
@@ -1615,13 +1914,12 @@ async function renderActivity() {
     }).join('') || '<tr><td colspan="5" class="no-results">Nothing downloading.</td></tr>';
 
     qRows.querySelectorAll('[data-action]').forEach(btn => btn.addEventListener('click', () => reviewAction(btn.dataset.id, btn.dataset.action)));
-    qRows.querySelectorAll('.queue-book').forEach(a => a.addEventListener('click', (e) => { e.preventDefault(); openBookModal(a.dataset.id); }));
 
     document.getElementById('historyRows').innerHTML = historyData.history.map(h => `
         <tr>
             <td class="muted">${esc(new Date(h.time).toLocaleString())}</td>
             <td><span class="event event-${esc(h.event)}">${esc(EVENT_LABELS[h.event] || h.event)}</span></td>
-            <td>${esc(h.title)}</td>
+            <td>${bookLink(h.book_id, h.title)}</td>
             <td class="muted">${esc(h.message)}</td>
         </tr>`).join('') || '<tr><td colspan="4" class="no-results">Nothing has happened yet.</td></tr>';
 
@@ -3132,9 +3430,9 @@ async function updateConvertButtons(bookId, info) {
     convertBtn.dataset.wasActive = running || queued ? '1' : '';
 }
 
-function conversionRow(label, title, detail, action) {
+function conversionRow(label, title, detail, action, bookId) {
     return `<div class="conversion-row">
-        <div class="conversion-text"><b>${esc(title)}</b><span class="muted">${detail}</span></div>
+        <div class="conversion-text"><b>${bookLink(bookId, title)}</b><span class="muted">${detail}</span></div>
         <span class="conversion-label">${label}</span>${action}</div>`;
 }
 
@@ -3155,13 +3453,13 @@ function drawConversions(st, recent, list) {
     if (st.current) {
         rows.push(conversionRow('Converting', st.current.title,
             `<span class="conversion-bar"><span style="width:${Math.round(st.current.progress * 100)}%"></span></span> ${Math.round(st.current.progress * 100)}%`,
-            `<button class="link-btn conversion-remove" data-id="${esc(st.current.book_id)}">Cancel</button>`));
+            `<button class="link-btn conversion-remove" data-id="${esc(st.current.book_id)}">Cancel</button>`, st.current.book_id));
     }
     st.queue.forEach(q => rows.push(conversionRow(`#${q.position}`, q.title,
         esc(q.source === 'auto' ? 'Queued after import' : q.source === 'bulk' ? 'Queued with others' : 'Queued by you'),
-        `<button class="link-btn conversion-remove" data-id="${esc(q.book_id)}">Remove</button>`)));
+        `<button class="link-btn conversion-remove" data-id="${esc(q.book_id)}">Remove</button>`, q.book_id)));
     recent.forEach(r => rows.push(conversionRow(resultLabels[r.result] || r.result, r.title,
-        esc([new Date(r.finished).toLocaleString(), r.message].filter(Boolean).join(' · ')), '')
+        esc([new Date(r.finished).toLocaleString(), r.message].filter(Boolean).join(' · ')), '', r.book_id)
         .replace('conversion-row', `conversion-row result-${esc(r.result)}`)));
     list.innerHTML = (st.available ? '' : '<p class="settings-hint">ffmpeg isn\'t installed, so nothing is converted (it\'s included in the Docker image).</p>')
         + (rows.join('') || '<p class="muted">Nothing queued.</p>');

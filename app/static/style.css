@@ -805,6 +805,107 @@ body {
     margin: 24px 0 12px;
 }
 
+.manual-import-table td {
+    vertical-align: top;
+}
+
+.manual-import-table .item-name {
+    word-break: break-word;
+}
+
+.manual-import-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+}
+
+.manual-import-footer .inline-select {
+    margin: 0;
+    margin-right: auto;
+}
+
+.match-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 280px;
+    overflow-y: auto;
+}
+
+.match-option {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    text-align: left;
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--bg-dark);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font: inherit;
+    cursor: pointer;
+}
+
+.match-option:hover {
+    border-color: var(--primary);
+}
+
+.match-option img {
+    width: 40px;
+    height: 40px;
+    object-fit: cover;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+.match-option .muted {
+    display: block;
+    font-size: 0.85rem;
+}
+
+.result-ok {
+    color: var(--success);
+}
+
+.result-error {
+    color: var(--error);
+}
+
+.section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.inline-select {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin: 24px 0 12px;
+}
+
+.inline-select select {
+    width: auto;
+    padding: 4px 8px;
+}
+
+a.book-link {
+    color: inherit;
+    text-decoration: none;
+}
+
+a.book-link:hover {
+    color: var(--primary);
+    text-decoration: underline;
+}
+
 .activity-table {
     background-color: var(--bg-dark);
     border: 1px solid var(--border-color);
@@ -1819,6 +1920,34 @@ tr.clickable {
 
 .series-hero-stats .stat b {
     color: var(--text-primary);
+}
+
+.edition-tabs {
+    display: flex;
+    gap: 4px;
+    margin: 0 0 12px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.edition-tab {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    padding: 8px 14px;
+    font: inherit;
+    cursor: pointer;
+    margin-bottom: -1px;
+}
+
+.edition-tab:hover {
+    color: var(--text-primary);
+}
+
+.edition-tab.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--primary);
+    cursor: default;
 }
 
 .series-hero-actions {

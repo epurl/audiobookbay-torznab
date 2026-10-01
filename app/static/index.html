@@ -259,6 +259,7 @@
             <div class="content-wrapper" id="activityView" hidden>
                 <div class="page-header">
                     <h2>Activity</h2>
+                    <button type="button" class="secondary-btn" id="manualImportOpen">Manual Import</button>
                 </div>
                 <h3 class="section-title">Queue</h3>
                 <div id="queueNotice" class="settings-hint"></div>
@@ -272,12 +273,56 @@
                     <h3 class="section-title">Conversions to M4B</h3>
                     <div id="conversionList" class="conversion-list"></div>
                 </div>
-                <h3 class="section-title">History</h3>
+                <div class="section-header">
+                    <h3 class="section-title">History</h3>
+                    <label class="inline-select">Show
+                        <select id="historyLimit">
+                            <option value="10">10</option>
+                            <option value="20">20</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                            <option value="all">All</option>
+                        </select>
+                    </label>
+                </div>
                 <div class="table-container activity-table">
                     <table class="data-table">
                         <thead><tr><th class="col-when">When</th><th class="col-event">Event</th><th class="col-book">Book</th><th>Details</th></tr></thead>
                         <tbody id="historyRows"></tbody>
                     </table>
+                </div>
+            </div>
+
+            <div class="content-wrapper" id="importView" hidden>
+                <div class="page-header">
+                    <h2>Manual Import</h2>
+                </div>
+                <p class="settings-hint">Brings in books from a folder, such as a download client's folder, as the book you choose. Folders holding several books are split into their books; archives are unpacked. Files are renamed and placed in your Root Folder like any import.</p>
+                <div class="import-toolbar">
+                    <input type="text" id="manualImportPath" class="form-input" placeholder="Folder to scan, e.g. /downloads">
+                    <button type="button" class="secondary-btn browse-btn" data-target="manualImportPath">Browse</button>
+                    <button type="button" id="manualImportScan" class="primary-btn">Scan</button>
+                </div>
+                <div id="manualImportLoader" class="loader hidden"><div class="spinner"></div></div>
+                <div id="manualImportSummary" class="import-summary"></div>
+                <div class="table-container activity-table" id="manualImportTableBox" hidden>
+                    <table class="data-table manual-import-table">
+                        <thead><tr>
+                            <th class="col-check"><input type="checkbox" id="manualImportAll" aria-label="Select all items with a book"></th>
+                            <th>Item</th><th>Book</th><th class="col-status">Result</th>
+                        </tr></thead>
+                        <tbody id="manualImportRows"></tbody>
+                    </table>
+                </div>
+                <div class="manual-import-footer" id="manualImportFooter" hidden>
+                    <label class="inline-select">How
+                        <select id="manualImportMode">
+                            <option value="copy">Hardlink or copy (the originals stay and keep seeding)</option>
+                            <option value="move">Move (the originals are deleted)</option>
+                        </select>
+                    </label>
+                    <span id="manualImportStatus" class="action-status"></span>
+                    <button type="button" id="manualImportGo" class="primary-btn" disabled>Import</button>
                 </div>
             </div>
 
@@ -794,6 +839,28 @@
                     <option value="Unmonitored">Add as Unmonitored (just track)</option>
                 </select>
                 <button class="primary-btn" id="listAddBtn" disabled>Add</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="manualMatchModal" class="modal">
+        <div class="modal-content import-content">
+            <div class="modal-header">
+                <h2>Choose the Book</h2>
+                <button type="button" class="close-btn" id="closeManualMatch" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-pad">
+                <p class="modal-lead" id="manualMatchItem"></p>
+                <div class="import-toolbar">
+                    <input type="text" id="manualMatchQuery" class="form-input" placeholder="Title and author">
+                    <button type="button" id="manualMatchSearch" class="primary-btn">Search</button>
+                </div>
+                <button type="button" class="link-btn" id="manualMatchAsIs"></button>
+                <h3 class="section-title">In your library</h3>
+                <div id="manualMatchLibrary" class="match-list"></div>
+                <h3 class="section-title">On Audible</h3>
+                <div id="manualMatchLoader" class="loader hidden"><div class="spinner"></div></div>
+                <div id="manualMatchAudible" class="match-list"></div>
             </div>
         </div>
     </div>

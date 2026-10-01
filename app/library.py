@@ -369,6 +369,16 @@ def author_keys(authors):
     return keys or {""}
 
 
+# Releases sold in parts: "Book Title (Part 1 of 2)", "Book Title (1 of 3)"
+_PART_OF = re.compile(r"[\(\[]\s*(?:part\s+)?(\d+)\s+of\s+(\d+)\s*[\)\]]", re.IGNORECASE)
+
+
+def part_number(title):
+    """The part a release is of a book sold in parts, or None."""
+    m = _PART_OF.search(title or "")
+    return int(m.group(1)) if m else None
+
+
 def find_match(library, book):
     """Finds the library entry for a book by path, ASIN, or title + a shared author in the
     same edition (a dramatized version is a separate entry from the narrated one)."""
@@ -385,7 +395,10 @@ def find_match(library, book):
     edition = edition_of(book)
     if not title_key(title):
         return None
-    same = [e for e in library if author_keys(e.get("authors")) & authors and edition_of(e) == edition]
+    # Each part of a book sold in parts is its own release
+    part = book.get("part") or part_number(title)
+    same = [e for e in library if author_keys(e.get("authors")) & authors and edition_of(e) == edition
+            and part_number(e.get("title")) == part]
     # The exact title first, then a title that's this one with or without its subtitle
     return next((e for e in same if title_key(e.get("title")) == title_key(title)), None) or \
         next((e for e in same if titles_match(e.get("title"), title)), None)

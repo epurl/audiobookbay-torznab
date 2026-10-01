@@ -137,34 +137,29 @@ def _same_book(a, b):
                 and ra and rb and abs(ra - rb) <= 0.05 * max(ra, rb))
 
 
-# Editions sold in parts: "Red Rising (Part 1 of 2) (Dramatized Adaptation)", "Light Bringer (1 of 3)"
+# Editions sold in parts: "Book Title (Part 1 of 2) (Dramatized Adaptation)", "Book Title (1 of 3)"
 _PART = re.compile(r"\s*[\(\[]\s*(?:part\s+)?(\d+)\s+of\s+(\d+)\s*[\)\]]", re.IGNORECASE)
 
 
 def _split_part(title):
-    """ "Red Rising (Part 1 of 2) (Dramatized Adaptation)" -> ("Red Rising (Dramatized Adaptation)", 1)"""
+    """ "Book Title (Part 1 of 2) (Dramatized Adaptation)" -> ("Book Title (Dramatized Adaptation)", 1)"""
     m = _PART.search(title or "")
     if not m:
         return title, None
     return re.sub(r"\s{2,}", " ", (title[:m.start()] + title[m.end():]).strip()), int(m.group(1))
 
 
-def _join_parts(parts):
-    """One book from the parts of an edition sold in pieces: the parts' ASINs, their total
-    length, and the first part's details."""
-    parts = sorted(parts, key=lambda pb: pb[0])
-    first = dict(parts[0][1])
-    first["title"] = _split_part(first["title"])[0]
-    first["part_asins"] = [b["asin"] for _, b in parts]
-    first["runtime_min"] = sum(b.get("runtime_min") or 0 for _, b in parts)
-    first["release_date"] = min((b.get("release_date") or "9999" for _, b in parts))
-    return first
+def part_of(title):
+    """(part, number of parts) for a release sold in parts, else (None, None)."""
+    m = _PART.search(title or "")
+    return (int(m.group(1)), int(m.group(2))) if m else (None, None)
 
 
 async def get_series_books(series_asin, language="All"):
-    """Every book in a series: (title, books, alternates). books has one entry per book,
-    its narrated edition where there is one; alternates are the books' other editions
-    (dramatized, abridged). Box sets and duplicate regional editions are dropped (the
+    """Every release in a series: (title, books, alternates). books has the narrated
+    editions (or a book's other edition when it has no narration); alternates are the
+    books' other editions (dramatized, abridged). A book sold in parts is listed part by
+    part, each its own release. Box sets and duplicate regional editions are dropped (the
     earliest edition is kept)."""
     data = await _get(f"{API}/{series_asin}", {"response_groups": "relationships,product_desc"})
     series = data.get("product") or {}
@@ -184,7 +179,7 @@ async def get_series_books(series_asin, language="All"):
             found[found.index(same)] = book
 
     kept, others = [], []
-    parted = {}  # (number, edition, title) -> {part: book}
+    parted = {}  # (number, edition, title, part) -> book
     for product in products:
         seq = sequences.get(product.get("asin"), "")
         if re.search(r"[-,]", seq):
@@ -198,15 +193,15 @@ async def get_series_books(series_asin, language="All"):
             book["series_list"].append({"name": series.get("title", ""), "asin": series_asin, "sequence": format_sequence(seq)})
         base, part = _split_part(book["title"])
         if part is not None:
+            book["part"], book["part_count"] = part_of(book["title"])
             # Regional duplicates of a part: keep the earliest
-            pieces = parted.setdefault((book["catalog_sequence"], book["edition"], normalize(base)), {})
-            if part not in pieces or (book["release_date"] or "9999") < (pieces[part]["release_date"] or "9999"):
-                pieces[part] = book
+            key = (book["catalog_sequence"], book["edition"], normalize(base), part)
+            if key not in parted or (book["release_date"] or "9999") < (parted[key]["release_date"] or "9999"):
+                parted[key] = book
             continue
         add(kept if book["edition"] == editions.NARRATED else others, book)
-    for pieces in parted.values():
-        book = _join_parts(pieces.items())
-        add(kept if book["edition"] == editions.NARRATED else others, book)
+    for book in parted.values():
+        (kept if book["edition"] == editions.NARRATED else others).append(book)
 
     # A book with no narrated edition is listed by its other edition
     alternates = []
