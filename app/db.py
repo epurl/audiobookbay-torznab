@@ -9,7 +9,7 @@ import tempfile
 import logging
 import uuid
 
-from app.library import DEFAULT_NAMING_FORMAT, find_match
+from app.library import _CONTRIBUTOR_ROLE, DEFAULT_NAMING_FORMAT, find_match
 
 logger = logging.getLogger(__name__)
 
@@ -99,13 +99,18 @@ def _load_db():
             settings.setdefault(k, v)
         db.setdefault("series", [])
         db.setdefault("history", [])
-        # Books used to be keyed by title; give older entries a stable id
-        missing_ids = False
+        changed = False
         for book in db.setdefault("library", []):
+            # Books used to be keyed by title; give older entries a stable id
             if not book.get("id"):
                 book["id"] = uuid.uuid4().hex
-                missing_ids = True
-        if missing_ids:
+                changed = True
+            # Earlier imports kept translators etc. in the author list
+            authors = book.get("authors") or ""
+            if _CONTRIBUTOR_ROLE.search(authors):
+                book["authors"] = ", ".join(a for a in authors.split(", ") if not _CONTRIBUTOR_ROLE.search(a))
+                changed = True
+        if changed:
             _save_db(db)
         return db
 

@@ -102,14 +102,19 @@ def parse_folder_name(name, author=None):
     return info
 
 
-def _names(value):
+# Contributors listed among the authors: "Danusia Stok - translator"
+_CONTRIBUTOR_ROLE = re.compile(r"\s-\s*(translator|editor|foreword|introduction|afterword|contributor|"
+                               r"illustrator|adapter|adaptation|preface|compiler)\b", re.IGNORECASE)
+
+
+def _names(value, skip_contributors=False):
     """Audiobookshelf stores people as ["Name"] or [{"name": "Name"}]."""
     if isinstance(value, str):
         return value
     names = []
     for item in value or []:
         name = item.get("name") if isinstance(item, dict) else item
-        if name:
+        if name and not (skip_contributors and _CONTRIBUTOR_ROLE.search(str(name))):
             names.append(str(name).strip())
     return ", ".join(names)
 
@@ -145,7 +150,7 @@ def read_abs_metadata(folder):
     release_date = data.get("publishedDate") or data.get("publishedYear") or ""
     return {
         "title": str(data["title"]).strip(),
-        "authors": _names(data.get("authors")),
+        "authors": _names(data.get("authors"), skip_contributors=True),
         "narrators": _names(data.get("narrators")),
         "series": (series or "").strip(),
         "sequence": format_sequence(sequence),
