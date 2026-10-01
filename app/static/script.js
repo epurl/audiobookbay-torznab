@@ -781,6 +781,7 @@ function setupLibrary() {
     setupSplitModal();
     setupOrganizeModal();
     setupListImport();
+    setupConvert();
 }
 
 function showModal(el) {
@@ -832,6 +833,8 @@ async function openBookModal(bookId) {
     const pathEl = document.getElementById('bookPath');
     const filesEl = document.getElementById('bookFiles');
     pathEl.textContent = book.path ? `Location: ${book.path}` : 'Not on disk yet.';
+    document.getElementById('convertBookBtn').hidden = true;
+    document.getElementById('deleteOriginalsBtn').hidden = true;
     filesEl.innerHTML = '';
     showModal(bookModal);
 
@@ -849,6 +852,7 @@ async function openBookModal(bookId) {
         filesEl.innerHTML = data.files.length
             ? data.files.map(f => `<tr><td>${esc(f.name)}</td><td>${esc(formatSize(f.size_bytes))}</td></tr>`).join('')
             : '<tr><td colspan="2" class="no-results">No audio files found.</td></tr>';
+        updateConvertButtons(bookId, data.convert);
     } catch (err) {
         filesEl.innerHTML = '<tr><td colspan="2" class="no-results">Could not load files.</td></tr>';
     }
@@ -3064,4 +3068,63 @@ async function renderStats() {
             </div>
             ${statBars('Books by release year', d.release_years.slice().reverse().slice(0, 15))}
         </div>`;
+}
+
+
+// -----------------
+// Convert to M4B (one file with chapters); the originals are kept until deleted
+// -----------------
+let convertTimer = null;
+
+function updateConvertButtons(bookId, info) {
+    if (!info || bookId !== currentBookId) return;
+    const convertBtn = document.getElementById('convertBookBtn');
+    const deleteBtn = document.getElementById('deleteOriginalsBtn');
+    convertBtn.hidden = !info.available || Boolean(info.reason);
+    deleteBtn.hidden = !info.originals;
+    deleteBtn.textContent = `Delete Originals (${info.originals}, ${formatSize(info.originals_bytes)})`;
+}
+
+async function watchConvert(bookId) {
+    clearTimeout(convertTimer);
+    const job = await fetch('/api/convert').then(r => r.json()).catch(() => null);
+    if (!job) return;
+    const msg = document.getElementById('bookStatusMsg');
+    const showing = currentBookId === job.book_id && bookModal.classList.contains('show');
+    if (job.running) {
+        if (showing) setActionStatus(msg, `Converting to M4B… ${Math.round(job.progress * 100)}%`);
+        convertTimer = setTimeout(() => watchConvert(bookId), 2000);
+        return;
+    }
+    if (job.finished === 'ok') {
+        toast(`Converted "${job.title}" to M4B. The original files are kept until you delete them.`, 'ok');
+        if (showing) setActionStatus(msg, 'Converted to M4B', 'ok');
+    } else if (job.finished === 'error') {
+        toast(`Converting "${job.title}" failed: ${job.error}`, 'error');
+        if (showing) setActionStatus(msg, job.error, 'error');
+    }
+    await fetchLibrary();
+    if (showing) openBookModal(job.book_id);
+}
+
+function setupConvert() {
+    document.getElementById('convertBookBtn').addEventListener('click', async () => {
+        const book = appLibrary.find(b => b.id === currentBookId);
+        if (!await confirmDialog(`Convert "${book.title}" to one M4B file?\n\nEach current file becomes a chapter, with the book's tags and cover. `
+            + 'The original files are kept (renamed to .original, which Audiobookshelf ignores) until you delete them. '
+            + 'This runs in the background and can take a while for long books.', { title: 'Convert to M4B', confirmText: 'Convert' })) return;
+        const { ok, data } = await postJSON(`/api/library/${encodeURIComponent(currentBookId)}/convert`);
+        if (!ok) return setActionStatus(document.getElementById('bookStatusMsg'), data.detail || 'Could not start', 'error');
+        document.getElementById('convertBookBtn').hidden = true;
+        watchConvert(currentBookId);
+    });
+    document.getElementById('deleteOriginalsBtn').addEventListener('click', async () => {
+        const book = appLibrary.find(b => b.id === currentBookId);
+        if (!await confirmDialog(`Permanently delete the original files of "${book.title}"?\n\nOnly the files kept from before converting to M4B (*.original) are deleted. `
+            + 'This can\'t be undone.', { title: 'Delete original files', confirmText: 'Delete', danger: true })) return;
+        const { ok, data } = await postJSON(`/api/library/${encodeURIComponent(currentBookId)}/originals/delete`);
+        if (!ok) return setActionStatus(document.getElementById('bookStatusMsg'), data.detail || 'Could not delete', 'error');
+        toast(`Deleted ${data.deleted} original file${data.deleted === 1 ? '' : 's'} (${formatSize(data.bytes)})`, 'ok');
+        openBookModal(currentBookId);
+    });
 }

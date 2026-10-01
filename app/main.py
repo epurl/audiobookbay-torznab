@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import (audible, audiobookshelf, auth, authors, book_search, db, editions, health, indexers, library,
+from app import (audible, audiobookshelf, auth, authors, book_search, convert, db, editions, health, indexers, library,
                  organize, reading_list, release_calendar, scraper, series_index, splitter, stats)
 from app.monitor import (auto_download_book, classify_editions, find_missing_books, grab, match_job, run_monitor_loop,
                          schedule_search, schedule_searches, start_match_job, sync_series)
@@ -487,11 +487,38 @@ async def api_book_files(book_id: str):
         return {"path": path, "exists": False, "files": []}
     files = await asyncio.to_thread(library.audio_files, path)
     base = path if os.path.isdir(path) else os.path.dirname(path)
+    kept = await asyncio.to_thread(convert.originals, path)
     return {
         "path": path,
         "exists": True,
         "files": [{"name": library.display_name(os.path.relpath(f, base)), "size_bytes": size} for f, size in files],
+        # Converting to M4B: whether it's possible, and the originals a conversion kept
+        "convert": {"available": convert.available(), "reason": convert.can_convert(book),
+                    "originals": len(kept), "originals_bytes": sum(size for _, size in kept)},
     }
+
+@app.post("/api/library/{book_id}/convert")
+async def api_convert(book_id: str):
+    """Converts the book's audio files to one M4B with chapters, in the background."""
+    _get_book_or_404(book_id)
+    try:
+        convert.start(book_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return dict(convert.job)
+
+@app.get("/api/convert")
+async def api_convert_status():
+    return {**convert.job, "available": convert.available()}
+
+@app.post("/api/library/{book_id}/originals/delete")
+async def api_delete_originals(book_id: str):
+    """Deletes the original files a conversion kept (*.original)."""
+    book = _get_book_or_404(book_id)
+    if convert.job["running"] and convert.job["book_id"] == book_id:
+        raise HTTPException(status_code=409, detail="It's being converted right now.")
+    count, size = await asyncio.to_thread(convert.delete_originals, book)
+    return {"success": True, "deleted": count, "bytes": size}
 
 # --- Activity: queue and history ---
 
