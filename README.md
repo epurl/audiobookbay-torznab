@@ -16,7 +16,7 @@ An audiobook manager in the style of Sonarr and Radarr, built around AudiobookBa
 - **Editions:** narrated, dramatized (full cast, GraphicAudio) and abridged editions are told apart, matched, searched for and imported separately.
 - **Authors:** an author's page with all their books; follow an author to get their new releases automatically.
 - **Calendar:** your books on their release dates, coloured by status like Sonarr's calendar, plus trending Audible releases filtered by trend and genre.
-- **Activity:** live download queue and history (show 10, 20, 50, 100 or all), and **Manual Import**. Book titles everywhere link to the book (`#/book/<id>`). **Audiobookshelf:** metadata, covers and library scans.
+- **Activity:** live download queue and history (show 10, 20, 50, 100 or all), and **Manual Import**. Book titles link to the book (`#/book/<id>`) in Activity, Manual Import, series and author pages, the Calendar, System > Health, and Search (**In Library**). **Audiobookshelf:** metadata, covers and library scans.
 - **Manual Import** (Activity): like Sonarr's. Scan a folder (your Downloads Folder unless you pick another) and each item is listed: a folder of audio files, a single file, an archive, or one book of a folder holding several. Each gets a guess: a library book waiting for files, else a clear match on Audible. **Change** searches your library and Audible, or uses the item as it's named. Tick the items and **Import** them, either **hardlinked or copied** (the originals stay and keep seeding) or **moved** (the originals are deleted afterwards). Files are renamed and placed like any import; a book already on disk isn't imported twice.
 
 ## Quick start (Docker)
@@ -97,7 +97,7 @@ Searches are spaced a second apart and cached for 15 minutes. If AudiobookBay st
 The preview shows each book as **New**, **Link to library** (a book you already track, matched by ASIN or title and author) or **In library**.
 
 Managing books:
-- **Filter and sort.** The **Wanted** and **Not matched on Audible** filters are especially useful.
+- **Filter and sort.** The **Wanted** and **Not matched on Audible** filters are especially useful. **Edition** shows only narrated, dramatized or abridged books. Sorted by series, each series gets a heading, and a series' dramatizations are grouped under their own heading ("Name (Dramatized)").
 - **Select** several books to change their status, match them on Audible, or remove them.
 - **Match on Audible** fills in the ASIN, runtime, narrators and series for books imported from folder names. Matching many books at once accepts only clear-cut matches. Your files are never changed.
 - **Book details:** edit, see files, **Search Now**, **Manual Search**, or **Remove**. Removing never deletes files.

@@ -611,6 +611,13 @@ function librarySortKey(book, sort) {
     }
 }
 
+// The heading a book sorts under in series order: its series, with dramatizations apart
+function libraryGroupName(book) {
+    if (!book.series) return 'Not in a series';
+    const name = (book.series_asin && librarySeriesNames[book.series_asin]) || book.series;
+    return editionOf(book) === 'dramatized' ? `${name} (Dramatized)` : name;
+}
+
 // "Book Title (Part 2 of 3)" -> 2; books not sold in parts -> 0
 function partOf(title) {
     const m = String(title || '').match(/[([]\s*(?:part\s+)?(\d+)\s+of\s+\d+\s*[)\]]/i);
@@ -623,6 +630,7 @@ function renderLibrary() {
     const stats = document.getElementById('libStats');
     const text = document.getElementById('libFilterText').value.trim().toLowerCase();
     const status = document.getElementById('libFilterStatus').value;
+    const edition = document.getElementById('libFilterEdition').value;
     const sort = document.getElementById('libSort').value;
 
     loader.style.display = 'none';
@@ -652,11 +660,10 @@ function renderLibrary() {
             if (!WANTED_STATUSES.includes(b.status)) return false;
         } else if (status === '__unmatched') {
             if (b.asin) return false;
-        } else if (status === '__dramatized' || status === '__abridged') {
-            if (editionOf(b) !== status.slice(2)) return false;
         } else if (status === '__checkedition') {
             if (!b.edition_check) return false;
         } else if (status && b.status !== status) return false;
+        if (edition && editionOf(b) !== edition) return false;
         if (!text) return true;
         return [b.title, b.authors, b.series, b.narrators].join(' ').toLowerCase().includes(text);
     });
@@ -678,13 +685,26 @@ function renderLibrary() {
         container.querySelector('[data-empty-action="clear"]').addEventListener('click', () => {
             document.getElementById('libFilterText').value = '';
             document.getElementById('libFilterStatus').value = '';
+            document.getElementById('libFilterEdition').value = '';
             renderLibrary();
         });
         return;
     }
 
     const fragment = document.createDocumentFragment();
+    let lastGroup = null;
     books.forEach(book => {
+        if (sort === 'series') {
+            const group = libraryGroupName(book);
+            if (group !== lastGroup) {
+                const count = books.filter(b => libraryGroupName(b) === group).length;
+                const heading = document.createElement('h3');
+                heading.className = 'library-group-heading';
+                heading.innerHTML = `${esc(group)} <span class="muted">${count}</span>`;
+                fragment.appendChild(heading);
+                lastGroup = group;
+            }
+        }
         const card = document.createElement('div');
         card.className = 'book-card';
         const bookStatus = book.status || 'Monitored';
@@ -812,7 +832,7 @@ function setupLibrary() {
         setSelectMode(false);
     });
 
-    ['libFilterText', 'libFilterStatus', 'libSort'].forEach(id => {
+    ['libFilterText', 'libFilterStatus', 'libFilterEdition', 'libSort'].forEach(id => {
         document.getElementById(id).addEventListener(id === 'libFilterText' ? 'input' : 'change', renderLibrary);
     });
 
@@ -2049,7 +2069,7 @@ function renderGroup(title, books) {
 
         let addBtnHtml = '';
         if (isTracked) {
-            addBtnHtml = `<div class="add-btn monitored-btn" style="pointer-events: none;">${esc(tracked.status === 'Imported' ? 'In Library' : tracked.status)}</div>`;
+            addBtnHtml = `<a href="#/book/${encodeURIComponent(tracked.id)}" class="add-btn monitored-btn book-link" data-id="${esc(tracked.id)}" title="Open it in your library">${esc(tracked.status === 'Imported' ? 'In Library' : tracked.status)}</a>`;
         } else {
             addBtnHtml = `<div class="add-btn">Add to Library</div>`;
         }
@@ -2409,24 +2429,33 @@ function eventSubtitle(book) {
     return book.series ? `${book.series}${book.sequence ? ' #' + book.sequence : ''}` : primaryAuthor(book.authors);
 }
 
+// A library book's calendar entry is a link to it; a trending one is a button (it offers to add)
+function calTag(ev) {
+    return ev.kind === 'library' && ev.book.id
+        ? { open: `a href="#/book/${encodeURIComponent(ev.book.id)}" data-id="${esc(ev.book.id)}"`, link: ' book-link', close: 'a' }
+        : { open: 'button', link: '', close: 'button' };
+}
+
 function calEventHtml(ev, index) {
     const b = ev.book;
+    const tag = calTag(ev);
     const trendBadge = ev.kind === 'trending' && b.rank && b.rank <= 100 ? `<span class="cal-rank" title="Audible best seller #${b.rank}">#${b.rank}</span>` : '';
-    return `<button class="cal-event cal-${ev.status}${trendBadge ? ' ranked' : ''}" data-event="${index}" title="${esc(`${b.title} — ${CAL_STATUS_LABELS[ev.status]}`)}">
+    return `<${tag.open} class="cal-event cal-${ev.status}${trendBadge ? ' ranked' : ''}${tag.link}" data-event="${index}" title="${esc(`${b.title} — ${CAL_STATUS_LABELS[ev.status]}`)}">
         <span class="cal-event-title">${esc(b.title)}</span>${trendBadge}
-        <span class="cal-event-sub">${esc(eventSubtitle(b))}</span></button>`;
+        <span class="cal-event-sub">${esc(eventSubtitle(b))}</span></${tag.close}>`;
 }
 
 function calCardHtml(ev, index) {
     const b = ev.book;
     const label = ev.kind === 'library' ? CAL_STATUS_LABELS[ev.status] : (b.rank ? `Best seller #${b.rank}` : 'Trending');
-    return `<button class="cal-card cal-${ev.status}" data-event="${index}">
+    const tag = calTag(ev);
+    return `<${tag.open} class="cal-card cal-${ev.status}${tag.link}" data-event="${index}">
         <img src="${esc(coverUrl(b))}" alt="" loading="lazy" onerror="this.src='${PLACEHOLDER_COVER}'">
         <span class="cal-card-text">
             <span class="cal-event-title">${esc(b.title)}</span>
             <span class="cal-event-sub">${esc(eventSubtitle(b))}</span>
             <span class="cal-card-status">${esc(label)}</span>
-        </span></button>`;
+        </span></${tag.close}>`;
 }
 
 function startOfWeek(d) {
@@ -2876,7 +2905,7 @@ function drawHealth() {
         return `<div class="health-group sev-${k.severity}">
             <div class="health-group-head"><h3>${esc(k.label)} <span class="muted">${items.length}</span></h3>${bulk}</div>
             ${items.map((i, n) => `<div class="health-row">
-                <div class="health-book"><b>${esc(i.title)}</b> <span class="muted">· ${esc(primaryAuthor(i.authors))}</span>
+                <div class="health-book"><b>${bookLink(i.book_id, i.title)}</b> <span class="muted">· ${esc(primaryAuthor(i.authors))}</span>
                     ${i.detail ? `<div class="muted health-detail">${esc(i.detail)}</div>` : ''}</div>
                 <button class="link-btn health-fix" data-kind="${kind}" data-index="${n}">${HEALTH_FIX_LABELS[k.fix]}</button>
             </div>`).join('')}
@@ -3111,7 +3140,7 @@ function drawAuthorPage() {
             <thead><tr><th class="col-date">Released</th><th>Title</th><th>Series</th><th class="col-len">Length</th><th class="col-status">Status</th></tr></thead>
             <tbody>${a.books.map((b, i) => `<tr class="${b.book_id ? 'clickable' : 'not-owned'}" data-index="${i}">
                 <td class="muted nowrap">${esc(releaseDate(b.release_date))}${b.upcoming ? ' <span class="edition-badge edition-upcoming">Upcoming</span>' : ''}</td>
-                <td>${esc(b.title)} ${editionOf(b) !== 'narrated' ? `<span class="edition-badge edition-${editionOf(b)}">${EDITION_LABELS[editionOf(b)]}</span>` : ''}</td>
+                <td>${bookLink(b.book_id, b.title)} ${editionOf(b) !== 'narrated' ? `<span class="edition-badge edition-${editionOf(b)}">${EDITION_LABELS[editionOf(b)]}</span>` : ''}</td>
                 <td class="muted">${esc(seriesLabel(b))}</td>
                 <td class="muted nowrap">${esc(formatRuntime(b.runtime_min))}</td>
                 <td class="nowrap">${b.book_id ? `<span class="library-status ${esc(statusClass(b.status))} inline-status">${esc(b.status)}</span>`
