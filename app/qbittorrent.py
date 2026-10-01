@@ -57,6 +57,29 @@ async def send_to_qbittorrent(host: str, username: str, password: str, magnet_ur
     finally:
         await client.aclose()
 
+async def send_torrent_file(host: str, username: str, password: str, torrent: bytes, title: str = "") -> bool:
+    """Uploads a .torrent file to qBittorrent (for indexers that don't give magnet links)."""
+    client = await login_qbittorrent(host, username, password)
+    if not client:
+        return False
+    try:
+        data = {"category": "audiobooks"}
+        if title:
+            data["tags"] = f"bayarr-{title.replace(',', '').strip()}"
+        response = await client.post("/api/v2/torrents/add", data=data, timeout=15.0,
+                                     files={"torrents": ("release.torrent", torrent, "application/x-bittorrent")})
+        if _succeeded(response):
+            logger.info("Successfully added torrent file to qBittorrent")
+            return True
+        logger.error(f"qBittorrent add torrent failed: {response.status_code} - {response.text}")
+        return False
+    except Exception as e:
+        logger.error(f"Error adding torrent to qBittorrent: {e}")
+        return False
+    finally:
+        await client.aclose()
+
+
 async def get_completed_torrents(host: str, username: str, password: str):
     """Fetches completed torrents in the audiobooks category."""
     client = await login_qbittorrent(host, username, password)

@@ -265,6 +265,7 @@
                     <button class="settings-tab active" data-section="general" role="tab">General</button>
                     <button class="settings-tab" data-section="media" role="tab">Media Management</button>
                     <button class="settings-tab" data-section="client" role="tab">Download Client</button>
+                    <button class="settings-tab" data-section="indexers" role="tab">Indexers</button>
                     <button class="settings-tab" data-section="releases" role="tab">Releases</button>
                     <button class="settings-tab" data-section="connect" role="tab">Audiobookshelf</button>
                     <button class="settings-tab" data-section="security" role="tab">Security</button>
@@ -355,6 +356,60 @@
                     </section>
 
                     <!-- Download Client -->
+                    <section class="settings-section" data-section="indexers" hidden>
+                        <h3>AudiobookBay</h3>
+                        <div class="settings-group">
+                            <label class="checkbox-label"><input type="checkbox" id="setAbbEnabled"> Search AudiobookBay</label>
+                        </div>
+                        <div class="settings-group">
+                            <label for="setAbbUrl">Address</label>
+                            <input type="text" id="setAbbUrl" class="form-input" placeholder="https://audiobookbay.lu">
+                            <p class="settings-hint">Change it if the site moves to another domain.</p>
+                        </div>
+                        <div class="settings-group">
+                            <label for="setAbbCookie">Session Cookie</label>
+                            <input type="password" id="setAbbCookie" class="form-input full" autocomplete="off" placeholder="Paste the whole Cookie header">
+                            <p class="settings-hint"><span id="abbCookieState"></span> <button type="button" class="link-btn" id="abbCookieClear" hidden>Clear</button></p>
+                            <details class="settings-help">
+                                <summary>How to get it</summary>
+                                <ol>
+                                    <li>Log in to AudiobookBay in your browser.</li>
+                                    <li>Open Developer Tools (F12), go to the Network tab, and refresh the page.</li>
+                                    <li>Click the first request (the page itself), find <b>Cookie</b> under Request Headers, and copy its whole value.</li>
+                                    <li>Paste it here, set the User Agent to the same browser's (or leave it), Test, then Save.</li>
+                                </ol>
+                            </details>
+                        </div>
+                        <div class="settings-group">
+                            <label for="setAbbUserAgent">User Agent</label>
+                            <input type="text" id="setAbbUserAgent" class="form-input full" placeholder="Leave empty for the default (Chrome on Windows)">
+                            <p class="settings-hint">Cloudflare checks it against the cookie: use the browser the cookie came from (search "what is my user agent").</p>
+                        </div>
+                        <div class="settings-group inline-actions">
+                            <button type="button" class="secondary-btn" id="abbTestBtn">Test</button>
+                            <span class="action-status" id="abbTestStatus"></span>
+                        </div>
+
+                        <h3>Torznab Indexers</h3>
+                        <p class="settings-hint">Other sources (e.g. from Prowlarr or Jackett), searched alongside AudiobookBay and scored the same way. In Prowlarr, copy an indexer's Torznab feed URL (ending in /api) and Prowlarr's API key.</p>
+                        <div id="indexerList" class="indexer-list"></div>
+                        <div class="indexer-form no-dirty" id="indexerForm">
+                            <input type="hidden" id="ixId">
+                            <div class="indexer-form-grid">
+                                <label>Name<input type="text" id="ixName" class="form-input" placeholder="e.g. MyTracker"></label>
+                                <label>Torznab URL<input type="text" id="ixUrl" class="form-input" placeholder="http://prowlarr:9696/1/api"></label>
+                                <label>API Key<input type="password" id="ixKey" class="form-input" autocomplete="off"></label>
+                                <label>Categories<input type="text" id="ixCats" class="form-input" placeholder="3030"></label>
+                            </div>
+                            <div class="inline-actions">
+                                <button type="button" class="primary-btn" id="ixSaveBtn">Add Indexer</button>
+                                <button type="button" class="secondary-btn" id="ixTestBtn">Test</button>
+                                <button type="button" class="link-btn" id="ixCancelBtn" hidden>Cancel</button>
+                                <span class="action-status" id="ixStatus"></span>
+                            </div>
+                        </div>
+                    </section>
+
                     <section class="settings-section" data-section="releases" hidden>
                         <p class="settings-hint">How releases are scored, on top of the title, author, series number, edition and size checks. Lists are comma-separated; leave anything empty (or 0) to skip it. Manual Search shows the effect on each release.</p>
                         <div class="settings-group">

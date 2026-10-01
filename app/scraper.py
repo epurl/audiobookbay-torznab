@@ -21,9 +21,31 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "https://audiobookbay.lu"
-ABB_COOKIE = os.environ.get("ABB_COOKIE", "")
-USER_AGENT = os.environ.get("ABB_USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+BASE_URL = "https://audiobookbay.lu"  # The default; Settings > Indexers can change it
+DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+
+def _settings():
+    from app import db  # Imported here: db is loaded after the scraper in some tools
+    try:
+        return db.get_settings()
+    except Exception:
+        return {}
+
+
+def base_url():
+    """The site's address: from Settings (the domain changes from time to time), else the default."""
+    url = (_settings().get("abb_url") or "").strip().rstrip("/")
+    return url if re.match(r"^https?://", url) else BASE_URL
+
+
+def cookie():
+    """The session cookie: from Settings, else the ABB_COOKIE environment variable."""
+    return (_settings().get("abb_cookie") or os.environ.get("ABB_COOKIE", "")).strip()
+
+
+def user_agent():
+    return (_settings().get("abb_user_agent") or os.environ.get("ABB_USER_AGENT") or DEFAULT_USER_AGENT).strip()
 
 RESULTS_PER_PAGE = 9
 MAX_QUERY_LENGTH = 50  # The site's search box limit; longer queries find nothing
@@ -37,9 +59,9 @@ _paused_until = 0.0
 
 async def fetch_html(url: str, params: Optional[dict] = None) -> str:
     """Fetches HTML using urllib to bypass Cloudflare's httpx blocking."""
-    headers = {"User-Agent": USER_AGENT}
-    if ABB_COOKIE:
-        headers["Cookie"] = ABB_COOKIE
+    headers = {"User-Agent": user_agent()}
+    if cookie():
+        headers["Cookie"] = cookie()
 
     req = urllib.request.Request(url, headers=headers)
 
@@ -230,7 +252,7 @@ def _parse_listing(post):
     raw_title = re.sub(r"\s+", " ", title_link.get_text(" ", strip=True))
     link = title_link.get("href") or ""
     if link and not link.startswith("http"):
-        link = urllib.parse.urljoin(BASE_URL + "/", link)
+        link = urllib.parse.urljoin(base_url() + "/", link)
 
     text = _plain(post)
     info = post.select_one("div.postInfo")
@@ -301,10 +323,10 @@ async def search_page(query: str, page: int = 1) -> tuple[List[Dict], int]:
     cached = _search_cache.get(key)
     if cached is not None:
         return cached
-    url = f"{BASE_URL}/page/{page}/" if page > 1 else f"{BASE_URL}/"
+    url = f"{base_url()}/page/{page}/" if page > 1 else f"{base_url()}/"
     html = await fetch_html(url, {"s": query} if query else None)
     if "cf-browser-verification" in html or "challenge-platform" in html and "postTitle" not in html:
-        raise RuntimeError("AudiobookBay returned a Cloudflare check instead of results. Set ABB_COOKIE (see the README).")
+        raise RuntimeError("AudiobookBay returned a Cloudflare check instead of results. Add your AudiobookBay cookie in Settings > Indexers.")
     results = parse_search_page(html)
     return _search_cache.put(key, (results, last_page(html)))
 
@@ -417,7 +439,8 @@ async def fetch_detail(detail_url: str, title: str = "") -> Optional[Dict]:
     """A book's detail page, parsed. Cached for a few hours."""
     # Only ever fetch AudiobookBay pages; the URL comes from API callers
     parsed = urllib.parse.urlparse(detail_url or "")
-    if parsed.scheme not in ("http", "https") or parsed.netloc != urllib.parse.urlparse(BASE_URL).netloc:
+    allowed = {urllib.parse.urlparse(base_url()).netloc, urllib.parse.urlparse(BASE_URL).netloc}
+    if parsed.scheme not in ("http", "https") or parsed.netloc not in allowed:
         logger.warning(f"Refusing to fetch non-AudiobookBay URL: {detail_url}")
         return None
     cached = _detail_cache.get(detail_url)
@@ -476,3 +499,36 @@ async def add_details(results, concurrency=3):
     if results:
         await asyncio.gather(*[load(r) for r in results])
     return results
+
+
+async def test_connection(url="", cookie_value=None, agent=""):
+    """Reaches the site and says whether the cookie logs in. Unsaved values from the form
+    can be tried before saving them."""
+    global _paused_until
+    url = (url or base_url()).strip().rstrip("/")
+    headers = {"User-Agent": (agent or user_agent()).strip()}
+    value = cookie() if cookie_value is None else cookie_value.strip()
+    if value:
+        headers["Cookie"] = value
+    req = urllib.request.Request(url + "/", headers=headers)
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+
+    def fetch():
+        with urllib.request.urlopen(req, context=context, timeout=20.0) as response:
+            return response.read().decode("utf-8", errors="ignore")
+
+    try:
+        html = await asyncio.get_running_loop().run_in_executor(None, fetch)
+    except Exception as e:
+        return {"ok": False, "logged_in": False, "message": f"Couldn't reach {url}: {e}"}
+    _paused_until = 0.0  # It answers again: no need to keep searches paused
+    if "challenge-platform" in html and "postTitle" not in html:
+        return {"ok": False, "logged_in": False, "message": "Cloudflare blocked the request. A fresh cookie (with the matching user agent) usually helps."}
+    logged_in = bool(re.search(r"log\s*out|logout", html, re.IGNORECASE))
+    if logged_in:
+        return {"ok": True, "logged_in": True, "message": "Connected and logged in."}
+    if value:
+        return {"ok": True, "logged_in": False, "message": "Connected, but the cookie doesn't log in (it may have expired). Searching still works."}
+    return {"ok": True, "logged_in": False, "message": "Connected (no cookie set)."}

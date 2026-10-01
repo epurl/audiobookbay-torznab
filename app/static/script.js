@@ -203,6 +203,7 @@ async function initApp() {
     setupSeriesPages();
     setupCalendar();
     setupSystem();
+    setupIndexers();
     window.addEventListener('hashchange', route);
     route();
 }
@@ -284,6 +285,12 @@ async function fetchSettings() {
         document.getElementById('setVerifyRuntime').checked = appSettings.verify_runtime ?? true;
         document.getElementById('setRuntimeTolerance').value = appSettings.runtime_tolerance ?? 10;
         document.getElementById('setWriteMetadata').checked = appSettings.write_metadata ?? true;
+        document.getElementById('setAbbEnabled').checked = appSettings.abb_enabled ?? true;
+        document.getElementById('setAbbUrl').value = appSettings.abb_url || '';
+        document.getElementById('setAbbUserAgent').value = appSettings.abb_user_agent || '';
+        document.getElementById('setAbbCookie').value = '';
+        abbCookieClearing = false;
+        updateAbbCookieState();
         document.getElementById('setPrefNarrators').value = appSettings.pref_narrators || '';
         document.getElementById('setAvoidNarrators').value = appSettings.avoid_narrators || '';
         document.getElementById('setPreferredWords').value = appSettings.preferred_words || '';
@@ -356,6 +363,11 @@ function setupSettings() {
             blocked_uploaders: document.getElementById('setBlockedUploaders').value.trim(),
             min_bitrate: parseInt(document.getElementById('setMinBitrate').value, 10) || 0,
             max_size_gb: parseFloat(document.getElementById('setMaxSize').value) || 0,
+            abb_enabled: document.getElementById('setAbbEnabled').checked,
+            abb_url: document.getElementById('setAbbUrl').value.trim(),
+            abb_user_agent: document.getElementById('setAbbUserAgent').value.trim(),
+            abb_cookie: document.getElementById('setAbbCookie').value.trim(),
+            abb_cookie_clear: abbCookieClearing,
             abs_url: document.getElementById('setAbsUrl').value.trim(),
             abs_token: document.getElementById('setAbsToken').value,
             abs_library_id: document.getElementById('setAbsLibrary').value,
@@ -373,6 +385,8 @@ function setupSettings() {
             if (newSettings.abs_token) appSettings.abs_token_set = true;
             delete newSettings.qbt_pass;
             delete newSettings.abs_token;
+            delete newSettings.abb_cookie;
+            delete newSettings.abb_cookie_clear;
             appSettings = { ...appSettings, ...newSettings };
             document.getElementById('setQbtPass').value = "";
             document.getElementById('setAbsToken').value = "";
@@ -392,8 +406,9 @@ function setupSettings() {
 
     // Unsaved-changes hint on the save bar
     document.querySelectorAll('.settings-section:not([data-section="security"]):not([data-section="backup"])').forEach(section => {
-        section.addEventListener('input', markSettingsDirty);
-        section.addEventListener('change', markSettingsDirty);
+        // Indexers are saved on their own, not with the save bar
+        section.addEventListener('input', e => { if (!e.target.closest('.no-dirty')) markSettingsDirty(); });
+        section.addEventListener('change', e => { if (!e.target.closest('.no-dirty')) markSettingsDirty(); });
     });
 
     document.getElementById('qbtTestBtn').addEventListener('click', async (e) => {
@@ -1794,7 +1809,7 @@ function renderABBResults() {
     displayData.forEach(res => {
         const tr = document.createElement('tr');
         if (res.verdict === 'rejected') tr.className = 'release-rejected';
-        const magnetUrl = safeUrl(res.magnet_url || `/api/download?url=${encodeURIComponent(res.link)}&title=${encodeURIComponent(res.title)}`);
+        const magnetUrl = safeUrl(res.magnet_url || res.download_url || `/api/download?url=${encodeURIComponent(res.link)}&title=${encodeURIComponent(res.title)}`);
         const isM4b = (res.format || '').toUpperCase() === 'M4B';
         const narratorMatch = (res.reasons || []).includes('Narrator matches');
         const why = [...(res.problems || []), ...(res.reasons || [])];
@@ -1812,7 +1827,7 @@ function renderABBResults() {
         if (appSettings.qbt_enabled) {
             actionsHtml = `
                 <div style="display: flex; gap: 8px;">
-                    <button class="download-icon-btn send-to-client-btn" data-url="${esc(res.link)}" title="Send to qBittorrent">
+                    <button class="download-icon-btn send-to-client-btn" data-url="${esc(res.link)}" data-index="${displayData.indexOf(res)}" title="Send to qBittorrent">
                         <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"></path></svg>
                     </button>
                     ${actionsHtml}
@@ -1822,8 +1837,8 @@ function renderABBResults() {
 
         tr.innerHTML = `
             <td>
-                <a class="release-title" href="${safeUrl(res.link)}" target="_blank" rel="noopener noreferrer">${esc(res.raw_title || res.title)}</a>
-                <div class="release-meta">${esc(res.author || '')}${posted}</div>
+                <a class="release-title" href="${safeUrl(res.link)}" target="_blank" rel="noopener noreferrer">${esc(res.release_name || res.raw_title || res.title)}</a>
+                <div class="release-meta">${esc(res.author || '')}${posted}${res.seeders != null ? ` · ${esc(res.seeders)} seeders` : ''}${res.source && res.source !== 'AudiobookBay' ? `<span class="release-source">${esc(res.source)}</span>` : ''}</div>
                 ${notes}
             </td>
             <td class="nowrap">${esc(res.size_str)}</td>
@@ -1847,6 +1862,10 @@ function renderABBResults() {
         btn.addEventListener('click', async (e) => {
             const button = e.currentTarget;
             const url = button.getAttribute('data-url');
+            const picked = displayData[Number(button.dataset.index)] || {};
+            const release = { magnet_url: picked.magnet_url, download_url: picked.download_url, link: picked.link,
+                              title: picked.title, raw_title: picked.raw_title, format: picked.format, size_str: picked.size_str,
+                              source: picked.source };
 
             button.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px;"></div>';
             button.disabled = true;
@@ -1855,7 +1874,7 @@ function renderABBResults() {
                 const res = await fetch('/api/send_to_client', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url, book: currentModalBook })
+                    body: JSON.stringify({ url, book: currentModalBook, release })
                 });
                 if (res.ok) {
                     button.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" stroke="var(--success)" stroke-width="2" fill="none"><polyline points="20 6 9 17 4 12"></polyline></svg>';
@@ -2568,4 +2587,118 @@ function setupSystem() {
         const { data } = await postJSON('/api/health/deep');
         updateHealthDeep({ ...data, running: true });
     });
+}
+
+
+// -----------------
+// Settings > Indexers: AudiobookBay (cookie etc.) and Torznab indexers
+// -----------------
+let abbCookieClearing = false;
+
+function updateAbbCookieState() {
+    const state = document.getElementById('abbCookieState');
+    const clear = document.getElementById('abbCookieClear');
+    const saved = appSettings.abb_cookie_set && !abbCookieClearing;
+    state.textContent = abbCookieClearing ? 'The saved cookie will be removed when you save.'
+        : saved ? 'A cookie is saved (it is never shown again). Paste a new one to replace it.'
+        : appSettings.abb_cookie_env ? 'Using the cookie from the ABB_COOKIE environment variable. One saved here takes its place.'
+        : 'No cookie: searching mostly works without one, but logging in helps against Cloudflare checks.';
+    clear.hidden = !saved;
+}
+
+let indexerList = [];
+
+function drawIndexers() {
+    const box = document.getElementById('indexerList');
+    box.innerHTML = indexerList.length ? indexerList.map(ix => `<div class="indexer-row" data-id="${esc(ix.id)}">
+        <label class="check-label" title="Search this indexer"><input type="checkbox" class="ix-enabled" ${ix.enabled ? 'checked' : ''}></label>
+        <div class="indexer-info"><b>${esc(ix.name)}</b><div class="muted">${esc(ix.url)} · categories ${esc(ix.categories)}${ix.api_key_set ? ' · API key saved' : ''}</div></div>
+        <button type="button" class="link-btn ix-edit">Edit</button>
+        <button type="button" class="link-btn ix-remove">Remove</button>
+    </div>`).join('') : '<p class="muted">No indexers yet.</p>';
+    box.querySelectorAll('.indexer-row').forEach(row => {
+        const ix = indexerList.find(i => i.id === row.dataset.id);
+        row.querySelector('.ix-enabled').addEventListener('change', async (e) => {
+            const { data } = await postJSON('/api/indexers', { ...ix, enabled: e.target.checked, api_key: '' });
+            indexerList = data.indexers || indexerList;
+            toast(`${ix.name} ${e.target.checked ? 'enabled' : 'disabled'}`, 'ok');
+        });
+        row.querySelector('.ix-edit').addEventListener('click', () => fillIndexerForm(ix));
+        row.querySelector('.ix-remove').addEventListener('click', async () => {
+            if (!await confirmDialog(`Remove ${ix.name}?`, { title: 'Remove indexer', confirmText: 'Remove', danger: true })) return;
+            const res = await fetch(`/api/indexers/${encodeURIComponent(ix.id)}`, { method: 'DELETE' });
+            indexerList = (await res.json()).indexers || [];
+            drawIndexers();
+        });
+    });
+}
+
+function fillIndexerForm(ix) {
+    document.getElementById('ixId').value = ix ? ix.id : '';
+    document.getElementById('ixName').value = ix ? ix.name : '';
+    document.getElementById('ixUrl').value = ix ? ix.url : '';
+    document.getElementById('ixKey').value = '';
+    document.getElementById('ixKey').placeholder = ix && ix.api_key_set ? 'Unchanged' : '';
+    document.getElementById('ixCats').value = ix ? ix.categories : '';
+    document.getElementById('ixSaveBtn').textContent = ix ? 'Save Indexer' : 'Add Indexer';
+    document.getElementById('ixCancelBtn').hidden = !ix;
+    setActionStatus(document.getElementById('ixStatus'), '');
+}
+
+function indexerFormValues() {
+    return {
+        id: document.getElementById('ixId').value || undefined,
+        name: document.getElementById('ixName').value.trim(),
+        url: document.getElementById('ixUrl').value.trim(),
+        api_key: document.getElementById('ixKey').value.trim(),
+        categories: document.getElementById('ixCats').value.trim(),
+        enabled: true,
+    };
+}
+
+async function loadIndexers() {
+    const res = await fetch('/api/indexers');
+    indexerList = (await res.json().catch(() => ({}))).indexers || [];
+    drawIndexers();
+}
+
+function setupIndexers() {
+    loadIndexers();
+    document.getElementById('abbCookieClear').addEventListener('click', () => {
+        abbCookieClearing = true;
+        updateAbbCookieState();
+        markSettingsDirty();
+    });
+    document.getElementById('abbTestBtn').addEventListener('click', async (e) => {
+        const status = document.getElementById('abbTestStatus');
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        setActionStatus(status, 'Testing…');
+        const { ok, data } = await postJSON('/api/abb/test', {
+            url: document.getElementById('setAbbUrl').value.trim(),
+            cookie: document.getElementById('setAbbCookie').value.trim(),
+            user_agent: document.getElementById('setAbbUserAgent').value.trim(),
+        });
+        btn.disabled = false;
+        setActionStatus(status, ok ? data.message : (data.detail || 'Test failed'), ok && data.ok ? (data.logged_in ? 'ok' : '') : 'error');
+    });
+    document.getElementById('ixSaveBtn').addEventListener('click', async () => {
+        const status = document.getElementById('ixStatus');
+        const { ok, data } = await postJSON('/api/indexers', indexerFormValues());
+        if (!ok) return setActionStatus(status, data.detail || 'Could not save', 'error');
+        indexerList = data.indexers;
+        drawIndexers();
+        fillIndexerForm(null);
+        setActionStatus(status, 'Saved', 'ok');
+    });
+    document.getElementById('ixTestBtn').addEventListener('click', async (e) => {
+        const status = document.getElementById('ixStatus');
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        setActionStatus(status, 'Testing…');
+        const { ok, data } = await postJSON('/api/indexers/test', indexerFormValues());
+        btn.disabled = false;
+        setActionStatus(status, ok ? data.message : (data.detail || 'Test failed'), ok && data.ok ? 'ok' : 'error');
+    });
+    document.getElementById('ixCancelBtn').addEventListener('click', () => fillIndexerForm(null));
 }

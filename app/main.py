@@ -9,8 +9,8 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import (audible, audiobookshelf, auth, book_search, db, editions, health, library, organize,
-                 release_calendar, series_index, splitter)
+from app import (audible, audiobookshelf, auth, book_search, db, editions, health, indexers, library, organize,
+                 release_calendar, scraper, series_index, splitter)
 from app.monitor import (auto_download_book, classify_editions, find_missing_books, grab, match_job, run_monitor_loop,
                          schedule_search, schedule_searches, start_match_job, sync_series)
 from app.qbittorrent import get_torrents, test_connection
@@ -191,6 +191,40 @@ async def api_match_book(book_id: str, request: Request):
     db.apply_audible_match(book_id, audible.product_to_book(products[0], prefer_series=book.get("series", "")))
     db.add_history("matched", book, f"Matched to Audible {asin}")
     return {"success": True, "book": db.get_book(book_id)}
+
+@app.get("/api/indexers")
+async def api_indexers():
+    return {"indexers": indexers.public()}
+
+@app.post("/api/indexers")
+async def api_save_indexer(request: Request):
+    """Adds or updates a Torznab indexer (a blank API key keeps the stored one)."""
+    try:
+        entry = indexers.save(await request.json())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"success": True, "id": entry["id"], "indexers": indexers.public()}
+
+@app.delete("/api/indexers/{indexer_id}")
+async def api_remove_indexer(indexer_id: str):
+    indexers.remove(indexer_id)
+    return {"success": True, "indexers": indexers.public()}
+
+@app.post("/api/indexers/test")
+async def api_test_indexer(request: Request):
+    data = await request.json()
+    if not str(data.get("url") or "").startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="The URL must start with http:// or https://")
+    return await indexers.test(data)
+
+@app.post("/api/abb/test")
+async def api_test_abb(request: Request):
+    """Reaches AudiobookBay with the form's (or the saved) address, cookie and user agent."""
+    data = await request.json()
+    url = (data.get("url") or "").strip()
+    if url and not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="The address must start with https://")
+    return await scraper.test_connection(url, data.get("cookie") or None, data.get("user_agent") or "")
 
 @app.get("/api/health")
 async def api_health():
@@ -641,23 +675,34 @@ async def api_send_to_client(request: Request):
     url = data.get("url")
     book = data.get("book") or {}
     title = book.get("title")
-    if not url or not title:
+    # The release as Manual Search showed it (AudiobookBay or a Torznab indexer)
+    release = {k: v for k, v in (data.get("release") or {}).items()
+               if k in ("magnet_url", "download_url", "link", "title", "raw_title", "format", "size_str", "source")}
+    release.setdefault("link", url)
+    release.setdefault("title", title)
+    if not (release.get("link") or release.get("download_url") or release.get("magnet_url")) or not title:
         raise HTTPException(status_code=400, detail="Missing url or book")
-    
+    if release.get("magnet_url") and not str(release["magnet_url"]).startswith("magnet:"):
+        raise HTTPException(status_code=400, detail="Not a magnet link")
+
     settings = db.get_settings()
     if not settings.get("qbt_enabled"):
         raise HTTPException(status_code=400, detail="Download client is not enabled in settings.")
-        
-    logger.info(f"Send to client requested for: {url}")
-    detail_info = await fetch_detail_info(url, title)
-    magnet = detail_info.get("magnet") if detail_info else None
-    
-    if not magnet:
+
+    logger.info(f"Send to client requested for: {release.get('download_url') or release.get('link')}")
+    try:
+        magnet, torrent = await indexers.get_download(release)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Couldn't get the download: {e}")
+        magnet = torrent = None
+    if not magnet and not torrent:
         raise HTTPException(status_code=404, detail="Failed to fetch magnet link")
-        
+
     # A manual grab tracks the book so it gets imported when the download finishes
     entry = db.add_to_library(book)
-    if await grab(entry, magnet, settings):
+    if await grab(entry, magnet, settings, release=release, torrent=torrent):
         return {"success": True}
     else:
         raise HTTPException(status_code=500, detail="Failed to send torrent to qBittorrent")

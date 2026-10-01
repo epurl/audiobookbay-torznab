@@ -2653,3 +2653,81 @@ tr.clickable {
 .health-row .link-btn {
     flex-shrink: 0;
 }
+
+/* Settings > Indexers */
+.settings-help {
+    margin-top: 6px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.settings-help summary {
+    cursor: pointer;
+}
+
+.settings-help ol {
+    margin: 6px 0 0 18px;
+    padding: 0;
+}
+
+.inline-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.indexer-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.indexer-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background-color: var(--bg-dark);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
+
+.indexer-info {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-size: 0.9rem;
+}
+
+.indexer-form {
+    padding: 12px;
+    border: 1px dashed var(--border-color);
+    border-radius: 6px;
+}
+
+.indexer-form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.indexer-form-grid label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.release-source {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 6px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    border: 1px solid var(--border-color);
+    color: var(--text-muted);
+}

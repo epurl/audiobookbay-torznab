@@ -3,11 +3,10 @@ import logging
 import datetime
 import os
 import shutil
-from . import audible, audiobookshelf, book_search, db, editions, release_match, scraper
+from . import audible, audiobookshelf, book_search, db, editions, indexers, release_match, scraper
 from .library import (audio_files, build_folder_name, describe_files, find_match, plan_import_files,
                       read_abs_metadata, total_duration_min)
-from .scraper import fetch_detail_info
-from .qbittorrent import delete_torrents, get_completed_torrents, get_torrents, send_to_qbittorrent
+from .qbittorrent import delete_torrents, get_completed_torrents, get_torrents, send_to_qbittorrent, send_torrent_file
 
 logger = logging.getLogger(__name__)
 
@@ -250,37 +249,40 @@ async def auto_download_book(book, settings):
         return False
 
     logger.info(f"Found match for {title}: {book_search.describe(best_match)}")
-    magnet = best_match.get("magnet_url")
-    if not magnet:
-        detail_info = await fetch_detail_info(best_match.get("link"), best_match.get("title"))
-        magnet = detail_info.get("magnet") if detail_info else None
-    if not magnet:
+    try:
+        magnet, torrent = await indexers.get_download(best_match)
+    except Exception as e:
+        logger.error(f"Couldn't get the download for {title}: {e}")
+        return False
+    if not magnet and not torrent:
         logger.error(f"Failed to extract magnet for {title}")
         return False
 
-    return await grab(book, magnet, settings, release=best_match)
+    return await grab(book, magnet, settings, release=best_match, torrent=torrent)
 
 
-async def grab(book, magnet, settings, release=None):
-    """Sends a magnet to qBittorrent and moves the library book to Downloading."""
+async def grab(book, magnet, settings, release=None, torrent=None):
+    """Sends a magnet (or a .torrent file) to qBittorrent and moves the library book to
+    Downloading."""
     title = book.get("title")
-    success = await send_to_qbittorrent(
-        settings.get("qbt_host"),
-        settings.get("qbt_user"),
-        settings.get("qbt_pass"),
-        magnet,
-        title
-    )
+    if torrent:
+        success = await send_torrent_file(settings.get("qbt_host"), settings.get("qbt_user"), settings.get("qbt_pass"),
+                                          torrent, title)
+    else:
+        success = await send_to_qbittorrent(settings.get("qbt_host"), settings.get("qbt_user"), settings.get("qbt_pass"),
+                                            magnet, title)
     if not success:
         logger.error(f"Failed to send {title} to qBittorrent")
         db.add_history("failed", book, "Could not send the release to qBittorrent")
         return False
 
     logger.info(f"Sent {title} to qBittorrent")
-    release_name = (release or {}).get("title", "")
-    db.update_book(book["id"], status="Downloading", download_hash=db.extract_infohash(magnet),
+    release_name = (release or {}).get("raw_title") or (release or {}).get("title", "")
+    download_hash = indexers.torrent_infohash(torrent) if torrent else db.extract_infohash(magnet)
+    db.update_book(book["id"], status="Downloading", download_hash=download_hash,
                    release_title=release_name, review_reason="", skip_verify=False)
-    details = ", ".join(x for x in (release_name, (release or {}).get("format"), (release or {}).get("size_str")) if x)
+    details = ", ".join(x for x in (release_name, (release or {}).get("format"), (release or {}).get("size_str"),
+                                    (release or {}).get("source")) if x and x != "Unknown")
     db.add_history("grabbed", book, f"Sent to qBittorrent{': ' + details if details else ''}")
     return True
 

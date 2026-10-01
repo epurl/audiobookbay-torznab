@@ -47,6 +47,12 @@ DEFAULT_SETTINGS = {
     "runtime_tolerance": 10,  # percent
     "write_metadata": True,
     "edition_preference": "narrated",  # narrated | dramatized | both: what series monitoring adds
+    # AudiobookBay (the cookie falls back to the ABB_COOKIE environment variable)
+    "abb_enabled": True,
+    "abb_url": "",
+    "abb_user_agent": "",
+    "abb_cookie": "",
+    "indexers": [],  # Torznab indexers, managed on their own (see indexers.py)
     # Release preferences (scoring of releases); comma-separated lists, 0 = off
     "pref_narrators": "",
     "avoid_narrators": "",
@@ -69,11 +75,11 @@ EDITABLE_SETTINGS = {
     "rename_files", "use_hardlinks", "stall_hours", "remove_stalled",
     "verify_runtime", "runtime_tolerance", "write_metadata", "edition_preference",
     "pref_narrators", "avoid_narrators", "preferred_words", "blocked_words", "blocked_uploaders",
-    "min_bitrate", "max_size_gb",
+    "min_bitrate", "max_size_gb", "abb_enabled", "abb_url", "abb_user_agent",
     "abs_url", "abs_library_id",
 }
 # Secrets: never sent to the browser, and a blank value from the UI keeps the stored one
-SECRET_SETTINGS = {"qbt_pass", "abs_token"}
+SECRET_SETTINGS = {"qbt_pass", "abs_token", "abb_cookie"}
 
 # Monitored books are searched for; Unmonitored and Missing ones are left alone.
 # Needs Review: the download finished but didn't pass the checks, so it wasn't imported.
@@ -465,6 +471,7 @@ def get_public_settings():
     for key in SECRET_SETTINGS:
         public[f"{key}_set"] = bool(settings.get(key))
     public["auth_username"] = settings.get("auth_username", "")
+    public["abb_cookie_env"] = bool(os.environ.get("ABB_COOKIE"))
     return public
 
 
@@ -479,7 +486,9 @@ def update_settings(new_settings):
         # An empty password field means "keep the current one"
         for key in SECRET_SETTINGS:
             if new_settings.get(key):
-                settings[key] = new_settings[key]
+                settings[key] = str(new_settings[key]).strip()
+        if new_settings.get("abb_cookie_clear"):
+            settings["abb_cookie"] = ""
         if "stall_hours" in new_settings:
             try:
                 settings["stall_hours"] = max(0, min(168, int(new_settings["stall_hours"])))
@@ -499,6 +508,14 @@ def update_settings(new_settings):
                 settings["runtime_tolerance"] = DEFAULT_SETTINGS["runtime_tolerance"]
         _save_db(db)
         return True
+
+
+def set_setting(key, value):
+    """Stores one setting directly (for values the settings form doesn't edit, e.g. indexers)."""
+    with _lock:
+        db = _load_db()
+        db["settings"][key] = value
+        _save_db(db)
 
 
 def set_auth_credentials(username, password_hash):

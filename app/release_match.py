@@ -138,6 +138,11 @@ def evaluate(book, result, settings, blocklist=None):
         if result.get("author") and result["author"] != "Unknown":
             raw += " - " + result["author"]
     body, rel_author = split_release_title(raw)
+    # "Author - Title" (common on indexers) rather than AudiobookBay's "Title - Author"
+    first, _, rest = raw.partition(" - ")
+    book_surnames = {_surname(n) for n in _names(book.get("authors"))}
+    if rest and book_surnames & set(tokens(first)) and not book_surnames & set(tokens(rel_author)):
+        body, rel_author = rest, first
     if result.get("authors"):
         rel_author = ", ".join(result["authors"])
     body_words = tokens(body)
@@ -311,6 +316,16 @@ def evaluate(book, result, settings, blocklist=None):
         else:
             score -= 5
             reasons.append("Size is unusual for the book's length")
+
+    # --- Seeders (indexers report them; AudiobookBay doesn't) ---
+    seeders = result.get("seeders")
+    if seeders is not None:
+        if seeders == 0:
+            score -= 15
+            reasons.append("No seeders")
+        elif seeders >= 10:
+            score += 5
+            reasons.append(f"{seeders} seeders")
 
     # --- Your release preferences ---
     score += _apply_preferences(result, raw, book, settings, reasons, problems)

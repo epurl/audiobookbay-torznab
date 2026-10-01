@@ -5,10 +5,11 @@ short title alone returns hundreds of unrelated books, and the title with the au
 first name ("Title Jane") finds books mentioning both words. The surname with the
 title is usually exact. Searches run from most to least specific, each result is scored
 against the book, and the search stops once there's a clear match."""
+import asyncio
 import logging
 import re
 
-from app import scraper
+from app import indexers, scraper
 from app.release_match import AUTO_MIN_SCORE, evaluate, order, rank_key, tokens
 from app.library import primary_author
 
@@ -82,10 +83,40 @@ async def find_releases(book, settings, mode="auto"):
     def strong():
         return any(r["strong"] for r in found.values())
 
-    for query, max_pages in build_queries(book):
+    def add(res, query):
+        key = res.get("link") or res.get("download_url") or res.get("magnet_url")
+        if not key or key in found:
+            return
+        res = dict(res)  # cached pages stay as the site sent them
+        res.setdefault("source", "AudiobookBay")
+        res.update(evaluate(book, res, settings))
+        res["query"] = query
+        found[key] = res
+
+    queries = build_queries(book)
+    # Torznab indexers (e.g. Prowlarr): their own search, with the two most specific queries
+    sources = [i for i in indexers.get_all() if i.get("enabled", True)]
+    if sources:
+        for query, _ in queries[:2]:
+            batches = await asyncio.gather(*(indexers.search(i, query) for i in sources), return_exceptions=True)
+            for indexer, batch in zip(sources, batches):
+                if isinstance(batch, Exception):
+                    logger.warning(f"Indexer {indexer.get('name')} search '{query}' failed: {batch}")
+                    continue
+                for res in batch:
+                    add(res, query)
+            queries_run.append(query)
+            if strong():
+                break
+
+    abb = settings.get("abb_enabled", True)
+    for query, max_pages in (queries if abb else []):
         if pages_used >= limits["pages"] or scraper.is_paused():
             break
-        queries_run.append(query)
+        if strong() and mode == "auto":
+            break  # An indexer already found it
+        if query not in queries_run:
+            queries_run.append(query)
         for page in range(1, max_pages + 1):
             if pages_used >= limits["pages"]:
                 break
@@ -97,12 +128,7 @@ async def find_releases(book, settings, mode="auto"):
                 break
             pages_used += 1
             for res in results:
-                if res["link"] in found:
-                    continue
-                res = dict(res)  # the cached page stays as the site sent it
-                res.update(evaluate(book, res, settings))
-                res["query"] = query
-                found[res["link"]] = res
+                add(res, query)
             if page >= last or len(results) < scraper.RESULTS_PER_PAGE or strong():
                 break
         if strong() and (mode == "auto" or len(queries_run) >= 3):
@@ -111,16 +137,16 @@ async def find_releases(book, settings, mode="auto"):
     if not found and error is not None:
         raise RuntimeError(f"AudiobookBay search failed: {error}")
 
-    # Detail pages (narrator, files, abridged, magnet) for the most promising releases
-    candidates = sorted(found.values(), key=rank_key)
+    # AudiobookBay detail pages (narrator, files, abridged, magnet) for the most promising releases
+    candidates = sorted((r for r in found.values() if r.get("source") == "AudiobookBay"), key=rank_key)
     worth = [r for r in candidates if r["score"] >= AUTO_MIN_SCORE - 15 or not r["problems"]][:limits["details"]]
     await scraper.add_details(worth)
     for res in worth:
         res.update(evaluate(book, res, settings))
 
     ranked = order(list(found.values()), settings)
-    logger.info(f"AudiobookBay: {len(ranked)} releases for '{book.get('title')}' from {pages_used} page(s) "
-                f"({'; '.join(queries_run)})")
+    logger.info(f"Search: {len(ranked)} releases for '{book.get('title')}' from {pages_used} AudiobookBay page(s)"
+                f"{f' and {len(sources)} indexer(s)' if sources else ''} ({'; '.join(queries_run)})")
     return ranked, queries_run
 
 

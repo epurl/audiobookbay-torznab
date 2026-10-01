@@ -18,7 +18,7 @@ An audiobook manager in the style of Sonarr and Radarr, built around AudiobookBa
 ## Quick start (Docker)
 
 1. Clone the repo and run `cp .env.example .env`.
-2. Optional but recommended: log in to `audiobookbay.lu`, open Developer Tools (F12) → Network, refresh, click the page request and copy its `Cookie` header into `.env`, **in single quotes** (it contains `$`):
+2. Optional but recommended: add your AudiobookBay cookie in **Settings → Indexers** after starting (it explains where to find it). Or put it in `.env`, **in single quotes** (it contains `$`):
    ```env
    ABB_COOKIE='your_cookie_string_here'
    ```
@@ -43,6 +43,7 @@ Changes are saved with the **Save Changes** bar at the bottom.
 | Download Client | qBittorrent's URL (often `http://qbittorrent:8080`), username and password; **Test Connection** checks them. **Stalled Downloads:** a download with no progress for 6 hours (0 turns this off) is removed with its partial files, and the next-best release is grabbed. |
 | Downloads Folder | Only when qBittorrent and Bayarr see downloads at different paths: Bayarr's path to qBittorrent's `audiobooks` save folder. If qBittorrent reports `/data/torrents/audiobooks/Book` and this is `/downloads/audiobooks`, Bayarr reads `/downloads/audiobooks/Book`. |
 | Media Management | **Root Folder** for imported books. **Book Folder Format**, default `{Author} - {Series} {SeriesNumber} - {Title}` (also `{Authors}`, `{Year}`, `{Edition}`; empty parts are dropped; dramatized and abridged books get "(Dramatized)" / "(Abridged)" at the end even without `{Edition}`). **Rename Audio Files:** `Title.m4b`, or `Title - Part 01.mp3`… in disc and track order. **Use Hardlinks:** works when downloads and the Root Folder are in one mounted volume (e.g. `/data/downloads` and `/data/audiobooks`); otherwise files are copied. Don't run Audiobookshelf's "embed metadata" on hardlinked books. |
+| Indexers | **AudiobookBay**: on/off, its address (if the domain moves), the session cookie (stored as a secret; **Test** says whether it logs in) and the user agent. **Torznab indexers** (e.g. from Prowlarr or Jackett): name, feed URL, API key and categories; searched alongside AudiobookBay with the same scoring (plus seeders), grabbed by magnet or `.torrent`. |
 | Releases | Preferred and avoided narrators, preferred and blocked words, blocked uploaders (ABB's "Shared by"), minimum bitrate and maximum size. Preferences raise or lower a release's score; blocks, the bitrate and the size rule releases out. |
 | Download Checks | Allowed difference from Audible's runtime (10% by default). |
 | General | Language; *Prefer M4B*, *M4B only* or *Any format*; whether a matching narrator ranks releases higher; **Editions**: *Narrated only* (default), *Dramatized only* or *Both* for series monitoring (see [Editions](#editions)). |
@@ -180,8 +181,8 @@ These endpoints don't need the Bayarr login. Searches (`t=search` / `t=book`) re
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `ABB_COOKIE` | *(empty)* | AudiobookBay session cookie, in single quotes in `.env`. |
-| `ABB_USER_AGENT` | Chrome | User agent; match the browser the cookie came from. |
+| `ABB_COOKIE` | *(empty)* | AudiobookBay session cookie, in single quotes in `.env`. One saved in Settings → Indexers takes its place. |
+| `ABB_USER_AGENT` | Chrome | User agent; match the browser the cookie came from. Settings → Indexers can set it too. |
 | `BAYARR_USERNAME` / `BAYARR_PASSWORD` | *(empty)* | Fixed UI login, overriding the one in Settings. |
 | `BAYARR_CONFIG_DIR` | `/config` (Docker), `./config` | Where the database and backups are stored. |
 
