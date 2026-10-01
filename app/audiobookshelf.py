@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.editions import ABRIDGED, edition_of
 from app.library import format_sequence, part_count, part_number
 
 logger = logging.getLogger(__name__)
@@ -18,13 +19,16 @@ _COVER_HOSTS = ("media-amazon.com", "ssl-images-amazon.com")
 
 def abs_series(book):
     """(name, sequence) as Audiobookshelf should show the book's series, so it sorts:
-    dramatizations are a series of their own ("Name (Dramatized)"), and a book sold in
+    abridged editions (dramatizations included) are a series of their own ("Name (Abridged)"),
+    and a book sold in
     parts is numbered by part (book 1 in two parts: 1.1 and 1.2). None without a series."""
     name = (book.get("series") or "").strip()
     if not name:
         return None
-    if book.get("edition") == "dramatized" and not name.endswith("(Dramatized)"):
-        name += " (Dramatized)"
+    from app.series_index import plain_title
+    name = plain_title(name)
+    if edition_of(book) == ABRIDGED:
+        name += " (Abridged)"
     sequence = format_sequence(book.get("sequence"))
     part = part_number(book.get("title"))
     if sequence and part and "." not in sequence:
@@ -50,8 +54,7 @@ def build_metadata(book):
     title, _, subtitle = (book.get("title") or "").partition(": ")
     edition = book.get("edition")
     return {
-        # Lets you filter dramatized editions in Audiobookshelf
-        "tags": ["Dramatized"] if edition == "dramatized" else [],
+        "tags": [],
         "chapters": [],
         "title": title.strip(),
         "subtitle": subtitle.strip() or None,
@@ -67,7 +70,7 @@ def build_metadata(book):
         "asin": book.get("asin") or None,
         "language": book.get("language") or None,
         "explicit": False,
-        "abridged": edition == "abridged",
+        "abridged": edition_of(book) == ABRIDGED,
     }
 
 
@@ -82,7 +85,7 @@ def write_metadata(book, folder):
 
 
 def update_series_file(book, folder):
-    """Rewrites only the series (and the Dramatized tag) in a book's existing metadata.json.
+    """Rewrites only the series and the abridged flag in a book's existing metadata.json.
     Returns True if it changed; a folder without one is left alone."""
     path = os.path.join(folder or "", "metadata.json")
     if not os.path.isfile(path):
@@ -95,9 +98,11 @@ def update_series_file(book, folder):
     if not isinstance(data, dict):
         return False
     before = json.dumps(data, sort_keys=True)
-    data["series"] = _series_text(book)
-    tags = [t for t in data.get("tags") or [] if t != "Dramatized"]
-    data["tags"] = tags + (["Dramatized"] if book.get("edition") == "dramatized" else [])
+    if abs_series(book):  # A book Bayarr knows no series for keeps the file's
+        data["series"] = _series_text(book)
+    # The "Dramatized" tag Bayarr used to write: dramatizations are abridged now
+    data["tags"] = [t for t in data.get("tags") or [] if t != "Dramatized"]
+    data["abridged"] = edition_of(book) == ABRIDGED
     if json.dumps(data, sort_keys=True) == before:
         return False
     partial = path + ".partial"
@@ -136,8 +141,9 @@ def _find_item(items, book):
 
 
 async def fix_series_order(books, settings):
-    """For each book: the series in its metadata.json, and in Audiobookshelf itself (through
-    its API, so no rescan is needed) when a server and library are set."""
+    """For each book: the series and the Abridged flag (Bayarr's edition: abridged includes
+    dramatizations) in its metadata.json, and in Audiobookshelf itself (through its API, so
+    no rescan is needed) when a server and library are set."""
     order_job.update(running=True, total=len(books), done=0, files=0, abs_updated=0, abs_missing=0, error="")
     try:
         for book in books:
@@ -155,15 +161,16 @@ async def fix_series_order(books, settings):
                 return
             for book in books:
                 item = _find_item(items, book)
-                found = abs_series(book)
-                if not item or not found:
-                    order_job["abs_missing"] += 1 if not item else 0
+                if not item:
+                    order_job["abs_missing"] += 1
                     order_job["done"] += 1
                     continue
-                name, sequence = found
+                metadata = {"abridged": edition_of(book) == ABRIDGED}
+                found = abs_series(book)
+                if found:
+                    metadata["series"] = [{"id": f"new-{item['id']}", "name": found[0], "sequence": found[1]}]
                 try:
-                    res = await client.patch(f"/api/items/{item['id']}/media",
-                                             json={"metadata": {"series": [{"id": f"new-{item['id']}", "name": name, "sequence": sequence}]}})
+                    res = await client.patch(f"/api/items/{item['id']}/media", json={"metadata": metadata})
                     res.raise_for_status()
                     order_job["abs_updated"] += 1
                 except Exception as e:

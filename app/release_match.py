@@ -2,7 +2,7 @@
 
 Each release gets a score from 0 to 100, the reasons behind it, and the problems that
 would stop it being downloaded automatically (wrong book, wrong number in the series,
-a box set, another edition (dramatized or abridged), too small for the book's length...)."""
+a box set, another edition (abridged or a dramatization), too small for the book's length...)."""
 import re
 import unicodedata
 
@@ -252,8 +252,8 @@ def evaluate(book, result, settings, blocklist=None):
             score -= 10
             reasons.append("Says \"Series\" without a book number: may be several books")
 
-    # --- Edition: narrated, dramatized or abridged, matched both ways ---
-    wanted = book.get("edition") if book.get("edition") in editions.EDITIONS else         (editions.classify_fields(book) or {}).get("edition", editions.NARRATED)
+    # --- Edition: unabridged or abridged (dramatizations included), matched both ways ---
+    wanted = editions.stored_edition(book.get("edition")) or         (editions.classify_fields(book) or {}).get("edition", editions.NARRATED)
     found = editions.release_edition(raw, result.get("keywords"), result.get("categories"),
                                      result.get("narrators") or [], result.get("abridged"))
     if found["edition"] != wanted:
@@ -262,7 +262,7 @@ def evaluate(book, result, settings, blocklist=None):
             score -= 40
             why = f" ({found['reason']})" if found["reason"] else ""
             if found["edition"] == editions.NARRATED:
-                problems.append(f"Not a {editions.label(wanted).lower()} edition; you want the {editions.label(wanted).lower()} one")
+                problems.append("Unabridged; you want the abridged edition (or a dramatization)")
             else:
                 problems.append(f"{editions.label(found['edition'])} edition{why}")
         elif not many_voices_book:

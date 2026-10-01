@@ -53,11 +53,13 @@ function primaryAuthor(authors) {
     return String(authors || '').split(',')[0].split('&')[0].trim();
 }
 
-// Editions: narrated (one or a few narrators), dramatized (full cast, e.g. GraphicAudio), abridged
-const EDITION_LABELS = { narrated: 'Narrated', dramatized: 'Dramatized', abridged: 'Abridged' };
+// Editions: unabridged (stored as "narrated") and abridged, which includes dramatizations
+// (full cast, e.g. GraphicAudio); "dramatized" from before counts as abridged
+const EDITION_LABELS = { narrated: 'Unabridged', abridged: 'Abridged' };
 
 function editionOf(book) {
-    return EDITION_LABELS[book && book.edition] ? book.edition : 'narrated';
+    const edition = book && (book.edition === 'dramatized' ? 'abridged' : book.edition);
+    return EDITION_LABELS[edition] ? edition : 'narrated';
 }
 
 // A badge for anything but a narrated edition, plus a flag when the edition needs checking
@@ -123,7 +125,7 @@ function formatDuration(seconds) {
 
 function seriesLabel(book) {
     if (!book.series) return '';
-    const name = editionOf(book) === 'dramatized' ? `${book.series} (Dramatized)` : book.series;
+    const name = editionOf(book) === 'abridged' ? `${book.series} (Abridged)` : book.series;
     return book.sequence ? `${name} #${book.sequence}` : name;
 }
 
@@ -359,7 +361,7 @@ async function fetchSettings() {
         document.getElementById('setQbtPass').value = "";
         document.getElementById('setQbtPass').placeholder = appSettings.qbt_pass_set ? "Unchanged" : "";
         document.getElementById('setFormatPref').value = appSettings.format_preference || "prefer_m4b";
-        document.getElementById('setEditionPref').value = appSettings.edition_preference || "narrated";
+        document.getElementById('setEditionPref').value = appSettings.edition_preference === 'dramatized' ? 'abridged' : (appSettings.edition_preference || "narrated");
         document.getElementById('setAuthUser').value = appSettings.auth_username || "";
         if (appSettings.auth_from_env) {
             document.getElementById('setAuthUser').disabled = true;
@@ -606,10 +608,10 @@ function librarySortKey(book, sort) {
     const seq = parseFloat(book.sequence);
     const seqKey = isNaN(seq) ? '9999' : String(seq.toFixed(2)).padStart(8, '0');
     const title = normKey(book.title);
-    // Dramatizations after the narrated books, as their own series; parts in order. Books
+    // Abridged editions after the unabridged books, as their own series; parts in order. Books
     // of one Audible series sort together even when they name it differently.
     const name = (book.series_asin && librarySeriesNames[book.series_asin]) || book.series;
-    const series = book.series ? `0|${normKey(name)}|${editionOf(book) === 'dramatized' ? 1 : 0}` : '1';
+    const series = book.series ? `0|${normKey(name)}|${editionOf(book) === 'abridged' ? 1 : 0}` : '1';
     const release = `${seqKey}|${String(partOf(book.title)).padStart(3, '0')}|${title}`;
     switch (sort) {
         case 'title': return title;
@@ -619,11 +621,11 @@ function librarySortKey(book, sort) {
     }
 }
 
-// The heading a book sorts under in series order: its series, with dramatizations apart
+// The heading a book sorts under in series order: its series, with abridged editions apart
 function libraryGroupName(book) {
     if (!book.series) return 'Not in a series';
     const name = (book.series_asin && librarySeriesNames[book.series_asin]) || book.series;
-    return editionOf(book) === 'dramatized' ? `${name} (Dramatized)` : name;
+    return editionOf(book) === 'abridged' ? `${name} (Abridged)` : name;
 }
 
 // "Book Title (Part 2 of 3)" -> 2; books not sold in parts -> 0
@@ -1400,7 +1402,7 @@ function seriesEntries(book) {
 
 function seriesPageKey(entry, book) {
     const key = entry.asin ? 'asin:' + entry.asin : 'name:' + seriesKey(entry.name);
-    return book && editionOf(book) === 'dramatized' ? key + '~dramatized' : key;
+    return book && editionOf(book) === 'abridged' ? key + '~abridged' : key;
 }
 
 // Book details: every series the book is in, each opening its series page
@@ -3303,7 +3305,7 @@ function drawWatchedLists() {
     });
 }
 
-// Settings > Audiobookshelf: Fix Series Order
+// Settings > Audiobookshelf: Update Audiobookshelf
 async function runAbsSeriesOrder(e) {
     const btn = e.currentTarget;
     const status = document.getElementById('absSeriesOrderStatus');

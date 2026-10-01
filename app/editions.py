@@ -1,19 +1,25 @@
-"""Which edition a book is: narrated (read by one or a few narrators), dramatized (full
-cast productions such as GraphicAudio, radio plays, Audible Original performances) or
-abridged.
+"""Which edition a book is: unabridged (the whole book read by one or a few narrators) or
+abridged (anything else: shortened readings, and dramatizations such as GraphicAudio
+full-cast productions, radio plays and Audible Original performances, which adapt the
+book rather than read it).
 
 No single Audible field tells them apart: dramatizations are labelled "unabridged" too,
 and "Performance" also marks authors reading their own books. So several signals are
-combined, and local books are judged from metadata.json, the files' tags and names."""
+combined, and local books are judged from metadata.json, the files' tags and names.
+
+The unabridged edition is stored as "narrated"; books saved as "dramatized" before the
+two were merged count as abridged."""
 import logging
 import os
 import re
 
 logger = logging.getLogger(__name__)
 
-NARRATED, DRAMATIZED, ABRIDGED = "narrated", "dramatized", "abridged"
-EDITIONS = (NARRATED, DRAMATIZED, ABRIDGED)
-LABELS = {NARRATED: "Narrated", DRAMATIZED: "Dramatized", ABRIDGED: "Abridged"}
+NARRATED, ABRIDGED = "narrated", "abridged"
+DRAMATIZED = ABRIDGED  # A dramatization isn't the book read as written: it's on the abridged side
+EDITIONS = (NARRATED, ABRIDGED)
+LABELS = {NARRATED: "Unabridged", ABRIDGED: "Abridged"}
+_OLD = {"dramatized": ABRIDGED}  # Editions saved before
 
 # Words that only appear on dramatized productions
 DRAMA_WORDS = re.compile(
@@ -29,9 +35,16 @@ def label(edition):
     return LABELS.get(edition or NARRATED, LABELS[NARRATED])
 
 
+def stored_edition(value):
+    """An edition as saved (old "dramatized" counts as abridged), or None if it's not one."""
+    value = _OLD.get(value, value)
+    return value if value in EDITIONS else None
+
+
 def edition_of(book):
     """A library book's edition; books from before editions existed count as narrated."""
     edition = (book or {}).get("edition")
+    edition = _OLD.get(edition, edition)
     return edition if edition in EDITIONS else NARRATED
 
 
@@ -156,7 +169,7 @@ def classify_local(meta, audio_paths, folder):
     count = _narrator_count(meta.get("narrators"))
     if count >= MANY_NARRATORS:
         return _result(NARRATED, f"{count} narrators: it may be a dramatization", sure=False)
-    return _result(NARRATED, "No signs of a dramatization or abridgement")
+    return _result(NARRATED, "No signs of an abridgement or a dramatization")
 
 
 def combine(audible, local):
@@ -168,7 +181,7 @@ def combine(audible, local):
                 "reason": f"{local['reason']}, but its ASIN is the {label(audible['edition']).lower()} edition"}
     if audible:
         return audible
-    return local or _result(NARRATED, "No signs of a dramatization or abridgement")
+    return local or _result(NARRATED, "No signs of an abridgement or a dramatization")
 
 
 def release_edition(raw_title, keywords=(), categories=(), narrators=(), abridged=False):

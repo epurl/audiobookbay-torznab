@@ -1,20 +1,21 @@
 """Groups the library into series for the Series pages, using every series each book
 belongs to and Audible's full list of releases for each series.
 
-A series' dramatized editions are a series of their own ("Name (Dramatized)", key
-"<key>~dramatized"): owning a dramatization doesn't count towards the narrated series."""
+A series' abridged editions (dramatizations included) are a series of their own ("Name
+(Abridged)", key "<key>~abridged"): owning one doesn't count towards the unabridged series."""
 import asyncio
 import logging
 from collections import Counter, defaultdict
 
 from app import audible, db
-from app.editions import DRAMATIZED, NARRATED, edition_of
+from app.editions import ABRIDGED, DRAMATIZED, NARRATED, edition_of
 from app.library import normalize, part_number, primary_author, series_entries, series_key, title_keys
 
 logger = logging.getLogger(__name__)
 
 WANTED = {"Monitored", "Unreleased", "Downloading", "Downloaded", "Needs Review", "Missing"}
-DRAMA_SUFFIX = "~dramatized"
+DRAMA_SUFFIX = "~abridged"
+_OLD_SUFFIX = "~dramatized"  # Series page addresses from before
 
 
 def _seq_sort(seq, release_date="", part=None):
@@ -27,11 +28,11 @@ def _seq_sort(seq, release_date="", part=None):
 
 
 def plain_title(title):
-    """A series name without the "(Dramatized)" its dramatized side is shown with: a series
+    """A series name without the "(Abridged)" its abridged side is shown with: a series
     monitored from that side was once saved under the name it's shown with."""
     title = title or ""
-    while title.endswith(" (Dramatized)"):
-        title = title[:-len(" (Dramatized)")]
+    while title.endswith((" (Abridged)", " (Dramatized)")):
+        title = title.rsplit(" (", 1)[0]
     return title
 
 
@@ -202,7 +203,7 @@ def summarize(group, index):
     tracked = group["tracked"]
     return {
         "key": group["key"],
-        "title": plain_title(group["title"]) + (" (Dramatized)" if group.get("dramatized") else ""),
+        "title": plain_title(group["title"]) + (" (Abridged)" if group.get("dramatized") else ""),
         "dramatized": bool(group.get("dramatized")),
         "asin": group["asin"],
         "author": series_author(rows) or (tracked or {}).get("author", ""),
@@ -304,6 +305,8 @@ def _find_group(groups, base, drama):
 
 
 async def detail(key):
+    if key.endswith(_OLD_SUFFIX):
+        key = key[:-len(_OLD_SUFFIX)] + DRAMA_SUFFIX
     drama = key.endswith(DRAMA_SUFFIX)
     base = key[:-len(DRAMA_SUFFIX)] if drama else key
     group = _find_group(build_groups(), base, drama)
@@ -338,7 +341,7 @@ async def detail(key):
     groups = build_groups()
     summary["editions"] = [
         {"key": side["key"], "label": label, "active": side["key"] == group["key"]}
-        for side, label in ((main_side, "Narrated"), (drama_side, "Dramatized"))
+        for side, label in ((main_side, "Unabridged"), (drama_side, "Abridged"))
         if side["key"] == group["key"] or _catalog_entries(side) or (groups.get(side["key"]) or {}).get("books")]
     if len(summary["editions"]) < 2:
         summary["editions"] = []
@@ -375,15 +378,14 @@ def _row_json(r):
 
 
 def wanted_editions(preference=None):
-    """The editions Monitor Series offers and series syncs add, from the edition setting.
-    Abridged editions count with narrated ones: a book is only listed abridged when
-    Audible has no unabridged narration of it."""
+    """The editions Monitor Series offers and series syncs add, from the edition setting:
+    unabridged ("narrated"), abridged (dramatizations included), or both."""
     preference = preference or db.get_settings().get("edition_preference", "narrated")
-    if preference == "dramatized":
-        return {DRAMATIZED}
+    if preference in ("abridged", "dramatized"):
+        return {ABRIDGED}
     if preference == "both":
-        return {NARRATED, DRAMATIZED, "abridged"}
-    return {NARRATED, "abridged"}
+        return {NARRATED, ABRIDGED}
+    return {NARRATED}
 
 
 # Background lookup of Audible ids and book lists for every series in the library

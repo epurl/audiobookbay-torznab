@@ -97,8 +97,7 @@
                     </select>
                     <select id="libFilterEdition" class="form-select" aria-label="Edition">
                         <option value="">All editions</option>
-                        <option value="narrated">Narrated</option>
-                        <option value="dramatized">Dramatized</option>
+                        <option value="narrated">Unabridged</option>
                         <option value="abridged">Abridged</option>
                     </select>
                     <select id="libSort" class="form-select">
@@ -120,7 +119,7 @@
                     </select>
                     <select id="bulkEdition" class="form-select" aria-label="Set edition">
                         <option value="">Set edition…</option>
-                        <option value="narrated">Narrated</option><option value="dramatized">Dramatized</option><option value="abridged">Abridged</option>
+                        <option value="narrated">Unabridged</option><option value="abridged">Abridged</option>
                         <option value="__detect">Detect again</option>
                     </select>
                     <button class="secondary-btn" id="bulkMatch">Match on Audible</button>
@@ -383,11 +382,11 @@
                         <div class="settings-group">
                             <label for="setEditionPref">Editions</label>
                             <select id="setEditionPref" class="form-select">
-                                <option value="narrated">Narrated only</option>
-                                <option value="dramatized">Dramatized only</option>
+                                <option value="narrated">Unabridged only</option>
+                                <option value="abridged">Abridged only</option>
                                 <option value="both">Both</option>
                             </select>
-                            <p class="settings-hint">Which editions Monitor Series offers and series syncs add. Narrated editions are read by one or a few narrators; dramatized ones are full-cast productions such as GraphicAudio. Every book is searched for, matched and checked in its own edition.</p>
+                            <p class="settings-hint">Which editions Monitor Series offers and series syncs add. Unabridged is the whole book read as written; abridged is everything else: shortened readings, and dramatizations such as GraphicAudio full-cast productions. Every book is searched for, matched and checked in its own edition.</p>
                         </div>
                         <div class="settings-group">
                             <label class="checkbox-label">
@@ -683,12 +682,12 @@
                             <p class="settings-hint" id="absStatus"></p>
                         </div>
                         <div class="settings-group">
-                            <label>Series Order</label>
+                            <label>Series and Editions</label>
                             <div class="inline-actions">
-                                <button type="button" id="absSeriesOrderBtn" class="secondary-btn">Fix Series Order</button>
+                                <button type="button" id="absSeriesOrderBtn" class="secondary-btn">Update Audiobookshelf</button>
                                 <span class="action-status" id="absSeriesOrderStatus"></span>
                             </div>
-                            <p class="settings-hint">So series sort properly in Audiobookshelf: dramatizations become a series of their own ("Name (Dramatized)"), and books sold in parts are numbered by part (book 1 in two parts: #1.1 and #1.2). Updates the series in each imported book's metadata.json, and in Audiobookshelf itself when a server and library are set above. New imports get this automatically.</p>
+                            <p class="settings-hint">Makes Audiobookshelf match Bayarr: its <b>Abridged</b> setting follows each book's edition (abridged includes dramatizations), abridged editions become a series of their own ("Name (Abridged)") and books sold in parts are numbered by part (book 1 in two parts: #1.1 and #1.2), so series sort properly. Updates each imported book's metadata.json, and Audiobookshelf itself when a server and library are set above. New imports get this automatically.</p>
                         </div>
                     </section>
 
@@ -755,7 +754,7 @@
                 <div class="abb-toolbar">
                     <div class="toolbar-title">Audiobookbay Results</div>
                     <div class="toolbar-actions">
-                        <label class="check-label" title="Releases that are a different book, a box set, dramatized, abridged and so on"><input type="checkbox" id="showRejected"> Show rejected</label>
+                        <label class="check-label" title="Releases that are a different book, a box set, another edition and so on"><input type="checkbox" id="showRejected"> Show rejected</label>
                         <label for="langFilter">Language:</label>
                         <select id="langFilter" class="form-select">
                             <option value="All">All</option>
@@ -809,7 +808,7 @@
                     <label>Status<select id="bookStatus" class="form-select"><option value="Monitored">Monitored</option><option value="Unmonitored">Unmonitored</option><option value="Unreleased">Unreleased</option><option value="Downloading">Downloading</option><option value="Downloaded">Downloaded</option><option value="Needs Review">Needs Review</option><option value="Imported">Imported</option><option value="Missing">Missing</option></select></label>
                     <label>ASIN<input type="text" id="bookAsin" class="form-input"></label>
                     <label>Runtime (min)<input type="number" id="bookRuntime" class="form-input" min="0"></label>
-                    <label>Edition<select id="bookEdition" class="form-select"><option value="narrated">Narrated</option><option value="dramatized">Dramatized</option><option value="abridged">Abridged</option></select></label>
+                    <label>Edition<select id="bookEdition" class="form-select"><option value="narrated">Unabridged</option><option value="abridged">Abridged</option></select></label>
                     <div class="book-edition-reason" id="bookEditionReason"></div>
                 </div>
             </div>

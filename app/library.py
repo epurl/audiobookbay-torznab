@@ -28,7 +28,7 @@ def is_system_folder(path):
 DEFAULT_NAMING_FORMAT = "{Author} - {Series} {SeriesNumber} - {Title}"
 # Added after the title for dramatized and abridged books when the format has no {Edition},
 # so two editions of a book never share a folder
-EDITION_SUFFIX = {"dramatized": "(Dramatized)", "abridged": "(Abridged)"}
+EDITION_SUFFIX = {"abridged": "(Abridged)", "dramatized": "(Abridged)"}
 
 
 def display_name(text):

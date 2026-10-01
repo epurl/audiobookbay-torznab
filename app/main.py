@@ -163,6 +163,7 @@ async def api_edit_book(book_id: str, request: Request):
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="Runtime must be a whole number of minutes")
     if "edition" in fields:
+        fields["edition"] = editions.stored_edition(fields["edition"]) or fields["edition"]
         if fields["edition"] not in editions.EDITIONS:
             raise HTTPException(status_code=400, detail=f"Unknown edition: {fields['edition']}")
         if fields["edition"] != editions.edition_of(_get_book_or_404(book_id)):
@@ -522,7 +523,7 @@ async def api_bulk(request: Request):
         added, skipped = convert.enqueue(ids, source="bulk")
         return {"success": True, "count": added, "skipped": len(skipped)}
     if action == "edition":
-        edition = data.get("edition")
+        edition = editions.stored_edition(data.get("edition"))
         if edition not in editions.EDITIONS:
             raise HTTPException(status_code=400, detail=f"Unknown edition: {edition}")
         db.update_books({i: {"edition": edition, "edition_reason": "Set by you", "edition_check": False} for i in ids})
@@ -688,9 +689,10 @@ async def api_seeding_remove(book_id: str, request: Request):
 
 @app.post("/api/audiobookshelf/series_order")
 async def api_abs_series_order():
-    """Rewrites the series of every imported book, in its metadata.json and in Audiobookshelf,
-    so series sort: dramatizations as their own series, parts numbered 1.1, 1.2..."""
-    books = [b for b in db.get_library() if b.get("status") == "Imported" and b.get("path") and b.get("series")]
+    """Rewrites the series and the Abridged flag of every imported book, in its metadata.json
+    and in Audiobookshelf, so series sort (abridged editions as their own series, parts
+    numbered 1.1, 1.2...) and Audiobookshelf's Abridged matches Bayarr's edition."""
+    books = [b for b in db.get_library() if b.get("status") == "Imported" and b.get("path")]
     if not audiobookshelf.start_fix_series_order(books, db.get_settings()):
         raise HTTPException(status_code=409, detail="It's already running.")
     return dict(audiobookshelf.order_job)

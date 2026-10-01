@@ -64,7 +64,12 @@ def _local_edition(book):
 async def classify_editions(book_ids=None):
     """Works out the edition of books that don't have one yet, or of book_ids (again):
     Audible's edition for books with an ASIN, and what their files say. A folder tagged
-    as a dramatization wins over a narrated ASIN, and is flagged for checking."""
+    as a dramatization wins over an unabridged ASIN, and is flagged for checking."""
+    # Books saved as "dramatized" before it was merged into abridged: just renamed
+    renamed = {b["id"]: {"edition": editions.ABRIDGED} for b in db.get_library() if b.get("edition") == "dramatized"}
+    if renamed:
+        db.update_books(renamed)
+        logger.info(f"Editions: {len(renamed)} dramatized book(s) are now abridged")
     books = [b for b in db.get_library()
              if (b["id"] in book_ids if book_ids is not None else b.get("edition") not in editions.EDITIONS)]
     if not books:
@@ -89,8 +94,7 @@ async def classify_editions(book_ids=None):
     db.update_books(changes)
     flagged = sum(1 for c in changes.values() if c["edition_check"])
     counts = {e: sum(1 for c in changes.values() if c["edition"] == e) for e in editions.EDITIONS}
-    logger.info(f"Editions: {counts['narrated']} narrated, {counts['dramatized']} dramatized, "
-                f"{counts['abridged']} abridged; {flagged} to check")
+    logger.info(f"Editions: {counts['narrated']} unabridged, {counts['abridged']} abridged; {flagged} to check")
     return len(changes)
 
 

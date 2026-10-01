@@ -51,7 +51,7 @@ DEFAULT_SETTINGS = {
     "write_metadata": True,
     "auto_convert_m4b": False,                # Queue imported downloads that aren't a single M4B
     "delete_originals_after_convert": False,  # Delete the .original files once a conversion checks out
-    "edition_preference": "narrated",  # narrated | dramatized | both: what series monitoring adds
+    "edition_preference": "narrated",  # narrated (unabridged) | abridged | both: what series monitoring adds
     # AudiobookBay (the cookie falls back to the ABB_COOKIE environment variable)
     "abb_enabled": True,
     "abb_url": "",
@@ -207,9 +207,10 @@ def add_to_library(book, status=None):
     book["series_list"] = merge_series_lists(series_entries(book))
     if book.get("description"):
         book["description"] = _clean_description(book["description"])
+    book["edition"] = editions.stored_edition(book.get("edition")) or book.get("edition")  # Old "dramatized"
     if book.get("edition") not in editions.EDITIONS:
         # Added from somewhere that didn't say (e.g. the Search page): judge by its details
-        found = editions.classify_fields(book) or {"edition": editions.NARRATED, "reason": "No signs of a dramatization"}
+        found = editions.classify_fields(book) or {"edition": editions.NARRATED, "reason": "No signs of an abridgement"}
         book.update(edition=found["edition"], edition_reason=found["reason"])
     with _lock:
         db = _load_db()
@@ -376,7 +377,7 @@ def get_series(series_id):
 
 CATALOG_MAX_AGE_DAYS = 7
 # Raised when the way series lists are built changes, so saved ones are fetched again
-CATALOG_VERSION = 5
+CATALOG_VERSION = 6
 _CATALOG_BOOK_FIELDS = ("title", "authors", "narrators", "imageUrl", "release_date", "asin", "series", "series_asin",
                         "sequence", "series_list", "runtime_min", "publisher", "language", "catalog_sequence",
                         "edition", "edition_reason", "part_asins", "part", "part_count")
@@ -506,7 +507,9 @@ def update_settings(new_settings):
                 settings[key] = max(0, min(top, kind(settings.get(key) or 0)))
             except (TypeError, ValueError):
                 settings[key] = 0
-        if settings.get("edition_preference") not in ("narrated", "dramatized", "both"):
+        if settings.get("edition_preference") == "dramatized":
+            settings["edition_preference"] = "abridged"  # Dramatizations count as abridged now
+        if settings.get("edition_preference") not in ("narrated", "abridged", "both"):
             settings["edition_preference"] = DEFAULT_SETTINGS["edition_preference"]
         if "runtime_tolerance" in new_settings:
             try:
