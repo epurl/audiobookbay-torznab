@@ -26,6 +26,15 @@ def _seq_sort(seq, release_date="", part=None):
         return (1, 0.0, part or 0, release_date or "9999")
 
 
+def plain_title(title):
+    """A series name without the "(Dramatized)" its dramatized side is shown with: a series
+    monitored from that side was once saved under the name it's shown with."""
+    title = title or ""
+    while title.endswith(" (Dramatized)"):
+        title = title[:-len(" (Dramatized)")]
+    return title
+
+
 def _part(item):
     return item.get("part") or audible.part_of(item.get("title"))[0]
 
@@ -95,7 +104,7 @@ def build_groups():
 
     tracked_by_asin = {}
     for t in tracked:
-        group("asin:" + t["asin"], t["title"], t["asin"])["tracked"] = t
+        group("asin:" + t["asin"], plain_title(t["title"]), t["asin"])["tracked"] = t
         tracked_by_asin[t["asin"]] = t
     for b in library:
         seen = set()
@@ -193,7 +202,7 @@ def summarize(group, index):
     tracked = group["tracked"]
     return {
         "key": group["key"],
-        "title": group["title"] + (" (Dramatized)" if group.get("dramatized") else ""),
+        "title": plain_title(group["title"]) + (" (Dramatized)" if group.get("dramatized") else ""),
         "dramatized": bool(group.get("dramatized")),
         "asin": group["asin"],
         "author": series_author(rows) or (tracked or {}).get("author", ""),
@@ -307,7 +316,7 @@ async def detail(key):
             group["asin"] = asin
     if group["asin"]:
         group["catalog"] = await ensure_catalog(group["asin"])
-        group["title"] = (group["tracked"] or {}).get("title") or group["catalog"].get("title") or group["title"]
+        group["title"] = plain_title((group["tracked"] or {}).get("title") or group["catalog"].get("title") or group["title"])
         # Attaching may have moved books between groups; rebuild from the saved data
         fresh = _find_group(build_groups(), "asin:" + group["asin"], drama)
         if fresh:

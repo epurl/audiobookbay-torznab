@@ -161,12 +161,12 @@ async def sync_series(series, settings, selected=None):
     series recorded on them. Books are only added when chosen (selected, when the series is
     first monitored) or new: ones Audible didn't list before, in the editions the edition
     setting asks for. Returns the added books."""
-    from app.series_index import LibraryIndex, ensure_catalog, series_author, wanted_editions
+    from app.series_index import LibraryIndex, ensure_catalog, plain_title, series_author, wanted_editions
     catalog = await ensure_catalog(series["asin"], force=True)
     books = catalog.get("books", [])
     every_edition = books + catalog.get("alternates", [])
     editions_wanted = wanted_editions(settings.get("edition_preference"))
-    title = series.get("title") or catalog.get("title", "")
+    title = plain_title(series.get("title") or catalog.get("title", ""))
     index = LibraryIndex(db.get_library())
     known = series.get("known_asins")
     added = []

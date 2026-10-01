@@ -694,7 +694,7 @@ async def api_history(limit: int = 200):
 
 @app.get("/api/series")
 async def api_series():
-    return {"series": db.get_series_list()}
+    return {"series": [{**t, "title": series_index.plain_title(t.get("title"))} for t in db.get_series_list()]}
 
 @app.get("/api/series/index")
 async def api_series_index():
@@ -744,7 +744,7 @@ async def api_add_series(request: Request):
     except Exception as e:
         logger.error(f"Series lookup failed: {e}", exc_info=True)
         raise HTTPException(status_code=502, detail="Couldn't load the series from Audible.")
-    title = data.get("title") or catalog.get("title", "")
+    title = series_index.plain_title(data.get("title") or catalog.get("title", ""))
     # Today's books count as known, so if this first sync fails, later ones still only add
     # new releases rather than everything that wasn't chosen
     series = db.add_series(asin, title, data.get("author", ""),
