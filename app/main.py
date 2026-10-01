@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import audible, audiobookshelf, auth, book_search, db, library, series_index
+from app import audible, audiobookshelf, auth, book_search, db, library, release_calendar, series_index
 from app.monitor import (auto_download_book, find_missing_books, grab, match_job, run_monitor_loop, schedule_search,
                          schedule_searches, start_match_job, sync_series)
 from app.qbittorrent import get_torrents, test_connection
@@ -337,6 +337,18 @@ async def api_series_refresh():
     """Looks up Audible's book lists for the library's series in the background."""
     series_index.start_refresh()
     return dict(series_index.refresh_job)
+
+@app.get("/api/calendar")
+async def api_calendar():
+    """Trending Audible releases for the Calendar (library books come from /api/library)."""
+    data = release_calendar.get()
+    return {**data, "stale": release_calendar.is_stale(), "refresh": dict(release_calendar.refresh_job)}
+
+@app.post("/api/calendar/refresh")
+async def api_calendar_refresh():
+    """Reloads trending releases from Audible in the background (about a minute)."""
+    release_calendar.start_refresh()
+    return dict(release_calendar.refresh_job)
 
 @app.post("/api/series")
 async def api_add_series(request: Request):

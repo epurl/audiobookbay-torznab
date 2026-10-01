@@ -11,6 +11,7 @@ An audiobook manager in the style of Sonarr and Radarr, built around AudiobookBa
 - **Import:** finished downloads are hardlinked or copied (so seeding continues), renamed, and checked against Audible's runtime.
 - **Existing library:** import the audiobooks you already have, from Audiobookshelf's `metadata.json` or folder names. Files are never moved.
 - **Series:** a Sonarr-style page with every series, Audible's full book list and what you're missing. Monitor a series to get the books you pick and every new release.
+- **Calendar:** your books on their release dates, coloured by status like Sonarr's calendar, plus trending Audible releases filtered by trend and genre.
 - **Activity:** live download queue and history. **Audiobookshelf:** metadata, covers and library scans.
 
 ## Quick start (Docker)
@@ -110,6 +111,26 @@ The **Series** page lists every series your books are in. A book can be in sever
 Open a series to see every book Audible lists, in order. Books you don't have show an **Add** button. Duplicate editions are merged, and dramatized versions are listed only when there's no regular one.
 
 **Monitor Series** lets you tick which missing books to add. Monitored series are checked every 6 hours, and new releases are added automatically. Books you didn't pick aren't added again.
+
+## Calendar
+
+Month, week and agenda views, laid out like Sonarr's calendar. Your library's books appear on their release dates, coloured by status:
+
+| Colour | Status |
+| --- | --- |
+| Green | On disk |
+| Purple | Downloading |
+| Red | Missing (wanted and released, not on disk) |
+| Orange | Needs review |
+| Blue | Upcoming |
+| Grey | Unmonitored |
+
+With **Trending** on, recent and upcoming Audible releases you don't have are added with a dashed outline. They come from Audible's top 500 best sellers (pre-orders included), the top 100 of each genre, and new books by the authors in your library. They're refreshed in the background every 12 hours; **Refresh** reloads them.
+
+- **Trend filter:** all trending, top 100 best sellers, top in their genre, from your authors, in your series, series starts (#1), or highly rated.
+- **Genre filter:** Audible's 24 genres.
+
+Click a trending book for its details, then **Add to Library** (upcoming books become Unreleased and are downloaded on release day) or **View Series**.
 
 ## Audiobookshelf
 

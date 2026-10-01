@@ -53,15 +53,22 @@ function primaryAuthor(authors) {
     return String(authors || '').split(',')[0].split('&')[0].trim();
 }
 
+function authorKeyList(authors) {
+    const keys = String(authors || '').split(',').map(normKey).filter(Boolean);
+    return keys.length ? keys : [''];
+}
+
 function findInLibrary(book) {
     if (book.asin) {
         const byAsin = appLibrary.find(b => b.asin && b.asin === book.asin);
         if (byAsin) return byAsin;
     }
+    // Title (before any subtitle) and any shared author: books don't always list
+    // their authors in the same order
     const titleKey = normKey(String(book.title || '').split(':')[0]);
-    const authorKey = normKey(primaryAuthor(book.authors));
+    const authorKeys = authorKeyList(book.authors);
     return appLibrary.find(b => normKey(String(b.title || '').split(':')[0]) === titleKey
-        && normKey(primaryAuthor(b.authors)) === authorKey);
+        && authorKeyList(b.authors).some(a => authorKeys.includes(a)));
 }
 
 function coverUrl(book) {
@@ -167,13 +174,14 @@ async function initApp() {
     setupSettings();
     setupLibrary();
     setupSeriesPages();
+    setupCalendar();
     window.addEventListener('hashchange', route);
     route();
 }
 
 // Each page has its own address (#/library, #/series/<key>, ...), so the browser's
 // Back and Forward buttons, refreshing and bookmarks all work
-const PAGES = { search: 'searchView', library: 'libraryView', series: 'seriesView', activity: 'activityView', settings: 'settingsView' };
+const PAGES = { search: 'searchView', library: 'libraryView', series: 'seriesView', calendar: 'calendarView', activity: 'activityView', settings: 'settingsView' };
 const PAGE_NAMES = Object.fromEntries(Object.entries(PAGES).map(([name, view]) => [view, name]));
 
 function navigate(path) {
@@ -209,6 +217,7 @@ function activateView(viewId) {
     document.querySelector('.main-content').scrollTop = 0;
     if (viewId === 'libraryView') renderLibrary();
     if (viewId === 'seriesView') renderSeries();
+    if (viewId === 'calendarView') renderCalendar();
     if (viewId === 'activityView') {
         renderActivity();
         activityTimer = setInterval(renderActivity, 5000);
@@ -1843,4 +1852,311 @@ async function loadFolder(path) {
         console.error("Folder load error:", err);
         folderList.innerHTML = `<div style="padding: 16px; color: red;">Error loading folder structure: ${esc(err.message || err)}</div>`;
     }
+}
+
+
+// -----------------
+// Calendar: library books on their release dates, coloured by status like Sonarr's
+// calendar, plus trending Audible releases (best sellers, new books from your authors)
+// -----------------
+let calData = { items: [], genres: [] };
+let calDate = new Date();
+let calView = 'month';
+try { calView = localStorage.getItem('bayarr.calView') || (window.innerWidth < 768 ? 'agenda' : 'month'); } catch (e) { /* storage unavailable */ }
+let calLookupTimer = null;
+let calRefreshStartedThisVisit = false;
+const CAL_MAX_PER_DAY = 4;
+
+function isoDate(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Where a library book stands, in the calendar's terms
+function calStatus(book, today) {
+    switch (book.status) {
+        case 'Imported': return 'ondisk';
+        case 'Downloading': case 'Downloaded': return 'downloading';
+        case 'Needs Review': return 'review';
+        case 'Missing': return 'missing';
+        case 'Unmonitored': return 'unmonitored';
+        case 'Unreleased': return 'upcoming';
+        default: return (book.release_date || '') > today ? 'upcoming' : 'missing';
+    }
+}
+
+const CAL_STATUS_LABELS = { ondisk: 'On disk', downloading: 'Downloading', missing: 'Missing', review: 'Needs review',
+    upcoming: 'Upcoming', unmonitored: 'Unmonitored', trending: 'Not in library' };
+
+function librarySeriesKeys() {
+    const keys = new Set();
+    appLibrary.forEach(b => seriesEntries(b).forEach(e => { keys.add(seriesKey(e.name)); if (e.asin) keys.add(e.asin); }));
+    appSeries.forEach(sr => { keys.add(sr.asin); keys.add(seriesKey(sr.title)); });
+    return keys;
+}
+
+function trendingMatches(item, trend, genre, authors, seriesKeys) {
+    if (genre && !(item.genres || []).includes(genre)) return false;
+    switch (trend) {
+        case 'top100': return item.rank && item.rank <= 100;
+        case 'genretop': return item.genre_rank && item.genre_rank <= 25;
+        case 'authors': return item.from_author || authorKeyList(item.authors).some(a => authors.has(a));
+        case 'series': return seriesEntries(item).some(e => seriesKeys.has(e.asin) || seriesKeys.has(seriesKey(e.name)));
+        case 'starts': return String(item.sequence || '') === '1';
+        case 'rated': return item.rating >= 4.5 && item.ratings >= 25;
+        default: return true;
+    }
+}
+
+// Every event to show: {date, kind: 'library'|'trending', status, book}
+function calendarEvents() {
+    const today = isoDate(new Date());
+    const events = [];
+    if (document.getElementById('calShowLibrary').checked) {
+        appLibrary.forEach(b => {
+            const date = String(b.release_date || '').slice(0, 10);
+            if (/^\d{4}-\d{2}-\d{2}$/.test(date) && date < '2100') {
+                events.push({ date, kind: 'library', status: calStatus(b, today), book: b });
+            }
+        });
+    }
+    if (document.getElementById('calShowTrending').checked) {
+        const trend = document.getElementById('calTrend').value;
+        const genre = document.getElementById('calGenre').value;
+        const authors = new Set(appLibrary.flatMap(b => authorKeyList(b.authors)).filter(Boolean));
+        const seriesKeys = librarySeriesKeys();
+        calData.items.forEach(item => {
+            if (findInLibrary(item) || !trendingMatches(item, trend, genre, authors, seriesKeys)) return;
+            events.push({ date: item.release_date.slice(0, 10), kind: 'trending', status: 'trending', book: item });
+        });
+    }
+    // Your books first, then by best-seller rank
+    const order = e => e.kind === 'library' ? 0 : 1;
+    events.sort((a, b) => order(a) - order(b) || (a.book.rank || 9999) - (b.book.rank || 9999)
+        || String(a.book.title).localeCompare(String(b.book.title)));
+    return events;
+}
+
+function eventSubtitle(book) {
+    return book.series ? `${book.series}${book.sequence ? ' #' + book.sequence : ''}` : primaryAuthor(book.authors);
+}
+
+function calEventHtml(ev, index) {
+    const b = ev.book;
+    const trendBadge = ev.kind === 'trending' && b.rank && b.rank <= 100 ? `<span class="cal-rank" title="Audible best seller #${b.rank}">#${b.rank}</span>` : '';
+    return `<button class="cal-event cal-${ev.status}${trendBadge ? ' ranked' : ''}" data-event="${index}" title="${esc(`${b.title} — ${CAL_STATUS_LABELS[ev.status]}`)}">
+        <span class="cal-event-title">${esc(b.title)}</span>${trendBadge}
+        <span class="cal-event-sub">${esc(eventSubtitle(b))}</span></button>`;
+}
+
+function calCardHtml(ev, index) {
+    const b = ev.book;
+    const label = ev.kind === 'library' ? CAL_STATUS_LABELS[ev.status] : (b.rank ? `Best seller #${b.rank}` : 'Trending');
+    return `<button class="cal-card cal-${ev.status}" data-event="${index}">
+        <img src="${esc(coverUrl(b))}" alt="" loading="lazy" onerror="this.src='${PLACEHOLDER_COVER}'">
+        <span class="cal-card-text">
+            <span class="cal-event-title">${esc(b.title)}</span>
+            <span class="cal-event-sub">${esc(eventSubtitle(b))}</span>
+            <span class="cal-card-status">${esc(label)}</span>
+        </span></button>`;
+}
+
+function startOfWeek(d) {
+    const s = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    s.setDate(s.getDate() - s.getDay());  // Weeks start on Sunday
+    return s;
+}
+
+function addDays(d, n) {
+    const r = new Date(d);
+    r.setDate(r.getDate() + n);
+    return r;
+}
+
+function calRange() {
+    if (calView === 'week') {
+        const start = startOfWeek(calDate);
+        return { start, end: addDays(start, 6) };
+    }
+    const first = new Date(calDate.getFullYear(), calDate.getMonth(), 1);
+    if (calView === 'agenda') {
+        return { start: first, end: new Date(calDate.getFullYear(), calDate.getMonth() + 1, 0) };
+    }
+    const start = startOfWeek(first);
+    return { start, end: addDays(start, 41) };  // Six weeks, like Sonarr's month view
+}
+
+function drawCalendar() {
+    const container = document.getElementById('calendarContainer');
+    const { start, end } = calRange();
+    const today = isoDate(new Date());
+    const from = isoDate(start), to = isoDate(end);
+    const events = calendarEvents().filter(ev => ev.date >= from && ev.date <= to);
+    const byDay = {};
+    events.forEach((ev, i) => (byDay[ev.date] = byDay[ev.date] || []).push(i));
+
+    const monthName = calDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    document.getElementById('calLabel').textContent = calView === 'week'
+        ? `${start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${end.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`
+        : monthName;
+    document.querySelectorAll('[data-cal-view]').forEach(b => b.classList.toggle('active', b.dataset.calView === calView));
+
+    const dayNames = [...Array(7)].map((_, i) => addDays(startOfWeek(new Date()), i).toLocaleDateString(undefined, { weekday: 'short' }));
+
+    if (calView === 'agenda') {
+        const days = Object.keys(byDay).sort();
+        container.innerHTML = days.length ? `<div class="cal-agenda">${days.map(day => {
+            const d = new Date(day + 'T00:00:00');
+            return `<div class="cal-agenda-day${day === today ? ' today' : ''}">
+                <div class="cal-agenda-date"><span>${esc(d.toLocaleDateString(undefined, { weekday: 'short' }))}</span><b>${d.getDate()}</b><span>${esc(d.toLocaleDateString(undefined, { month: 'short' }))}</span></div>
+                <div class="cal-agenda-items">${byDay[day].map(i => calCardHtml(events[i], i)).join('')}</div></div>`;
+        }).join('')}</div>` : `<div class="empty-state"><h3>Nothing this month</h3><p>No releases match these filters in ${esc(monthName)}.</p></div>`;
+    } else {
+        const days = [];
+        for (let d = new Date(start); d <= end; d = addDays(d, 1)) days.push(new Date(d));
+        const week = calView === 'week';
+        container.innerHTML = `<div class="cal-grid ${week ? 'cal-week' : 'cal-month'}">
+            ${dayNames.map(n => `<div class="cal-dayname">${esc(n)}</div>`).join('')}
+            ${days.map(d => {
+                const day = isoDate(d);
+                const list = byDay[day] || [];
+                const outside = !week && d.getMonth() !== calDate.getMonth();
+                const shown = week ? list : list.slice(0, CAL_MAX_PER_DAY);
+                const more = list.length - shown.length;
+                return `<div class="cal-day${outside ? ' outside' : ''}${day === today ? ' today' : ''}" data-day="${day}">
+                    <div class="cal-daynum">${week ? esc(d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })) : d.getDate()}</div>
+                    ${shown.map(i => week ? calCardHtml(events[i], i) : calEventHtml(events[i], i)).join('')}
+                    ${more > 0 ? `<button class="cal-more" data-day="${day}">+${more} more</button>` : ''}
+                </div>`;
+            }).join('')}</div>`;
+    }
+
+    container.querySelectorAll('[data-event]').forEach(el => el.addEventListener('click', () => openCalendarEvent(events[el.dataset.event])));
+    container.querySelectorAll('.cal-more').forEach(btn => btn.addEventListener('click', () => {
+        // Show that day's whole list in place
+        const cell = btn.closest('.cal-day');
+        cell.querySelectorAll('.cal-event, .cal-more').forEach(el => el.remove());
+        cell.insertAdjacentHTML('beforeend', byDay[btn.dataset.day].map(i => calEventHtml(events[i], i)).join(''));
+        cell.classList.add('expanded');
+        cell.querySelectorAll('[data-event]').forEach(el => el.addEventListener('click', () => openCalendarEvent(events[el.dataset.event])));
+    }));
+}
+
+function openCalendarEvent(ev) {
+    if (ev.kind === 'library') {
+        openBookModal(ev.book.id);
+        return;
+    }
+    const b = ev.book;
+    const facts = [
+        ['Release', b.release_date],
+        ['Length', b.runtime_min ? formatDuration(b.runtime_min * 60) : ''],
+        ['Narrated by', b.narrators],
+        ['Series', b.series ? `${b.series}${b.sequence ? ' #' + b.sequence : ''}` : ''],
+        ['Genres', [...(b.genres || []), ...(b.subgenres || [])].join(', ')],
+        ['Rating', b.ratings ? `${b.rating.toFixed(1)} (${b.ratings} rating${b.ratings === 1 ? '' : 's'})` : ''],
+        ['Best seller', [b.rank ? `#${b.rank} overall` : '', b.genre_rank ? `#${b.genre_rank} in its genre` : ''].filter(Boolean).join(', ')],
+        ['Publisher', b.publisher],
+    ].filter(([, v]) => v);
+    document.getElementById('calendarModalBody').innerHTML = `
+        <div class="cal-detail">
+            <img src="${esc(coverUrl(b))}" alt="" onerror="this.src='${PLACEHOLDER_COVER}'">
+            <div>
+                <h3>${esc(b.title)}</h3>
+                ${b.subtitle ? `<div class="muted">${esc(b.subtitle)}</div>` : ''}
+                <div class="cal-detail-author">${esc(b.authors)}</div>
+                ${b.from_author ? '<span class="badge match">From your authors</span>' : ''}
+                <dl class="cal-facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+                <div class="cal-detail-actions">
+                    <button class="primary-btn" id="calAddBtn">Add to Library</button>
+                    ${b.series_asin ? '<button class="secondary-btn" id="calSeriesBtn">View Series</button>' : ''}
+                </div>
+            </div>
+        </div>`;
+    const modalEl = document.getElementById('calendarModal');
+    showModal(modalEl);
+    document.getElementById('calAddBtn').addEventListener('click', async (e) => {
+        e.target.disabled = true;
+        const { ok, data } = await postJSON('/api/library', b);
+        if (!ok) {
+            toast(data.detail || 'Could not add the book', 'error');
+            e.target.disabled = false;
+            return;
+        }
+        toast(`Added "${b.title}" (${data.status})`, 'ok');
+        hideModal(modalEl);
+        await fetchLibrary();
+        drawCalendar();
+    });
+    document.getElementById('calSeriesBtn')?.addEventListener('click', () => {
+        hideModal(modalEl);
+        openSeriesDetail('asin:' + b.series_asin);
+    });
+}
+
+function updateCalendarLookup(job) {
+    const banner = document.getElementById('calLookup');
+    clearTimeout(calLookupTimer);
+    if (job && job.running) {
+        banner.hidden = false;
+        banner.textContent = job.total
+            ? `Loading trending releases from Audible… ${job.done} of ${job.total} lists`
+            : 'Loading trending releases from Audible…';
+        calLookupTimer = setTimeout(async () => {
+            if (document.getElementById('calendarView').hidden) return;
+            await loadCalendarData();
+        }, 3000);
+    } else {
+        banner.hidden = true;
+    }
+}
+
+async function loadCalendarData() {
+    const res = await fetch('/api/calendar');
+    const data = await res.json().catch(() => null);
+    if (!data) return;
+    const changed = data.fetched !== calData.fetched || !calData.items.length;
+    calData = data;
+    const genreSelect = document.getElementById('calGenre');
+    const chosen = genreSelect.value;
+    genreSelect.innerHTML = '<option value="">All genres</option>' +
+        (data.genres || []).map(g => `<option value="${esc(g)}"${g === chosen ? ' selected' : ''}>${esc(g)}</option>`).join('');
+    if (data.stale && !data.refresh.running && !calRefreshStartedThisVisit) {
+        calRefreshStartedThisVisit = true;
+        const { data: job } = await postJSON('/api/calendar/refresh');
+        updateCalendarLookup({ ...job, running: true });
+    } else {
+        updateCalendarLookup(data.refresh);
+    }
+    if (changed) drawCalendar();
+}
+
+async function renderCalendar() {
+    drawCalendar();
+    await loadCalendarData();
+}
+
+function setupCalendar() {
+    const step = dir => {
+        if (calView === 'week') calDate = addDays(calDate, 7 * dir);
+        else calDate = new Date(calDate.getFullYear(), calDate.getMonth() + dir, 1);
+        drawCalendar();
+    };
+    document.getElementById('calPrev').addEventListener('click', () => step(-1));
+    document.getElementById('calNext').addEventListener('click', () => step(1));
+    document.getElementById('calToday').addEventListener('click', () => { calDate = new Date(); drawCalendar(); });
+    document.querySelectorAll('[data-cal-view]').forEach(btn => btn.addEventListener('click', () => {
+        calView = btn.dataset.calView;
+        try { localStorage.setItem('bayarr.calView', calView); } catch (e) { /* storage unavailable */ }
+        drawCalendar();
+    }));
+    ['calShowLibrary', 'calShowTrending', 'calTrend', 'calGenre'].forEach(id =>
+        document.getElementById(id).addEventListener('change', drawCalendar));
+    document.getElementById('calRefreshBtn').addEventListener('click', async () => {
+        const { data } = await postJSON('/api/calendar/refresh');
+        updateCalendarLookup({ ...data, running: true });
+        toast('Loading trending releases from Audible in the background');
+    });
+    const modalEl = document.getElementById('calendarModal');
+    document.getElementById('closeCalendarModal').addEventListener('click', () => hideModal(modalEl));
+    modalEl.addEventListener('click', (e) => { if (e.target === modalEl) hideModal(modalEl); });
 }
