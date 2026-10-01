@@ -2,6 +2,7 @@
 and author columns), matched to Audible, then added to the library."""
 import asyncio
 import csv
+import datetime
 import io
 import logging
 import re
@@ -113,3 +114,131 @@ def add(asins, status="Monitored"):
     if added:
         db.add_history("list", None, f"Added {len(added)} book{'s' if len(added) != 1 else ''} from a reading list")
     return added
+
+
+# --- Watched Goodreads lists ----------------------------------------------------
+# Settings > Lists: shelves checked with the library (every 6 hours) and on demand. New
+# books are looked up on Audible (clear matches only) and added; ones that aren't found
+# are listed so you can search for them yourself.
+
+UNMATCHED_KEPT = 100
+_checking = set()  # list ids being checked
+
+
+def watched():
+    return db.get_settings().get("watched_lists") or []
+
+
+def _update(list_id, **fields):
+    lists = watched()
+    for entry in lists:
+        if entry["id"] == list_id:
+            entry.update(fields)
+    db.set_setting("watched_lists", lists)
+
+
+def public(entry):
+    """A watched list for the browser (without the ids of every book on it)."""
+    return {k: v for k, v in entry.items() if k != "known"} | {"checking": entry["id"] in _checking}
+
+
+async def add_watch(url, shelf="", name="", monitor="Monitored", add_existing=True):
+    """Starts watching a shelf. Reads it once to check the link; without add_existing, the
+    books already on it are skipped and only ones added later come in."""
+    import uuid
+    from app import goodreads
+    feed = goodreads.feed_url(url, shelf)
+    if any(entry["url"] == feed for entry in watched()):
+        raise ValueError("That list is already being watched.")
+    data = await goodreads.fetch(feed, max_pages=1 if add_existing else goodreads.MAX_PAGES)
+    entry = {
+        "id": uuid.uuid4().hex, "url": feed, "source": url.strip(),
+        "name": name.strip() or data["title"] or "Goodreads list",
+        "monitor": "Unmonitored" if monitor == "Unmonitored" else "Monitored", "enabled": True,
+        "added": datetime.datetime.now().isoformat(timespec="seconds"),
+        "known": [] if add_existing else [i["book_id"] for i in data["items"]],
+        "last_check": "", "last_result": {}, "unmatched": [],
+    }
+    db.set_setting("watched_lists", watched() + [entry])
+    start_check(entry["id"])
+    return entry
+
+
+def start_check(list_id):
+    """Checks one list in the background. False if it's already being checked."""
+    if list_id in _checking:
+        return False
+    _checking.add(list_id)
+
+    async def run():
+        try:
+            await check_list(list_id)
+        finally:
+            _checking.discard(list_id)
+
+    task = asyncio.create_task(run())
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
+    return True
+
+
+async def check_list(list_id):
+    """Reads the list and adds the books that are new on it."""
+    from app import goodreads
+    from app.monitor import schedule_search
+    entry = next((e for e in watched() if e["id"] == list_id), None)
+    if not entry:
+        return
+    now = datetime.datetime.now().isoformat(timespec="seconds")
+    try:
+        data = await goodreads.fetch(entry["url"])
+    except ValueError as e:
+        logger.warning(f"Watched list {entry['name']}: {e}")
+        _update(list_id, last_check=now, last_result={"error": str(e)})
+        return
+    known = set(entry.get("known") or [])
+    new = [i for i in data["items"] if i["book_id"] not in known]
+    unmatched = list(entry.get("unmatched") or [])
+    result = {"on_list": len(data["items"]), "new": len(new), "added": 0, "already": 0, "not_found": 0}
+    settings = db.get_settings()
+    for item in reversed(new):  # Oldest first, so the library gets them in the order you added them
+        title, series, sequence = _clean_title(item["title"])
+        try:
+            match = await audible.auto_match({"title": title, "authors": item["author"], "series": series, "sequence": sequence})
+        except Exception as e:
+            logger.warning(f"Watched list {entry['name']}: couldn't look up {title}: {e}")
+            continue  # Tried again next time
+        known.add(item["book_id"])
+        if not match:
+            result["not_found"] += 1
+            unmatched = [u for u in unmatched if u["book_id"] != item["book_id"]]
+            unmatched.insert(0, {"book_id": item["book_id"], "title": title, "author": item["author"]})
+            continue
+        if LibraryIndex(db.get_library()).find(match):
+            result["already"] += 1
+            continue
+        added = db.add_to_library({**match, "description": match.get("description", "")})
+        if entry["monitor"] == "Unmonitored" and added.get("status") in ("Monitored", "Unreleased"):
+            db.update_library_status(added["id"], "Unmonitored")
+        elif added.get("status") == "Monitored" and settings.get("qbt_enabled"):
+            schedule_search(db.get_book(added["id"]))
+        db.add_history("list", added, f"Added from {entry['name']}")
+        result["added"] += 1
+        await asyncio.sleep(0.2)  # Gentle on Audible's API
+    # Remembered, so a book you remove from the library isn't added back on the next check
+    _update(list_id, known=sorted(known), unmatched=unmatched[:UNMATCHED_KEPT], last_check=now, last_result=result)
+    if result["added"]:
+        logger.info(f"Watched list {entry['name']}: added {result['added']} book(s)")
+
+
+async def check_all():
+    """Checks every enabled list (with the library check)."""
+    for entry in watched():
+        if entry.get("enabled", True) and entry["id"] not in _checking:
+            _checking.add(entry["id"])
+            try:
+                await check_list(entry["id"])
+            except Exception as e:
+                logger.error(f"Watched list {entry.get('name')} failed: {e}", exc_info=True)
+            finally:
+                _checking.discard(entry["id"])

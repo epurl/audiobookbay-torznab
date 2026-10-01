@@ -2885,6 +2885,24 @@ tr.clickable {
     font-size: 0.9rem;
 }
 
+.watched-list .indexer-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.watched-list details {
+    margin-top: 6px;
+    font-size: 0.85rem;
+}
+
+.watched-list details ul {
+    margin: 6px 0 0 18px;
+}
+
+.watched-list .result-error {
+    display: block;
+}
+
 .indexer-form {
     padding: 12px;
     border: 1px dashed var(--border-color);

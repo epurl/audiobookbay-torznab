@@ -215,6 +215,9 @@ async def check_library():
             except Exception as e:
                 logger.error(f"Could not check new books by {author.get('name')}: {e}")
 
+    from app import reading_list  # Watched Goodreads lists (Settings > Lists)
+    await reading_list.check_all()
+
     for book in db.get_library():
         title = book.get("title")
         status = book.get("status")

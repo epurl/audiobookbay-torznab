@@ -82,7 +82,6 @@
                     <h2>Library</h2>
                     <div class="page-actions">
                         <button id="selectModeBtn" class="secondary-btn">Select</button>
-                        <button id="listImportBtn" class="secondary-btn" title="Add books from a Goodreads or StoryGraph want-to-read list">Import List</button>
                         <button id="organizeBtn" class="secondary-btn" title="Rename existing folders to the Book Folder Format (you approve each change)">Organize</button>
                         <button id="rescanBtn" class="secondary-btn" title="Refresh file info and find books whose files are gone">Rescan</button>
                     </div>
@@ -355,6 +354,7 @@
                     <button class="settings-tab" data-section="client" role="tab">Download Client</button>
                     <button class="settings-tab" data-section="indexers" role="tab">Indexers</button>
                     <button class="settings-tab" data-section="releases" role="tab">Releases</button>
+                    <button class="settings-tab" data-section="lists" role="tab">Lists</button>
                     <button class="settings-tab" data-section="connect" role="tab">Audiobookshelf</button>
                     <button class="settings-tab" data-section="security" role="tab">Security</button>
                     <button class="settings-tab" data-section="backup" role="tab">Backup</button>
@@ -629,6 +629,31 @@
                             </label>
                             <p class="settings-hint">The copy in your library stays. Off: only the torrent is removed and its files are left in the downloads folder.</p>
                         </div>
+                    </section>
+
+                    <!-- Lists -->
+                    <section class="settings-section" data-section="lists" hidden>
+                        <h3>Watched Goodreads Lists</h3>
+                        <p class="settings-hint">Bayarr checks these shelves every 6 hours (and when you click Check Now). New books on them are looked up on Audible and added to your library; only clear matches (title and author), so a few may need adding by hand from Search. A book you remove from the library isn't added back. The Goodreads profile must be public, unless you use the shelf's RSS link (it includes a key).</p>
+                        <div id="watchedLists" class="indexer-list no-dirty"></div>
+                        <div class="indexer-form no-dirty" id="watchForm">
+                            <div class="indexer-form-grid">
+                                <label>Goodreads Link<input type="text" id="wlUrl" class="form-input" placeholder="goodreads.com/review/list/12345678-name?shelf=to-read"></label>
+                                <label>Shelf<input type="text" id="wlShelf" class="form-input" placeholder="From the link, else to-read"></label>
+                                <label>Name<input type="text" id="wlName" class="form-input" placeholder="From Goodreads"></label>
+                                <label>Add Books As<select id="wlMonitor" class="form-select"><option value="Monitored">Monitored (downloaded)</option><option value="Unmonitored">Unmonitored</option></select></label>
+                            </div>
+                            <label class="checkbox-label"><input type="checkbox" id="wlExisting" checked> Also add the books already on it</label>
+                            <p class="settings-hint">Paste the address of a shelf (open your Want to Read list on Goodreads and copy it), your profile, the shelf's RSS link, or your Goodreads user number.</p>
+                            <div class="inline-actions">
+                                <button type="button" class="primary-btn" id="wlAddBtn">Watch List</button>
+                                <span class="action-status" id="wlStatus"></span>
+                            </div>
+                        </div>
+
+                        <h3>Import a File</h3>
+                        <p class="settings-hint">A one-time import of a Goodreads or StoryGraph export (CSV), or any CSV with Title and Author columns: choose a shelf, check the Audible matches, then add them.</p>
+                        <button type="button" id="listImportBtn" class="secondary-btn">Import a CSV Export…</button>
                     </section>
 
                     <!-- Audiobookshelf -->

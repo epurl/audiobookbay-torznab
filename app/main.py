@@ -247,6 +247,55 @@ async def api_manual_import_start(request: Request):
 async def api_manual_import_status():
     return dict(manual_import.job)
 
+# --- Watched Goodreads lists (Settings > Lists) ---
+
+def _watched_json():
+    return {"lists": [reading_list.public(e) for e in reading_list.watched()]}
+
+@app.get("/api/lists/watched")
+async def api_watched_lists():
+    return _watched_json()
+
+@app.post("/api/lists/watched")
+async def api_watch_list(request: Request):
+    """Starts watching a Goodreads shelf: {url, shelf, name, monitor, add_existing}."""
+    data = await request.json()
+    try:
+        await reading_list.add_watch(data.get("url") or "", data.get("shelf") or "", data.get("name") or "",
+                                     data.get("monitor") or "Monitored", bool(data.get("add_existing", True)))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _watched_json()
+
+@app.patch("/api/lists/watched/{list_id}")
+async def api_update_watched_list(list_id: str, request: Request):
+    """Changes a watched list's name, whether it's checked, or how its books are added."""
+    data = await request.json()
+    if not any(e["id"] == list_id for e in reading_list.watched()):
+        raise HTTPException(status_code=404, detail="That list isn't watched.")
+    fields = {}
+    if "enabled" in data:
+        fields["enabled"] = bool(data["enabled"])
+    if data.get("monitor") in ("Monitored", "Unmonitored"):
+        fields["monitor"] = data["monitor"]
+    if str(data.get("name") or "").strip():
+        fields["name"] = str(data["name"]).strip()
+    reading_list._update(list_id, **fields)
+    return _watched_json()
+
+@app.delete("/api/lists/watched/{list_id}")
+async def api_unwatch_list(list_id: str):
+    """Stops watching a list. Books it added stay in the library."""
+    db.set_setting("watched_lists", [e for e in reading_list.watched() if e["id"] != list_id])
+    return _watched_json()
+
+@app.post("/api/lists/watched/{list_id}/check")
+async def api_check_watched_list(list_id: str):
+    if not any(e["id"] == list_id for e in reading_list.watched()):
+        raise HTTPException(status_code=404, detail="That list isn't watched.")
+    reading_list.start_check(list_id)
+    return _watched_json()
+
 @app.post("/api/lists/parse")
 async def api_list_parse(request: Request):
     """Reads a Goodreads/StoryGraph export: its shelves and how many books each has."""

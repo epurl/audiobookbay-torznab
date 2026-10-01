@@ -216,6 +216,7 @@ async function initApp() {
     setupAuthors();
     setupHistoryLimit();
     setupManualImport();
+    setupWatchedLists();
     window.addEventListener('hashchange', route);
     route();
 }
@@ -556,6 +557,7 @@ function showSettingsSection(name) {
     document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t.dataset.section === name));
     document.querySelectorAll('.settings-section').forEach(sec => { sec.hidden = sec.dataset.section !== name; });
     if (name === 'media') pollSettingsQueue();
+    if (name === 'lists') loadWatchedLists();
     // Security and Backup have their own buttons
     document.getElementById('settingsSaveBar').hidden = ['security', 'backup'].includes(name);
 }
@@ -1784,6 +1786,7 @@ function setupSeriesPages() {
 const EVENT_LABELS = {
     grabbed: 'Grabbed', imported: 'Imported', needs_review: 'Needs review', approved: 'Approved',
     rejected: 'Rejected', failed: 'Failed', missing: 'Missing', series: 'Series', released: 'Released', seeded: 'Seeded',
+    list: 'List',
 };
 
 // -----------------
@@ -3226,6 +3229,98 @@ function indexerFormValues() {
         categories: document.getElementById('ixCats').value.trim(),
         enabled: true,
     };
+}
+
+// -----------------
+// WATCHED GOODREADS LISTS (Settings > Lists)
+// -----------------
+let watchedLists = [];
+let watchedTimer = null;
+
+async function loadWatchedLists() {
+    clearTimeout(watchedTimer);
+    const data = await fetch('/api/lists/watched').then(r => r.json()).catch(() => null);
+    if (!data) return;
+    watchedLists = data.lists;
+    drawWatchedLists();
+    // While a list is being checked, keep its result up to date
+    const tab = document.querySelector('.settings-section[data-section="lists"]');
+    if (watchedLists.some(l => l.checking) && !tab.hidden && !document.getElementById('settingsView').hidden) {
+        watchedTimer = setTimeout(loadWatchedLists, 2000);
+    }
+}
+
+function watchedResultText(l) {
+    if (l.checking) return 'Checking now…';
+    if (!l.last_check) return 'Not checked yet';
+    const r = l.last_result || {};
+    const when = new Date(l.last_check).toLocaleString();
+    if (r.error) return `${when}: ${r.error}`;
+    const parts = [`${r.on_list} on the list`, r.added ? `${r.added} added` : 'nothing new added',
+        r.already ? `${r.already} already in your library` : '', r.not_found ? `${r.not_found} not found on Audible` : ''];
+    return `${when}: ${parts.filter(Boolean).join(' · ')}`;
+}
+
+function drawWatchedLists() {
+    const box = document.getElementById('watchedLists');
+    box.innerHTML = watchedLists.length ? watchedLists.map(l => {
+        const shelf = new URLSearchParams(l.url.split('?')[1] || '').get('shelf') || '';
+        const unmatched = (l.unmatched || []).length ? `<details><summary>Not found on Audible (${l.unmatched.length})</summary><ul>
+            ${l.unmatched.map(u => `<li>${esc(u.title)} <span class="muted">· ${esc(u.author)}</span>
+                <a href="#/search/${encodeURIComponent(`${u.title} ${u.author}`)}" class="link-btn">Search</a></li>`).join('')}</ul></details>` : '';
+        return `<div class="indexer-row watched-list" data-id="${esc(l.id)}">
+            <label class="check-label" title="Check this list"><input type="checkbox" class="wl-enabled" ${l.enabled ? 'checked' : ''}></label>
+            <div class="indexer-info"><b>${esc(l.name)}</b>
+                <div class="muted">Shelf ${esc(shelf)} · adds books as ${esc(l.monitor)}</div>
+                <div class="${(l.last_result || {}).error ? 'result-error' : 'muted'}">${esc(watchedResultText(l))}</div>${unmatched}</div>
+            <select class="form-select wl-monitor" title="How new books are added">
+                <option value="Monitored"${l.monitor === 'Monitored' ? ' selected' : ''}>Monitored</option>
+                <option value="Unmonitored"${l.monitor === 'Unmonitored' ? ' selected' : ''}>Unmonitored</option>
+            </select>
+            <button type="button" class="link-btn wl-check"${l.checking ? ' disabled' : ''}>Check Now</button>
+            <button type="button" class="link-btn wl-remove">Remove</button>
+        </div>`;
+    }).join('') : '<p class="muted">No lists watched yet.</p>';
+    box.querySelectorAll('.watched-list').forEach(row => {
+        const l = watchedLists.find(x => x.id === row.dataset.id);
+        const patch = async (fields, message) => {
+            const { ok, data } = await postJSON(`/api/lists/watched/${encodeURIComponent(l.id)}`, fields, 'PATCH');
+            if (ok) { watchedLists = data.lists; drawWatchedLists(); toast(message, 'ok'); }
+            else toast(data.detail || 'Could not change it', 'error');
+        };
+        row.querySelector('.wl-enabled').addEventListener('change', e => patch({ enabled: e.target.checked }, `${l.name} ${e.target.checked ? 'is checked again' : 'is paused'}`));
+        row.querySelector('.wl-monitor').addEventListener('change', e => patch({ monitor: e.target.value }, `New books from ${l.name} are added as ${e.target.value}`));
+        row.querySelector('.wl-check').addEventListener('click', async () => {
+            await postJSON(`/api/lists/watched/${encodeURIComponent(l.id)}/check`);
+            loadWatchedLists();
+        });
+        row.querySelector('.wl-remove').addEventListener('click', async () => {
+            if (!await confirmDialog(`Stop watching ${l.name}? Books it added stay in your library.`, { title: 'Stop watching', confirmText: 'Stop Watching', danger: true })) return;
+            const res = await fetch(`/api/lists/watched/${encodeURIComponent(l.id)}`, { method: 'DELETE' });
+            watchedLists = (await res.json()).lists || [];
+            drawWatchedLists();
+        });
+    });
+}
+
+function setupWatchedLists() {
+    document.getElementById('wlAddBtn').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        const status = document.getElementById('wlStatus');
+        const url = document.getElementById('wlUrl').value.trim();
+        if (!url) { setActionStatus(status, 'Paste a Goodreads link first', 'error'); return; }
+        btn.disabled = true;
+        setActionStatus(status, 'Reading the list…');
+        const { ok, data } = await postJSON('/api/lists/watched', {
+            url, shelf: document.getElementById('wlShelf').value.trim(), name: document.getElementById('wlName').value.trim(),
+            monitor: document.getElementById('wlMonitor').value, add_existing: document.getElementById('wlExisting').checked,
+        });
+        btn.disabled = false;
+        if (!ok) { setActionStatus(status, data.detail || 'Could not watch that list', 'error'); return; }
+        setActionStatus(status, 'Watching it; the first check is running', 'ok');
+        ['wlUrl', 'wlShelf', 'wlName'].forEach(id => { document.getElementById(id).value = ''; });
+        loadWatchedLists();
+    });
 }
 
 async function loadIndexers() {
