@@ -383,7 +383,10 @@ async def import_completed_downloads(settings):
             logger.warning(f"Mapped path does not exist: {content_path}")
             continue
 
-        audio, cover = plan_import_files(content_path, title, rename=settings.get("rename_files", True))
+        # In a thread: telling copies of the book from its parts may read the files' lengths
+        audio, cover = await asyncio.to_thread(
+            plan_import_files, content_path, title, settings.get("rename_files", True),
+            book.get("runtime_min") or 0, settings.get("runtime_tolerance", 10))
         if not audio:
             logger.warning(f"No audio files found in {content_path}; leaving {title} as Downloaded")
             continue

@@ -354,6 +354,75 @@ def total_duration_min(paths):
     return round(total / 60)
 
 
+def file_duration_min(path):
+    """One audio file's play time in minutes, or None if it can't be read."""
+    import mutagen
+
+    try:
+        audio = mutagen.File(path)
+    except Exception:
+        return None
+    length = getattr(getattr(audio, "info", None), "length", 0)
+    return length / 60 if length else None
+
+
+# Codec and bitrate tags in file names: "Book_AAC-LC.m4b", "Book [xHE-AAC].m4b", "Book 64k.mp3"
+_ENCODING_TAG = re.compile(r"(?<![a-z0-9])(x?he[-_ .]?aac(?:[-_ .]?v2)?|aac[-_ .]?lc|usac|aac|opus|mp3|flac|\d{2,3}[-_ .]?k(?:bps)?)(?![a-z0-9])",
+                           re.IGNORECASE)
+
+
+def _encoding_variant(rel):
+    """ "08_Book_[ID]_xHE-AAC.m4b" -> ("08bookid", (("xheaac",), ".m4b"))"""
+    stem, ext = os.path.splitext(rel)
+    tags = tuple(re.sub(r"[-_ .]", "", t.lower()) for t in _ENCODING_TAG.findall(stem))
+    return normalize(_ENCODING_TAG.sub(" ", stem)), (tags, ext.lower())
+
+
+def _variant_rank(variant, size):
+    """Which copy to keep: widely playable AAC in M4B first, then the bigger (better) one.
+    Many players, browsers included, can't decode xHE-AAC."""
+    tags, ext = variant
+    joined = " ".join(tags)
+    rank = 4 if "xheaac" in joined or "usac" in joined else 1 if "heaac" in joined else 0
+    rank += {".m4b": 0, ".m4a": 0, ".mp3": 1}.get(ext, 2)
+    return rank, -size
+
+
+def pick_one_copy(base, audio_rels, expected_min=0, tolerance=10):
+    """Some releases hold the same recording more than once, in different encodings
+    ("Book_AAC-LC.m4b" and "Book_xHE-AAC.m4b"). Keeps one copy: files named alike apart
+    from codec tags, or (with Audible's runtime) files that are each the whole book."""
+    if len(audio_rels) < 2:
+        return audio_rels
+
+    def size(rel):
+        try:
+            return os.path.getsize(os.path.join(base, rel))
+        except OSError:
+            return 0
+
+    by_variant = {}
+    for rel in audio_rels:
+        name, variant = _encoding_variant(rel)
+        by_variant.setdefault(variant, []).append((name, rel))
+    if len(by_variant) >= 2:
+        names = [sorted(n for n, _ in files) for files in by_variant.values()]
+        if all(n == names[0] for n in names):
+            best = min(by_variant, key=lambda v: _variant_rank(v, sum(size(r) for _, r in by_variant[v])))
+            kept = [rel for _, rel in by_variant[best]]
+            logger.info(f"The download has the same audio in {len(by_variant)} encodings; importing {', '.join(kept)}")
+            return kept
+
+    # Each file is the whole book on its own: copies, not parts
+    if expected_min:
+        durations = [file_duration_min(os.path.join(base, rel)) for rel in audio_rels]
+        if all(d and abs(d - expected_min) / expected_min * 100 <= tolerance for d in durations):
+            best = min(audio_rels, key=lambda rel: _variant_rank(_encoding_variant(rel)[1], size(rel)))
+            logger.info(f"Each of the {len(audio_rels)} audio files is the whole book; importing {best}")
+            return [best]
+    return audio_rels
+
+
 def _natural_key(path):
     """Sorts 'CD2/01.mp3' before 'CD10/01.mp3' and 'Part 9' before 'Part 10'."""
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", path.replace("\\", "/"))]
@@ -363,13 +432,14 @@ def safe_filename(text):
     return re.sub(r'[\\/:*?"<>|]', "", text or "").strip(" .")
 
 
-def plan_import_files(content_path, title, rename=True):
+def plan_import_files(content_path, title, rename=True, expected_min=0, tolerance=10):
     """Decides where a download's files go inside the book folder.
 
     Returns (audio, cover): audio is a list of (source, relative destination) in play order,
     cover is one (source, 'cover.ext') pair or None. With rename on, audio files become
     'Title.ext' or 'Title - Part 01.ext'; with it off they keep their names and subfolders,
-    so files that share a name on different discs don't collide.
+    so files that share a name on different discs don't collide. When the download has
+    the same audio in several encodings, only one copy is planned (see pick_one_copy).
     """
     if os.path.isfile(content_path):
         base = os.path.dirname(content_path)
@@ -389,6 +459,7 @@ def plan_import_files(content_path, title, rename=True):
                 elif ext in IMAGE_EXTENSIONS:
                     image_rels.append(rel)
 
+    audio_rels = pick_one_copy(base, audio_rels, expected_min, tolerance)
     audio_rels.sort(key=_natural_key)
     stem = safe_filename((title or "").split(":")[0]) or "Audiobook"
     width = max(2, len(str(len(audio_rels))))
