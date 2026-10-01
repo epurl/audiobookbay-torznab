@@ -344,6 +344,8 @@ def get_series(series_id):
 # books you don't have. Refreshed when older than CATALOG_MAX_AGE_DAYS.
 
 CATALOG_MAX_AGE_DAYS = 7
+# Raised when the way series lists are built changes, so saved ones are fetched again
+CATALOG_VERSION = 2
 _CATALOG_BOOK_FIELDS = ("title", "authors", "narrators", "imageUrl", "release_date", "asin", "series", "series_asin",
                         "sequence", "series_list", "runtime_min", "publisher", "language", "catalog_sequence")
 
@@ -369,7 +371,7 @@ def get_catalog(asin):
 
 
 def catalog_is_fresh(catalog):
-    if not catalog or not catalog.get("fetched"):
+    if not catalog or not catalog.get("fetched") or catalog.get("version") != CATALOG_VERSION:
         return False
     age = datetime.datetime.now() - datetime.datetime.fromisoformat(catalog["fetched"])
     return age < datetime.timedelta(days=CATALOG_MAX_AGE_DAYS)
@@ -380,6 +382,7 @@ def save_catalog(asin, title, books):
         catalogs = get_catalogs()
         catalogs[asin] = {
             "title": title,
+            "version": CATALOG_VERSION,
             "fetched": datetime.datetime.now().isoformat(timespec="seconds"),
             "books": [{k: b.get(k) for k in _CATALOG_BOOK_FIELDS} for b in books],
         }

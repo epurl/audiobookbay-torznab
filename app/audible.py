@@ -52,6 +52,25 @@ def product_series(product):
             for x in product.get("series") or [] if x.get("title")]
 
 
+def _strip_series_tag(title, entries):
+    """ "Book Title (Series Name, Book Two)" -> "Book Title": a bracketed tag that only
+    names the book's series or its number. Other brackets ("(Unabridged)") are kept."""
+    names = {series_key(e["name"]) for e in entries} - {""}
+    numbered = r"\b(book|volume|vol|part)\.?\s+\w+\s*$"
+    m = re.match(r"^(.+?)\s*[\(\[]([^\)\]]+)[\)\]]\s*$", title or "")
+    if m:
+        tag = m.group(2)
+        if any(name in normalize(tag) for name in names) or re.match(numbered.replace(r"\b", "^", 1), tag.lower()):
+            return m.group(1).strip()
+    # "Book Title: Series Name, Book 12" (not "Book Title: A Series Name Novella")
+    m = re.match(r"^(.+?):\s*(.+)$", title or "")
+    if m:
+        tag = m.group(2)
+        if any(name in normalize(tag) for name in names) and re.search(numbered, tag.lower()):
+            return m.group(1).strip()
+    return title
+
+
 def product_to_book(product, prefer_series=""):
     """Converts an Audible product into a library book. Its main series is the one matching
     prefer_series (what the library already has), else the most specific one."""
@@ -65,7 +84,7 @@ def product_to_book(product, prefer_series=""):
             fields.update(series=chosen["name"], sequence=chosen["sequence"], series_asin=chosen["asin"])
     authors = [a["name"] for a in product.get("authors") or [] if not _CONTRIBUTOR_ROLE.search(a.get("name", ""))]
     return {
-        "title": product.get("title") or "",
+        "title": _strip_series_tag(product.get("title") or "", entries),
         "subtitle": product.get("subtitle") or "",
         "authors": ", ".join(authors),
         "narrators": ", ".join(n["name"] for n in product.get("narrators") or []),
@@ -189,7 +208,9 @@ async def match_candidates(query, limit=10):
 
 def _title_rank(want, title):
     """How well an Audible title matches a library title: 0 exact, 1 same main title,
-    2 same subtitle part ("Universe: Book Title" for "Book Title"), None otherwise."""
+    2 same subtitle part ("Universe: Book Title" for "Book Title"), None otherwise.
+    Bracketed series tags ("Book Title (Series Name)") are ignored."""
+    title = re.sub(r"\s*[\(\[][^\)\]]*[\)\]]", "", title).strip() or title
     main, _, rest = title.partition(":")
     if normalize(title) == want:
         return 0

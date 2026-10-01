@@ -167,31 +167,59 @@ async function initApp() {
     setupSettings();
     setupLibrary();
     setupSeriesPages();
+    window.addEventListener('hashchange', route);
+    route();
+}
+
+// Each page has its own address (#/library, #/series/<key>, ...), so the browser's
+// Back and Forward buttons, refreshing and bookmarks all work
+const PAGES = { search: 'searchView', library: 'libraryView', series: 'seriesView', activity: 'activityView', settings: 'settingsView' };
+const PAGE_NAMES = Object.fromEntries(Object.entries(PAGES).map(([name, view]) => [view, name]));
+
+function navigate(path) {
+    if (location.hash === '#' + path) {
+        route();  // Same page again (e.g. reloading a series after a change)
+    } else {
+        location.hash = path;  // Adds a history entry; hashchange calls route()
+    }
+}
+
+function route() {
+    // Going Back from a page with a dialog open leaves the dialog behind
+    document.querySelectorAll('.modal.show').forEach(hideModal);
+    const [name = 'search', ...rest] = location.hash.replace(/^#\/?/, '').split('/');
+    const arg = rest.length ? decodeURIComponent(rest.join('/')) : '';
+    if (!PAGES[name]) {
+        history.replaceState(null, '', '#/search');
+        return route();
+    }
+    if (name === 'series' && arg) {
+        showSeriesDetail(arg);
+        return;
+    }
+    activateView(PAGES[name]);
+    if (name === 'search' && arg && arg !== lastSearchQuery) {
+        searchInput.value = arg;
+        runSearch(arg);
+    }
+}
+
+function activateView(viewId) {
+    showView(viewId, viewId);
+    document.querySelector('.main-content').scrollTop = 0;
+    if (viewId === 'libraryView') renderLibrary();
+    if (viewId === 'seriesView') renderSeries();
+    if (viewId === 'activityView') {
+        renderActivity();
+        activityTimer = setInterval(renderActivity, 5000);
+    }
 }
 
 function setupNavigation() {
     navItems.forEach(item => {
         item.addEventListener('click', (e) => {
             e.preventDefault();
-            navItems.forEach(n => n.classList.remove('active'));
-            item.classList.add('active');
-
-            const targetViewId = item.getAttribute('data-view');
-            views.forEach(v => { v.hidden = v.id !== targetViewId; });
-            document.querySelector('.main-content').scrollTop = 0;
-            window.scrollTo(0, 0);
-
-            if (targetViewId === 'libraryView') {
-                renderLibrary();
-            }
-            if (targetViewId === 'seriesView') {
-                renderSeries();
-            }
-            clearInterval(activityTimer);
-            if (targetViewId === 'activityView') {
-                renderActivity();
-                activityTimer = setInterval(renderActivity, 5000);
-            }
+            navigate('/' + PAGE_NAMES[item.getAttribute('data-view')]);
         });
     });
 }
@@ -1174,7 +1202,11 @@ function formatRuntime(min) {
     return `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, '0')}m`;
 }
 
-async function openSeriesDetail(key) {
+function openSeriesDetail(key) {
+    navigate('/series/' + encodeURIComponent(key));
+}
+
+async function showSeriesDetail(key) {
     showView('seriesDetailView', 'seriesView');
     const box = document.getElementById('seriesDetail');
     box.innerHTML = '<div class="loader"><div class="spinner"></div></div>';
@@ -1312,10 +1344,7 @@ function setupSeriesPages() {
         updateSeriesLookup(data);
         toast('Looking up series on Audible in the background');
     });
-    document.getElementById('seriesBackBtn').addEventListener('click', () => {
-        showView('seriesView', 'seriesView');
-        renderSeries();
-    });
+    document.getElementById('seriesBackBtn').addEventListener('click', () => navigate('/series'));
 
     document.getElementById('closeSeriesModal').addEventListener('click', () => hideModal(seriesModal));
     seriesModal.addEventListener('click', (e) => { if (e.target === seriesModal) hideModal(seriesModal); });
@@ -1417,10 +1446,20 @@ window.addEventListener('click', (e) => {
     if (e.target === modal) closeModal();
 });
 
-async function performSearch() {
+let lastSearchQuery = '';
+
+function performSearch() {
     const query = searchInput.value.trim();
     if (!query) return;
+    if (location.hash === '#/search/' + encodeURIComponent(query)) {
+        runSearch(query);  // Searching again for the same thing
+    } else {
+        navigate('/search/' + encodeURIComponent(query));
+    }
+}
 
+async function runSearch(query) {
+    lastSearchQuery = query;
     resultsContainer.innerHTML = '';
     loader.classList.remove('hidden');
 
