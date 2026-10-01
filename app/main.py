@@ -53,15 +53,15 @@ async def root():
         return "UI not found. Please create app/static/index.html."
     # Tag the CSS and JS with their modification time, so browsers fetch the new
     # files after an update instead of reusing cached copies
-    for asset in ("style.css", "script.js"):
+    for asset in ("style.css", "script.js", "logo.svg"):
         version = int(os.path.getmtime(os.path.join("app/static", asset)))
         page = page.replace(f"/static/{asset}\"", f"/static/{asset}?v={version}\"")
     return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
 
 @app.get("/favicon.ico")
 async def favicon():
-    """Ignore favicon requests."""
-    return Response(status_code=204)
+    """The logo, for browsers and apps that ask for /favicon.ico."""
+    return FileResponse("app/static/logo.svg", media_type="image/svg+xml")
 
 @app.get("/api")
 async def torznab_api(request: Request, t: str = "", q: str = "", author: str = "", title: str = "", offset: int = 0, limit: int = 100):
