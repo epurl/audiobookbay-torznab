@@ -265,8 +265,15 @@ async def check_library():
                 continue
             if scraper.is_paused():
                 continue  # AudiobookBay isn't responding; try again next round
+            # Searching takes a while: a book grabbed or imported meanwhile is left alone
+            current = db.get_book(book["id"])
+            if not current or current.get("status") != "Monitored":
+                continue
             logger.info(f"Searching for Monitored book: {title}")
-            await auto_download_book(book, settings)
+            try:
+                await auto_download_book(current, settings)
+            except Exception as e:  # One book's search failing doesn't skip the rest
+                logger.error(f"Searching for {title} failed: {e}", exc_info=True)
 
 
 def score_result(book, result, settings):
