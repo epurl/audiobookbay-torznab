@@ -23,6 +23,7 @@ BASE = "https://www.graphicaudio.net"
 _AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 _SPACING = 1.0  # seconds between requests
 _CACHE_TTL = 6 * 3600
+_CACHE_SIZE = 150  # pages
 _cache = {}  # url -> (time, final url, text)
 _lock = asyncio.Lock()
 _last = 0.0
@@ -56,7 +57,13 @@ async def _get(url):
         finally:
             _last = time.time()
     res.raise_for_status()
-    _cache[url] = (time.time(), str(res.url), res.text)
+    now = time.time()
+    # Store pages are large: expired ones go, and only the most recent are kept
+    for key in [k for k, v in _cache.items() if now - v[0] >= _CACHE_TTL]:
+        del _cache[key]
+    while len(_cache) >= _CACHE_SIZE:
+        del _cache[min(_cache, key=lambda k: _cache[k][0])]
+    _cache[url] = (now, str(res.url), res.text)
     return str(res.url), res.text
 
 
