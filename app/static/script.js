@@ -246,6 +246,7 @@ async function initApp() {
     setupIndexers();
     setupAuthors();
     setupPagers();
+    setupRememberedChoices();
     setupManualImport();
     setupWatchedLists();
     window.addEventListener('hashchange', route);
@@ -817,6 +818,8 @@ function renderLibrary() {
             document.getElementById('libFilterText').value = '';
             document.getElementById('libFilterStatus').value = '';
             document.getElementById('libFilterEdition').value = '';
+            saveChoice('libFilterStatus');
+            saveChoice('libFilterEdition');
             renderLibrary();
         });
         return;
@@ -2322,6 +2325,34 @@ function setupPagers() {
     });
 }
 
+// Sort orders and filter picks survive a reload, like the page sizes (kept per browser).
+// The typed filters aren't kept.
+const REMEMBERED_CHOICES = ['libFilterStatus', 'libFilterEdition', 'libSort', 'seriesShow', 'seriesSort',
+    'calShowLibrary', 'calShowTrending', 'calTrend', 'calGenre'];
+
+function savedChoice(id) {
+    try { return localStorage.getItem(`bayarr.choice.${id}`); } catch (e) { return null; }
+}
+
+function saveChoice(id) {
+    const el = document.getElementById(id);
+    try {
+        localStorage.setItem(`bayarr.choice.${id}`, el.type === 'checkbox' ? String(el.checked) : el.value);
+    } catch (e) { /* storage unavailable */ }
+}
+
+function setupRememberedChoices() {
+    REMEMBERED_CHOICES.forEach(id => {
+        const el = document.getElementById(id);
+        const saved = savedChoice(id);
+        if (saved !== null) {
+            if (el.type === 'checkbox') el.checked = saved === 'true';
+            else if ([...el.options].some(o => o.value === saved)) el.value = saved;
+        }
+        el.addEventListener('change', () => saveChoice(id));
+    });
+}
+
 // "3d 4h", "5h 12m", "8m": a length of time that may run to days
 function formatSpan(seconds) {
     if (seconds == null || seconds < 0) return '';
@@ -3177,7 +3208,8 @@ async function loadCalendarData() {
     const changed = data.fetched !== calData.fetched || !calData.items.length;
     calData = data;
     const genreSelect = document.getElementById('calGenre');
-    const chosen = genreSelect.value;
+    // The genre list arrives with the data, so a remembered genre is picked here
+    const chosen = genreSelect.value || savedChoice('calGenre') || '';
     genreSelect.innerHTML = '<option value="">All genres</option>' +
         (data.genres || []).map(g => `<option value="${esc(g)}"${g === chosen ? ' selected' : ''}>${esc(g)}</option>`).join('');
     if (data.stale && !data.refresh.running && !calRefreshStartedThisVisit) {
