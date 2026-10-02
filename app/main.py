@@ -247,16 +247,24 @@ async def api_manual_import_suggest(request: Request):
         return {"match": None}
 
 @app.get("/api/manual_import/candidates")
-async def api_manual_import_candidates(id: str = "", q: str = ""):
-    """Audible books for choosing an item's book by hand."""
+async def api_manual_import_candidates(id: str = "", q: str = "", ga: bool = False):
+    """Audible books for choosing an item's book by hand; with ga (an abridged item),
+    GraphicAudio's releases too."""
     query = q.strip() or manual_import.search_query(id)
     if not query:
         return {"query": "", "candidates": []}
     try:
-        return {"query": query, "candidates": await audible.match_candidates(query)}
+        candidates = await audible.match_candidates(query)
     except Exception as e:
         logger.error(f"Audible search failed: {e}")
         raise HTTPException(status_code=502, detail="Couldn't search Audible.")
+    if ga:
+        from app import graphicaudio
+        try:
+            candidates += [graphicaudio.as_book(r) for r in await asyncio.wait_for(graphicaudio.search(query), timeout=30)]
+        except Exception as e:
+            logger.warning(f"GraphicAudio search failed: {e}")
+    return {"query": query, "candidates": candidates}
 
 @app.post("/api/manual_import/import")
 async def api_manual_import_start(request: Request):

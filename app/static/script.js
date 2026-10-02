@@ -1249,7 +1249,7 @@ function importEditionOf(i) {
 
 function chooseImportMatch(i) {
     const b = importBooks[i];
-    openMatchChooser(b.title, b, false, choice => {
+    openMatchChooser(b.title, { ...b, edition: importEditionOf(i) }, false, choice => {
         importMatches[b.path] = choice;
         delete importDest[b.path];
         updateImportRow(i);
@@ -2040,7 +2040,7 @@ function openManualMatch(id) {
 }
 
 function openMatchChooser(name, guess, withLibrary, onChoose) {
-    matchChooser = { library: withLibrary, onChoose };
+    matchChooser = { library: withLibrary, onChoose, guess };
     document.getElementById('manualMatchItem').textContent = name;
     document.getElementById('manualMatchQuery').value = `${String(guess.title || '').split(':')[0]} ${primaryAuthor(guess.authors)}`.trim();
     document.getElementById('manualMatchAsIs').textContent = `Use it as named: "${guess.title}"${guess.authors ? ' by ' + guess.authors : ''}`;
@@ -2076,11 +2076,13 @@ async function searchManualMatch() {
     box.innerHTML = '';
     loader.classList.remove('hidden');
     try {
-        const res = await fetch(`/api/manual_import/candidates?q=${encodeURIComponent(query)}`);
+        // An abridged item may be a GraphicAudio release Audible doesn't sell
+        const ga = isAbridged(matchChooser.guess) ? '&ga=1' : '';
+        const res = await fetch(`/api/manual_import/candidates?q=${encodeURIComponent(query)}${ga}`);
         const data = await res.json();
         const found = res.ok ? data.candidates : [];
         box.innerHTML = found.map((b, i) => matchOptionHtml(b.imageUrl, b.title,
-            [[b.authors, b.series ? `${b.series}${b.sequence ? ' #' + b.sequence : ''}` : ''].filter(Boolean).join(' · '),
+            [[b.ga_url ? 'GraphicAudio' : '', b.authors, b.series ? `${b.series}${b.sequence ? ' #' + b.sequence : ''}` : ''].filter(Boolean).join(' · '),
              [b.narrators ? 'Narrated by ' + shortNames(b.narrators) : '', formatRuntime(b.runtime_min), releaseDate(b.release_date),
               ].filter(Boolean).join(' · ')],
             `data-index="${i}"`, b)).join('') || `<p class="muted">${res.ok ? 'Nothing found on Audible.' : esc(data.detail || 'Audible search failed.')}</p>`;
