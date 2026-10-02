@@ -1,6 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#FF9900"/>
-  <text x="32" y="33" text-anchor="middle" dominant-baseline="central" textLength="56" lengthAdjust="spacingAndGlyphs"
-        font-family="Consolas, 'DejaVu Sans Mono', Menlo, 'Courier New', monospace" font-size="34" font-weight="700"
-        fill="#1B1C20" stroke="#1B1C20" stroke-width="1.2" stroke-linejoin="round">&lt;%&gt;</text>
+  <title>BorgArr</title>
+  <!-- A cube whose lit slits form a sound wave around its front edge -->
+  <defs>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.4"/></filter>
+    <g id="wave">
+      <polygon points="10.52,37.6 14.12,39.68 14.12,31.68 10.52,29.6"/>
+      <polygon points="18.08,44.46 21.68,46.54 21.68,33.54 18.08,31.46"/>
+      <polygon points="25.63,51.82 29.23,53.9 29.23,34.9 25.63,32.82"/>
+      <polygon points="34.77,53.9 38.37,51.82 38.37,32.82 34.77,34.9"/>
+      <polygon points="42.32,46.54 45.92,44.46 45.92,31.46 42.32,33.54"/>
+      <polygon points="49.88,39.68 53.48,37.6 53.48,29.6 49.88,31.68"/>
+    </g>
+  </defs>
+  <polygon points="32,4 56.25,18 32,32 7.75,18" fill="#5f6a72"/>
+  <polygon points="7.75,18 32,32 32,60 7.75,46" fill="#3d464d"/>
+  <polygon points="32,32 56.25,18 56.25,46 32,60" fill="#2a3137"/>
+  <use href="#wave" fill="#37e4aa" opacity="0.4" filter="url(#glow)"/>
+  <use href="#wave" fill="#37e4aa"/>
 </svg>

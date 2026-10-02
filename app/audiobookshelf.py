@@ -100,9 +100,9 @@ def update_series_file(book, folder):
     if not isinstance(data, dict):
         return False
     before = json.dumps(data, sort_keys=True)
-    if abs_series(book):  # A book Bayarr knows no series for keeps the file's
+    if abs_series(book):  # A book BorgArr knows no series for keeps the file's
         data["series"] = _series_text(book)
-    # The "Dramatized" tag Bayarr used to write: dramatizations are abridged now
+    # The "Dramatized" tag BorgArr used to write: dramatizations are abridged now
     data["tags"] = [t for t in data.get("tags") or [] if t != "Dramatized"]
     data["abridged"] = edition_of(book) == ABRIDGED
     if json.dumps(data, sort_keys=True) == before:
@@ -143,7 +143,7 @@ def _find_item(items, book):
 
 
 async def fix_series_order(books, settings):
-    """For each book: the series and the Abridged flag (Bayarr's edition: abridged includes
+    """For each book: the series and the Abridged flag (BorgArr's edition: abridged includes
     dramatizations) in its metadata.json, and in Audiobookshelf itself (through its API, so
     no rescan is needed) when a server and library are set."""
     order_job.update(running=True, total=len(books), done=0, files=0, abs_updated=0, abs_missing=0, error="")

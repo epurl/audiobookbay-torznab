@@ -38,7 +38,7 @@ def _verify_hash(password: str, stored: str) -> bool:
 
 
 def env_credentials_set() -> bool:
-    return bool(os.environ.get("BAYARR_USERNAME") and os.environ.get("BAYARR_PASSWORD"))
+    return bool(db.env("USERNAME") and db.env("PASSWORD"))
 
 
 def credentials_configured() -> bool:
@@ -57,8 +57,8 @@ def _same(a: str, b: str) -> bool:
 def check_credentials(username: str, password: str) -> bool:
     # Environment variables take priority over credentials saved from the UI
     if env_credentials_set():
-        user_ok = _same(username, os.environ["BAYARR_USERNAME"])
-        pass_ok = _same(password, os.environ["BAYARR_PASSWORD"])
+        user_ok = _same(username, db.env("USERNAME"))
+        pass_ok = _same(password, db.env("PASSWORD"))
         return user_ok and pass_ok
     settings = db.get_settings()
     stored_user = settings.get("auth_username", "")
@@ -99,7 +99,7 @@ def _challenge():
     return Response(
         status_code=401,
         content="Authentication required",
-        headers={"WWW-Authenticate": 'Basic realm="Bayarr", charset="UTF-8"'},
+        headers={"WWW-Authenticate": 'Basic realm="BorgArr", charset="UTF-8"'},
     )
 
 
@@ -164,7 +164,7 @@ def _too_many():
 
 # --- Without a login --------------------------------------------------------------
 # Only local addresses are let in, and only under a local name: a web page can point its
-# own domain at a local address (DNS rebinding) to drive Bayarr from your browser, but its
+# own domain at a local address (DNS rebinding) to drive BorgArr from your browser, but its
 # requests then carry its domain in the Host header.
 LOCAL_SUFFIXES = (".local", ".lan", ".home", ".internal", ".localdomain", ".home.arpa", ".localhost")
 
@@ -228,7 +228,7 @@ async def _torznab(request: Request, call_next):
 
 
 # --- Headers ----------------------------------------------------------------------
-# No framing by other sites (clickjacking), and only Bayarr's own script runs
+# No framing by other sites (clickjacking), and only BorgArr's own script runs
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
@@ -297,15 +297,15 @@ async def _authorize(request: Request, call_next):
         logger.warning(f"Rejected request from non-local address {_client_ip(request)}: no credentials configured")
         return Response(
             status_code=403,
-            content="Bayarr has no login configured, so it only accepts connections from the local network. "
-                    "Set BAYARR_USERNAME and BAYARR_PASSWORD, or set a login from Settings on your local network.",
+            content="BorgArr has no login configured, so it only accepts connections from the local network. "
+                    "Set BORGARR_USERNAME and BORGARR_PASSWORD, or set a login from Settings on your local network.",
         )
     if not _local_host_header(request):
         logger.warning(f"Rejected request for host {request.headers.get('host')!r}: no credentials configured")
         return Response(
             status_code=403,
-            content="Bayarr has no login configured, so it only answers at its local address (e.g. "
+            content="BorgArr has no login configured, so it only answers at its local address (e.g. "
                     "http://192.168.1.10:8085), not at a domain name. Open it that way and set a login in "
-                    "Settings > Security (or set BAYARR_USERNAME and BAYARR_PASSWORD) to use this address.",
+                    "Settings > Security (or set BORGARR_USERNAME and BORGARR_PASSWORD) to use this address.",
         )
     return await call_next(request)

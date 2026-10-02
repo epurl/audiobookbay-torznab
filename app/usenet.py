@@ -1,7 +1,7 @@
 """Usenet downloads through NZBGet or SABnzbd (Settings > Download Client > Usenet).
 
 A grabbed release's NZB is fetched from its indexer and handed to the client, which
-downloads, repairs and unpacks it. Bayarr tracks the job by the client's id, kept on the
+downloads, repairs and unpacks it. BorgArr tracks the job by the client's id, kept on the
 book as "nzbget:<id>" or "sab:<id>", imports it when it's done (copying it like any
 import), then deletes the download: nothing needs to seed."""
 import base64
@@ -67,7 +67,7 @@ async def _sab(settings, mode, files=None, **params):
     return data
 
 
-# --- What Bayarr uses ---------------------------------------------------------
+# --- What BorgArr uses ---------------------------------------------------------
 
 async def test(settings):
     """The client's version, or raises ValueError with a readable reason."""
@@ -186,7 +186,7 @@ async def _sab_status(settings, ids):
 
 
 async def forget(settings, download_id):
-    """Removes a finished job from the client's history (its files are dealt with by Bayarr)."""
+    """Removes a finished job from the client's history (its files are dealt with by BorgArr)."""
     kind = client(settings)
     try:
         if kind == "nzbget" and download_id.startswith("nzbget:"):

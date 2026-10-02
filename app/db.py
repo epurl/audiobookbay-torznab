@@ -18,10 +18,12 @@ logger = logging.getLogger(__name__)
 
 # Persist the database outside the app directory so it survives container rebuilds.
 # In Docker this is /config (a mounted volume); locally it defaults to ./config.
-CONFIG_DIR = os.environ.get(
-    "BAYARR_CONFIG_DIR",
-    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config"),
-)
+def env(name, default=""):
+    """A BORGARR_ environment variable, or the same one under the old name (BAYARR_)."""
+    return os.environ.get("BORGARR_" + name) or os.environ.get("BAYARR_" + name) or default
+
+
+CONFIG_DIR = env("CONFIG_DIR", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config"))
 DB_FILE = os.path.join(CONFIG_DIR, "database.json")
 BACKUP_DIR = os.path.join(CONFIG_DIR, "backups")
 BACKUPS_KEPT = 7
@@ -55,7 +57,7 @@ DEFAULT_SETTINGS = {
     "usenet_pass": "",              # NZBGet
     "usenet_apikey": "",            # SABnzbd
     "usenet_category": "audiobooks",
-    "usenet_downloads_folder": "",  # Bayarr's path for the client's finished downloads (when it differs)
+    "usenet_downloads_folder": "",  # BorgArr's path for the client's finished downloads (when it differs)
     "usenet_remove_completed": True,  # Delete a download once it's imported (nothing to seed)
     "verify_runtime": True,
     "runtime_tolerance": 10,  # percent
@@ -722,7 +724,7 @@ def restore(data):
     """Replaces the database with a backup. The current login is kept, so a restore can't
     lock you out, and the current database is backed up first."""
     if not isinstance(data, dict) or not isinstance(data.get("library"), list) or not isinstance(data.get("settings"), dict):
-        raise ValueError("This isn't a Bayarr backup (expected library and settings).")
+        raise ValueError("This isn't a BorgArr backup (expected library and settings).")
     if not all(isinstance(b, dict) and b.get("title") for b in data["library"]):
         raise ValueError("The backup's library has entries without a title.")
     # A crafted backup could point books at system folders (which Organize would then move)

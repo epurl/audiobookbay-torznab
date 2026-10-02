@@ -1,3 +1,13 @@
+// Choices kept in this browser (sort, page sizes, views) were saved under the old name,
+// Bayarr: they carry over once
+try {
+    Object.keys(localStorage).filter(k => k.startsWith('bayarr.')).forEach(k => {
+        const key = 'borgarr.' + k.slice('bayarr.'.length);
+        if (localStorage.getItem(key) === null) localStorage.setItem(key, localStorage.getItem(k));
+        localStorage.removeItem(k);
+    });
+} catch (e) { /* storage unavailable */ }
+
 const searchInput = document.getElementById('searchInput');
 const searchBtn = document.getElementById('searchBtn');
 const resultsContainer = document.getElementById('resultsContainer');
@@ -416,7 +426,7 @@ async function fetchSettings() {
             document.getElementById('setAuthUser').disabled = true;
             document.getElementById('setAuthPass').disabled = true;
             document.getElementById('saveAuthBtn').disabled = true;
-            document.getElementById('authHint').textContent = "Login is set by the BAYARR_USERNAME / BAYARR_PASSWORD environment variables.";
+            document.getElementById('authHint').textContent = "Login is set by the BORGARR_USERNAME / BORGARR_PASSWORD environment variables.";
         }
 
         // Sync filter in modal
@@ -957,7 +967,7 @@ function setupLibrary() {
     });
     document.getElementById('bulkRemove').addEventListener('click', async () => {
         const n = selectedIds.size;
-        const confirmed = await confirmDialog(`Remove ${n} book${n === 1 ? '' : 's'} from Bayarr?\n\nFiles on disk are not deleted.`,
+        const confirmed = await confirmDialog(`Remove ${n} book${n === 1 ? '' : 's'} from BorgArr?\n\nFiles on disk are not deleted.`,
             { title: 'Remove books', confirmText: 'Remove', danger: true });
         if (!confirmed) return;
         const data = await runBulk('remove');
@@ -1151,7 +1161,7 @@ function setupBookModal() {
     document.getElementById('removeBookBtn').addEventListener('click', async () => {
         const book = appLibrary.find(b => b.id === currentBookId);
         if (!book) return;
-        const confirmed = await confirmDialog(`Remove "${book.title}" from Bayarr?\n\nFiles on disk are not deleted.`,
+        const confirmed = await confirmDialog(`Remove "${book.title}" from BorgArr?\n\nFiles on disk are not deleted.`,
             { title: 'Remove book', confirmText: 'Remove', danger: true });
         if (!confirmed) return;
         const res = await fetch(`/api/library/${encodeURIComponent(currentBookId)}`, { method: 'DELETE' });
@@ -1569,7 +1579,7 @@ function showView(viewId, navView) {
 
 let seriesIndexData = [];
 let seriesViewMode = 'posters';
-try { seriesViewMode = localStorage.getItem('bayarr.seriesView') || 'posters'; } catch (e) { /* storage unavailable */ }
+try { seriesViewMode = localStorage.getItem('borgarr.seriesView') || 'posters'; } catch (e) { /* storage unavailable */ }
 let seriesLookupTimer = null;
 let seriesLookupStartedThisVisit = false;
 
@@ -1579,8 +1589,11 @@ function seriesProgress(sr) {
     const total = sr.total ?? sr.in_library;
     const pct = total ? Math.min(100, Math.round(sr.owned / total * 100)) : 0;
     const complete = sr.total != null && sr.owned >= sr.total && sr.total > 0;
-    // Everything that's out, but more to come: full, in the series' colour rather than green
-    const kind = complete && !sr.upcoming ? 'complete' : sr.monitored ? 'monitored' : 'unmonitored';
+    // Sonarr's colours: downloading purple; complete green, or blue while more books are
+    // coming; missing red when monitored, orange when not; grey until the total is known
+    const kind = sr.downloading ? 'downloading'
+        : complete ? (sr.upcoming ? 'continuing' : 'complete')
+        : sr.total == null ? 'unknown' : sr.monitored ? 'missing' : 'partial';
     const label = sr.total == null ? `${sr.owned} / …` : `${sr.owned} / ${sr.total}`;
     const left = [sr.upcoming ? `${sr.upcoming} upcoming` : '', sr.ignored ? `${sr.ignored} ignored` : ''].filter(Boolean).join(', ');
     const title = `${sr.owned} on disk${sr.total != null ? ` of ${sr.total} released book${sr.total === 1 ? '' : 's'}` : ''}${left ? ` (not counted: ${left})` : ''}`;
@@ -1947,7 +1960,7 @@ function setupSeriesPages() {
     document.getElementById('seriesSort').addEventListener('change', drawSeriesList);
     document.querySelectorAll('[data-series-view]').forEach(btn => btn.addEventListener('click', () => {
         seriesViewMode = btn.dataset.seriesView;
-        try { localStorage.setItem('bayarr.seriesView', seriesViewMode); } catch (e) { /* storage unavailable */ }
+        try { localStorage.setItem('borgarr.seriesView', seriesViewMode); } catch (e) { /* storage unavailable */ }
         document.querySelectorAll('[data-series-view]').forEach(b => b.classList.toggle('active', b === btn));
         drawSeriesList();
     }));
@@ -1996,7 +2009,7 @@ function setupSeriesPages() {
 const EVENT_LABELS = {
     grabbed: 'Grabbed', imported: 'Imported', needs_review: 'Needs review', approved: 'Approved',
     rejected: 'Rejected', failed: 'Failed', missing: 'Missing', series: 'Series', released: 'Released', seeded: 'Seeded',
-    list: 'List', moved: 'Moved', found: 'Found',
+    list: 'List', moved: 'Moved', found: 'Found', stalled: 'Stalled',
 };
 
 // -----------------
@@ -2272,7 +2285,7 @@ const PAGER_REDRAW = {
 function pageSize(key) {
     let value = '';
     try {
-        value = localStorage.getItem(`bayarr.pageSize.${key}`) || (key === 'history' ? localStorage.getItem('bayarr.historyLimit') : '') || '';
+        value = localStorage.getItem(`borgarr.pageSize.${key}`) || (key === 'history' ? localStorage.getItem('borgarr.historyLimit') : '') || '';
     } catch (e) { /* storage unavailable */ }
     return PAGE_SIZES.includes(value) ? value : (key === 'history' ? '50' : '20');
 }
@@ -2318,7 +2331,7 @@ function setupPagers() {
         select.innerHTML = PAGE_SIZES.map(v => `<option value="${v}">${v === 'all' ? 'All' : v}</option>`).join('');
         select.value = pageSize(key);
         select.addEventListener('change', () => {
-            try { localStorage.setItem(`bayarr.pageSize.${key}`, select.value); } catch (e) { /* storage unavailable */ }
+            try { localStorage.setItem(`borgarr.pageSize.${key}`, select.value); } catch (e) { /* storage unavailable */ }
             pagerPages[key] = 0;
             PAGER_REDRAW[key]();
         });
@@ -2331,13 +2344,13 @@ const REMEMBERED_CHOICES = ['libFilterStatus', 'libFilterEdition', 'libSort', 's
     'calShowLibrary', 'calShowTrending', 'calTrend', 'calGenre'];
 
 function savedChoice(id) {
-    try { return localStorage.getItem(`bayarr.choice.${id}`); } catch (e) { return null; }
+    try { return localStorage.getItem(`borgarr.choice.${id}`); } catch (e) { return null; }
 }
 
 function saveChoice(id) {
     const el = document.getElementById(id);
     try {
-        localStorage.setItem(`bayarr.choice.${id}`, el.type === 'checkbox' ? String(el.checked) : el.value);
+        localStorage.setItem(`borgarr.choice.${id}`, el.type === 'checkbox' ? String(el.checked) : el.value);
     } catch (e) { /* storage unavailable */ }
 }
 
@@ -2926,7 +2939,7 @@ async function loadFolder(path) {
         }
     } catch (err) {
         console.error("Folder load error:", err);
-        folderList.innerHTML = `<div style="padding: 16px; color: red;">Error loading folder structure: ${esc(err.message || err)}</div>`;
+        folderList.innerHTML = `<div style="padding: 16px; color: var(--error);">Error loading folder structure: ${esc(err.message || err)}</div>`;
     }
 }
 
@@ -2938,7 +2951,7 @@ async function loadFolder(path) {
 let calData = { items: [], genres: [] };
 let calDate = new Date();
 let calView = 'month';
-try { calView = localStorage.getItem('bayarr.calView') || (window.innerWidth < 768 ? 'agenda' : 'month'); } catch (e) { /* storage unavailable */ }
+try { calView = localStorage.getItem('borgarr.calView') || (window.innerWidth < 768 ? 'agenda' : 'month'); } catch (e) { /* storage unavailable */ }
 let calLookupTimer = null;
 let calRefreshStartedThisVisit = false;
 const CAL_MAX_PER_DAY = 4;
@@ -3238,7 +3251,7 @@ function setupCalendar() {
     document.getElementById('calToday').addEventListener('click', () => { calDate = new Date(); drawCalendar(); });
     document.querySelectorAll('[data-cal-view]').forEach(btn => btn.addEventListener('click', () => {
         calView = btn.dataset.calView;
-        try { localStorage.setItem('bayarr.calView', calView); } catch (e) { /* storage unavailable */ }
+        try { localStorage.setItem('borgarr.calView', calView); } catch (e) { /* storage unavailable */ }
         drawCalendar();
     }));
     ['calShowLibrary', 'calShowTrending', 'calTrend', 'calGenre'].forEach(id =>
@@ -3286,7 +3299,7 @@ async function openSplitDialog(bookId) {
         return;
     }
     if (data.groups.length < 2) {
-        lead.textContent = 'Bayarr couldn\'t find separate books in this folder. It looks for a book number in the file or folder names, like "Book 2 Second Dawn Part 1 of 2.m4b" or a "Book 2 - Title" folder.';
+        lead.textContent = 'BorgArr couldn\'t find separate books in this folder. It looks for a book number in the file or folder names, like "Book 2 Second Dawn Part 1 of 2.m4b" or a "Book 2 - Title" folder.';
         return;
     }
     splitProposal = data;
@@ -3796,7 +3809,7 @@ function downloadsEnabled() {
     return !!(appSettings.qbt_enabled || (appSettings.usenet_client && appSettings.usenet_host));
 }
 
-// How much Bayarr has asked AudiobookBay today, and whether it's holding off (Settings > Indexers)
+// How much BorgArr has asked AudiobookBay today, and whether it's holding off (Settings > Indexers)
 async function showAbbUsage() {
     const el = document.getElementById('abbUsage');
     const st = await fetch('/api/abb/status').then(r => r.ok ? r.json() : null).catch(() => null);
@@ -4484,12 +4497,19 @@ function setupListImport() {
 // -----------------
 // System > Stats
 // -----------------
-function statBars(title, items, unit = '') {
+// The colour each status is drawn in (style.css), for charts
+const STATUS_COLORS = {
+    Imported: 'success', Monitored: 'error', Missing: 'error', Unreleased: 'info', Downloading: 'queue',
+    Downloaded: 'queue', 'Needs Review': 'warning', Unmonitored: 'neutral',
+};
+
+function statBars(title, items, unit = '', colorOf = null) {
     if (!items || !items.length) return '';
     const max = Math.max(...items.map(i => i.value), 1);
+    const color = i => (colorOf && colorOf(i.name)) ? `; background-color: var(--${colorOf(i.name)})` : '';
     return `<div class="stats-card"><h3>${esc(title)}</h3>${items.map(i => `<div class="stat-bar">
         <span class="stat-bar-name" title="${esc(i.name)}">${esc(i.name)}</span>
-        <span class="stat-bar-track"><span class="stat-bar-fill" style="width:${Math.max(2, i.value / max * 100)}%"></span></span>
+        <span class="stat-bar-track"><span class="stat-bar-fill" style="width:${Math.max(2, i.value / max * 100)}%${color(i)}"></span></span>
         <span class="stat-bar-value">${esc(i.value.toLocaleString())}${unit}</span>
     </div>`).join('')}</div>`;
 }
@@ -4505,7 +4525,7 @@ function growthChart(months) {
             <rect x="${i * bw + 2}" y="${h - ah}" width="${bw - 4}" height="${ah}" class="growth-added"></rect></g>`;
     }).join('');
     const first = new Date(months[0].month + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
-    return `<div class="stats-card stats-wide"><h3>Library growth <span class="muted">(last 24 months; orange: added that month)</span></h3>
+    return `<div class="stats-card stats-wide"><h3>Library growth <span class="muted">(last 24 months; blue: added that month)</span></h3>
         <svg viewBox="0 0 ${w} ${h}" class="growth-chart" preserveAspectRatio="none" role="img" aria-label="Library growth">${bars}</svg>
         <div class="growth-axis"><span>${esc(first)}</span><span>Now: ${months[months.length - 1].total} books</span></div></div>`;
 }
@@ -4535,7 +4555,7 @@ async function renderStats() {
             ${statBars('Top authors (hours on disk)', d.top_authors, ' h')}
             ${statBars('Top narrators (hours on disk)', d.top_narrators, ' h')}
             ${statBars('Top series (books)', d.top_series)}
-            ${statBars('Status', d.statuses)}
+            ${statBars('Status', d.statuses, '', name => STATUS_COLORS[name])}
             ${statBars('Editions', d.editions)}
             ${statBars('Formats (on disk)', d.formats)}
             ${statBars('Languages', d.languages)}

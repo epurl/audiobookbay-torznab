@@ -95,7 +95,7 @@ async def lifespan(app):
     _loops.clear()
 
 
-app = FastAPI(title="Bayarr", default_response_class=SafeJSONResponse, lifespan=lifespan)
+app = FastAPI(title="BorgArr", default_response_class=SafeJSONResponse, lifespan=lifespan)
 app.middleware("http")(auth.auth_middleware)
 
 
@@ -187,7 +187,7 @@ async def get_magnet(url: str, title: str = None):
     logger.info(f"Successfully resolved magnet link for {url}, redirecting client.")
     return RedirectResponse(magnet)
 
-# --- Bayarr Library & Settings API ---
+# --- BorgArr Library & Settings API ---
 
 @app.get("/api/library")
 async def api_get_library():
@@ -767,7 +767,7 @@ async def api_reject_download(book_id: str):
 
 @app.delete("/api/library/{book_id}")
 async def api_remove_library(book_id: str):
-    """Removes a book from Bayarr. Files on disk are never deleted."""
+    """Removes a book from BorgArr. Files on disk are never deleted."""
     _get_book_or_404(book_id)
     db.remove_from_library(book_id)
     return {"success": True}
@@ -905,7 +905,7 @@ async def api_seeding_remove(book_id: str, request: Request):
 async def api_abs_series_order():
     """Rewrites the series and the Abridged flag of every imported book, in its metadata.json
     and in Audiobookshelf, so series sort (abridged editions as their own series, parts
-    numbered 1.1, 1.2...) and Audiobookshelf's Abridged matches Bayarr's edition."""
+    numbered 1.1, 1.2...) and Audiobookshelf's Abridged matches BorgArr's edition."""
     books = [b for b in db.get_library() if b.get("status") == "Imported" and b.get("path")]
     if not audiobookshelf.start_fix_series_order(books, db.get_settings()):
         raise HTTPException(status_code=409, detail="It's already running.")
@@ -1127,7 +1127,7 @@ async def api_backup():
     """Downloads the database (library, series, history and settings)."""
     if not os.path.exists(db.DB_FILE):
         raise HTTPException(status_code=404, detail="Nothing to back up yet.")
-    name = f"bayarr-backup-{datetime.date.today().isoformat()}.json"
+    name = f"borgarr-backup-{datetime.date.today().isoformat()}.json"
     return FileResponse(db.DB_FILE, media_type="application/json", filename=name)
 
 @app.post("/api/restore")
@@ -1160,7 +1160,7 @@ async def api_abs_libraries(request: Request):
         raise HTTPException(status_code=502, detail=f"Couldn't connect to Audiobookshelf: {e}")
 
 # Results of the last scan, keyed by folder path. Imports may only use these, so the
-# browser can't make Bayarr record arbitrary paths.
+# browser can't make BorgArr record arbitrary paths.
 _last_scan = {}
 
 @app.post("/api/library/scan")
@@ -1317,7 +1317,7 @@ async def api_update_settings(request: Request):
 async def api_set_auth(request: Request):
     """Sets the UI login. The middleware has already authenticated the caller."""
     if auth.env_credentials_set():
-        raise HTTPException(status_code=400, detail="Login is set by BAYARR_USERNAME/BAYARR_PASSWORD environment variables.")
+        raise HTTPException(status_code=400, detail="Login is set by the BORGARR_USERNAME/BORGARR_PASSWORD environment variables.")
     data = await request.json()
     username = str(data.get("username") or "").strip()
     password = str(data.get("password") or "")

@@ -1,4 +1,4 @@
-"""Seeding: watches the torrents Bayarr grabbed once their book is imported, and removes
+"""Seeding: watches the torrents BorgArr grabbed once their book is imported, and removes
 them from qBittorrent after a ratio or a time (Settings > Download Client > Seeding).
 
 Only torrents of imported books are touched: their files have been copied into the

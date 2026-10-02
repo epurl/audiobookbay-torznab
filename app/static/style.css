@@ -1,14 +1,36 @@
 :root {
-    --bg-main: #242629;
-    --bg-dark: #1B1C20;
-    --bg-hover: #2F3136;
-    --border-color: #3A3C42;
-    --primary: #FF9900;
-    --primary-hover: #E68A00;
-    --text-primary: #FFFFFF;
-    --text-muted: #A3A4A6;
-    --success: #36B44F;
-    --error: #D22027;
+    color-scheme: dark;
+    /* Surfaces: gunmetal greys with a slight cool cast */
+    --bg-main: #1c2125;
+    --bg-dark: #151a1d;
+    --bg-input: #0f1316;
+    --bg-hover: #262c30;
+    --border-color: #353c40;
+    --text-primary: #eef1f2;
+    --text-muted: #a6b0b6;
+    /* Brand: the logo's light. It marks where you are (the current page), nothing else */
+    --brand: #37e4aa;
+    /* Actions: links, focus, selection. -fill is the button colour (white text at 4.5:1) */
+    --primary: #5d9cec;
+    --primary-fill: #226bc0;
+    --primary-hover: #155aa7;
+    /* Status colours, as Sonarr and Radarr use them. The plain colour is for dots, borders,
+       lines and text on the dark background; -fill is for badges and bars with white text */
+    --success: #27c24c;      /* On disk */
+    --success-fill: #1a812f;
+    --error: #f3625f;        /* Missing (wanted), failed */
+    --error-fill: #b63a3b;
+    --warning: #ffa500;      /* Needs review, missing but not monitored */
+    --warning-fill: #aa5f04;
+    --info: #5d9cec;         /* Upcoming */
+    --info-fill: #226bc0;
+    --queue: #b285ea;        /* Downloading */
+    --queue-fill: #7a43b6;
+    --neutral: #98a0a5;      /* Unmonitored */
+    --neutral-fill: #636a6f;
+    /* Editions: hues no status uses */
+    --edition-abridged: #f0cf4c;
+    --edition-dramatized: #f786be;
 }
 
 * {
@@ -21,6 +43,7 @@ body {
     font-family: 'Roboto', 'Open Sans', sans-serif;
     background-color: var(--bg-main);
     color: var(--text-primary);
+    accent-color: var(--primary-fill);  /* Checkboxes and radios */
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
 }
@@ -83,7 +106,11 @@ body {
 .nav-item.active {
     background-color: var(--bg-hover);
     color: var(--text-primary);
-    border-left-color: var(--primary);
+    border-left-color: var(--brand);
+}
+
+.nav-item.active svg {
+    color: var(--brand);
 }
 
 /* Main Content */
@@ -212,7 +239,7 @@ body {
 }
 
 .add-btn:hover {
-    background-color: var(--primary);
+    background-color: var(--primary-fill);
     color: #fff;
 }
 
@@ -228,20 +255,23 @@ body {
     box-shadow: 0 2px 4px rgba(0,0,0,0.5);
 }
 
+/* As Sonarr colours episodes: on disk green, wanted but missing red, downloading purple,
+   not out yet blue, unmonitored grey, held for review orange */
+.status-imported {
+    background-color: var(--success-fill);
+}
+
 .status-monitored {
-    background-color: var(--success);
+    background-color: var(--error-fill);
 }
 
 .status-unreleased {
-    background-color: #3b82f6; /* Blue */
+    background-color: var(--info-fill);
 }
 
+.status-downloading,
 .status-downloaded {
-    background-color: #8b5cf6; /* Purple */
-}
-
-.status-imported {
-    background-color: #f59e0b; /* Amber/Gold */
+    background-color: var(--queue-fill);
 }
 
 .book-card {
@@ -439,9 +469,9 @@ body {
 }
 
 .badge.match {
-    background-color: rgba(54, 180, 79, 0.2);
+    background-color: rgba(39, 194, 76, 0.2);
     color: var(--success);
-    border: 1px solid rgba(54, 180, 79, 0.5);
+    border: 1px solid rgba(39, 194, 76, 0.5);
 }
 
 .download-icon-btn {
@@ -451,7 +481,7 @@ body {
     width: 32px;
     height: 32px;
     border-radius: 4px;
-    background-color: rgba(255, 153, 0, 0.1);
+    background-color: rgba(93, 156, 236, 0.12);
     color: var(--primary);
     transition: all 0.2s;
     border: none;
@@ -459,7 +489,7 @@ body {
 }
 
 .download-icon-btn:hover {
-    background-color: var(--primary);
+    background-color: var(--primary-fill);
     color: #fff;
 }
 
@@ -478,7 +508,7 @@ body {
 }
 
 .folder-item:hover {
-    background-color: rgba(255, 153, 0, 0.1);
+    background-color: rgba(93, 156, 236, 0.1);
 }
 
 .folder-item:last-child {
@@ -506,7 +536,7 @@ body {
     height: 30px;
     border: 3px solid rgba(255, 255, 255, 0.1);
     border-radius: 50%;
-    border-top-color: var(--primary);
+    border-top-color: var(--brand);
     animation: spin 1s linear infinite;
 }
 
@@ -553,7 +583,7 @@ body {
 }
 
 .primary-btn {
-    background-color: var(--primary);
+    background-color: var(--primary-fill);
     color: #fff;
     border: none;
     border-radius: 4px;
@@ -599,14 +629,14 @@ body {
 }
 
 .danger-btn:hover {
-    background-color: var(--error);
+    background-color: var(--error-fill);
     color: #fff;
 }
 
 .form-input {
     padding: 8px;
     border-radius: 4px;
-    background: #1a1a1a;
+    background: var(--bg-input);
     border: 1px solid var(--border-color);
     color: #fff;
     font: inherit;
@@ -651,15 +681,11 @@ body {
 }
 
 .status-unmonitored {
-    background-color: #6b7280;
+    background-color: var(--neutral-fill);
 }
 
 .status-missing {
-    background-color: var(--error);
-}
-
-.status-downloading {
-    background-color: #0ea5e9;
+    background-color: var(--error-fill);
 }
 
 /* Book details */
@@ -782,17 +808,17 @@ body {
 }
 
 .badge.new {
-    background-color: rgba(54, 180, 79, 0.15);
+    background-color: rgba(39, 194, 76, 0.15);
     color: var(--success);
 }
 
 .badge.link {
-    background-color: rgba(255, 153, 0, 0.15);
+    background-color: rgba(93, 156, 236, 0.15);
     color: var(--primary);
 }
 
 .badge.owned {
-    background-color: rgba(163, 164, 166, 0.15);
+    background-color: rgba(152, 160, 165, 0.15);
     color: var(--text-muted);
 }
 
@@ -817,12 +843,12 @@ body {
 /* Needs Review / Activity */
 
 .status-needs-review {
-    background-color: #e11d48;
+    background-color: var(--warning-fill);
 }
 
 .nav-badge {
     margin-left: auto;
-    background-color: var(--error);
+    background-color: var(--warning-fill);
     color: #fff;
     border-radius: 10px;
     font-size: 0.7rem;
@@ -981,7 +1007,7 @@ a.book-link:hover {
 
 .progress-bar {
     height: 100%;
-    background-color: var(--primary);
+    background-color: var(--queue);
 }
 
 .row-actions {
@@ -1005,16 +1031,17 @@ a.book-link:hover {
     color: var(--text-muted);
 }
 
-.event-grabbed { color: #0ea5e9; }
-.event-imported, .event-approved, .event-seeded { color: var(--success); }
+.event-grabbed { color: var(--queue); }
+.event-imported, .event-approved, .event-seeded, .event-found { color: var(--success); }
+.event-needs_review, .event-stalled { color: var(--warning); }
 
 .settings-row {
     display: flex;
     gap: 16px;
     flex-wrap: wrap;
 }
-.event-needs_review, .event-failed, .event-missing, .event-rejected { color: var(--error); }
-.event-series, .event-released { color: var(--primary); }
+.event-failed, .event-missing, .event-rejected { color: var(--error); }
+.event-series, .event-released, .event-list { color: var(--info); }
 
 .review-banner {
     display: flex;
@@ -1022,7 +1049,7 @@ a.book-link:hover {
     align-items: center;
     gap: 16px;
     padding: 12px 24px;
-    background-color: rgba(210, 32, 39, 0.12);
+    background-color: rgba(243, 98, 95, 0.12);
     border-bottom: 1px solid var(--error);
     font-size: 0.85rem;
 }
@@ -1475,8 +1502,8 @@ button {
 }
 
 .book-card.selected .select-box {
-    background-color: var(--primary);
-    border-color: var(--primary);
+    background-color: var(--primary-fill);
+    border-color: var(--primary-fill);
 }
 
 .book-card.selected .select-box::after {
@@ -1577,7 +1604,7 @@ button {
 .folder-list {
     max-height: 320px;
     overflow-y: auto;
-    background: #1a1a1a;
+    background: var(--bg-input);
     border: 1px solid var(--border-color);
     border-radius: 4px;
     padding: 8px;
@@ -1677,7 +1704,7 @@ button {
 
     .nav-item.active {
         border-left-color: transparent;
-        border-top-color: var(--primary);
+        border-top-color: var(--brand);
     }
 
     .nav-badge {
@@ -1903,15 +1930,27 @@ button {
 .series-bar-fill {
     position: absolute;
     inset: 0 auto 0 0;
-    background-color: #6b7280;
-}
-
-.series-bar.monitored .series-bar-fill {
-    background-color: var(--primary);
+    background-color: var(--neutral-fill);
 }
 
 .series-bar.complete .series-bar-fill {
-    background-color: var(--success);
+    background-color: var(--success-fill);
+}
+
+.series-bar.continuing .series-bar-fill {
+    background-color: var(--info-fill);
+}
+
+.series-bar.missing .series-bar-fill {
+    background-color: var(--error-fill);
+}
+
+.series-bar.partial .series-bar-fill {
+    background-color: var(--warning-fill);
+}
+
+.series-bar.downloading .series-bar-fill {
+    background-color: var(--queue-fill);
 }
 
 .series-bar span {
@@ -2230,15 +2269,15 @@ tr.clickable {
 }
 
 .score-match {
-    background-color: rgba(54, 180, 79, 0.18);
-    border-color: rgba(54, 180, 79, 0.5);
+    background-color: rgba(39, 194, 76, 0.18);
+    border-color: rgba(39, 194, 76, 0.5);
     color: var(--success);
 }
 
 .score-possible {
-    background-color: rgba(255, 153, 0, 0.15);
-    border-color: rgba(255, 153, 0, 0.45);
-    color: var(--primary);
+    background-color: rgba(255, 165, 0, 0.14);
+    border-color: rgba(255, 165, 0, 0.45);
+    color: var(--warning);
 }
 
 .score-weak {
@@ -2248,8 +2287,8 @@ tr.clickable {
 }
 
 .score-rejected {
-    background-color: rgba(210, 32, 39, 0.15);
-    border-color: rgba(210, 32, 39, 0.45);
+    background-color: rgba(243, 98, 95, 0.15);
+    border-color: rgba(243, 98, 95, 0.45);
     color: var(--error);
 }
 
@@ -2264,13 +2303,13 @@ tr.clickable {
 
 /* Calendar (laid out like Sonarr's: entries coloured by library status) */
 :root {
-    --cal-ondisk: #36B44F;
-    --cal-downloading: #8b5cf6;
-    --cal-missing: #D22027;
-    --cal-review: #f59e0b;
-    --cal-upcoming: #3b82f6;
-    --cal-unmonitored: #6b7280;
-    --cal-trending: #A3A4A6;
+    --cal-ondisk: var(--success);
+    --cal-downloading: var(--queue);
+    --cal-missing: var(--error);
+    --cal-review: var(--warning);
+    --cal-upcoming: var(--info);
+    --cal-unmonitored: var(--neutral);
+    --cal-trending: var(--text-muted);
 }
 
 .view-toggle .secondary-btn + .secondary-btn {
@@ -2365,7 +2404,7 @@ tr.clickable {
 }
 
 .cal-day.today {
-    background-color: rgba(255, 153, 0, 0.07);
+    background-color: rgba(93, 156, 236, 0.08);
 }
 
 .cal-day.today .cal-daynum {
@@ -2655,14 +2694,14 @@ tr.clickable {
 }
 
 .edition-dramatized {
-    color: #c084fc;
+    color: var(--edition-dramatized);
 }
 
 .abridged-icon {
     display: inline-flex;
     vertical-align: -2px;
     margin-left: 6px;
-    color: #fbbf24;
+    color: var(--edition-abridged);
 }
 
 h2 .abridged-icon svg {
@@ -2675,7 +2714,7 @@ label.edition-check {
 }
 
 .edition-abridged {
-    color: #fbbf24;
+    color: var(--edition-abridged);
 }
 
 .edition-check {
@@ -2750,7 +2789,7 @@ label.edition-check {
 }
 
 .organize-item.done {
-    border-color: rgba(54, 180, 79, 0.5);
+    border-color: rgba(39, 194, 76, 0.5);
 }
 
 .organize-paths {
@@ -2839,8 +2878,8 @@ label.edition-check {
 }
 
 .sev-error { --sev: var(--error); }
-.sev-warning { --sev: #f59e0b; }
-.sev-info { --sev: #3b82f6; }
+.sev-warning { --sev: var(--warning); }
+.sev-info { --sev: var(--info); }
 
 .health-group {
     margin-bottom: 16px;
@@ -2968,7 +3007,7 @@ label.edition-check {
 
 /* Authors */
 .edition-upcoming {
-    color: #60a5fa;
+    color: var(--info);
 }
 
 .authors-list {
@@ -3290,26 +3329,26 @@ label.edition-check {
 }
 
 .arr-label.ok {
-    border-color: var(--success);
-    background-color: var(--success);
+    border-color: var(--success-fill);
+    background-color: var(--success-fill);
     color: #fff;
 }
 
 .arr-label.off {
-    border-color: #6b7280;
-    background-color: #6b7280;
+    border-color: var(--neutral-fill);
+    background-color: var(--neutral-fill);
     color: #fff;
 }
 
 .arr-label.info {
-    border-color: #3b82f6;
-    background-color: #3b82f6;
+    border-color: var(--info-fill);
+    background-color: var(--info-fill);
     color: #fff;
 }
 
 .arr-label.error {
-    border-color: var(--error);
-    background-color: var(--error);
+    border-color: var(--error-fill);
+    background-color: var(--error-fill);
     color: #fff;
 }
 

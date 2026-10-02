@@ -282,6 +282,7 @@ def summarize(group, index, rules=None):
         "series_id": (tracked or {}).get("id", ""),
         "owned": statuses.count("Imported"),
         "in_library": len(statuses),
+        "downloading": sum(1 for st in statuses if st in ("Downloading", "Downloaded")),
         "wanted": sum(1 for r in counted if _held(r) and _held(r)["status"] in WANTED),
         "upcoming": len(upcoming),
         "ignored": len(skipped),

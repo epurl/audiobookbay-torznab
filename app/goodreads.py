@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 PER_PAGE = 100  # Goodreads' feed pages
 MAX_PAGES = 10
 LIST_TOPS = (50, 100, 250, 500)  # How much of a Listopia list can be watched (100 books a page)
-_AGENT = "Mozilla/5.0 (compatible; Bayarr)"
+_AGENT = "Mozilla/5.0 (compatible; BorgArr)"
 
 
 def _goodreads_link(url):

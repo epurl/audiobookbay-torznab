@@ -3,7 +3,7 @@ its cover, using ffmpeg. Books wait in a queue (saved, so it survives restarts) 
 converted in the background one at a time: queued by hand, in bulk, or automatically
 after a download is imported (Settings > Media Management).
 
-The original files are kept, renamed to "<name>.original" (Audiobookshelf and Bayarr
+The original files are kept, renamed to "<name>.original" (Audiobookshelf and BorgArr
 ignore them), until you delete them. Imported files are copies, so a seeding download
 isn't affected."""
 import asyncio
@@ -35,7 +35,7 @@ _cancelled = False
 
 
 def ffmpeg_path():
-    return os.environ.get("BAYARR_FFMPEG") or shutil.which("ffmpeg") or ""
+    return db.env("FFMPEG") or shutil.which("ffmpeg") or ""
 
 
 def available():

@@ -222,7 +222,7 @@ async def _fetch_spaced(fetch, purpose="interactive"):
 
 async def _shared(key, make):
     """One request for a page however many callers want it at once (e.g. Prowlarr and a
-    Bayarr search asking for the same page)."""
+    BorgArr search asking for the same page)."""
     task = _inflight.get(key)
     if task is None:
         task = asyncio.ensure_future(make())

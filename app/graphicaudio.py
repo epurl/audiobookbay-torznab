@@ -108,7 +108,7 @@ def _items(page):
 
 
 def release_title(info):
-    """The title Bayarr gives a release, like Audible's GraphicAudio titles:
+    """The title BorgArr gives a release, like Audible's GraphicAudio titles:
     "Book Title (Part 1 of 5) [Dramatized Adaptation]"."""
     part = f" (Part {info['part']} of {info['part_count']})" if info.get("part") and info.get("part_count") else ""
     return f"{info['title']}{part} [Dramatized Adaptation]"

@@ -476,7 +476,7 @@ async def grab_usenet(book, release, settings):
 
 def _books_for_torrent(library, torrent):
     """The library books waiting on a torrent: by info hash (several books can wait on one
-    pack), else by the bayarr tag."""
+    pack), else by the borgarr tag."""
     active = [b for b in library if b.get("status") in ("Downloading", "Downloaded")]
     torrent_hash = (torrent.get("hash") or "").lower()
     by_hash = [b for b in active if torrent_hash and (b.get("download_hash") or "").lower() == torrent_hash]
@@ -487,7 +487,7 @@ def _books_for_torrent(library, torrent):
 
 
 def _find_book_for_torrent(library, torrent):
-    """Matches a torrent to a library book by info hash, falling back to the bayarr tag."""
+    """Matches a torrent to a library book by info hash, falling back to the borgarr tag."""
     active = [b for b in library if b.get("status") in ("Downloading", "Downloaded")]
 
     torrent_hash = (torrent.get("hash") or "").lower()
@@ -496,8 +496,8 @@ def _find_book_for_torrent(library, torrent):
             return book
 
     tag_list = [t.strip() for t in (torrent.get("tags") or "").split(",")]
-    # "talkarr-" is the tag prefix used before the rename to Bayarr
-    tag = next((t for t in tag_list if t.startswith(("bayarr-", "talkarr-"))), None)
+    # "bayarr-" and "talkarr-" are the tag prefixes of the names before BorgArr
+    tag = next((t for t in tag_list if t.startswith(("borgarr-", "bayarr-", "talkarr-"))), None)
     if not tag:
         return None
     safe_title_from_tag = tag.split("-", 1)[1]
@@ -667,7 +667,7 @@ async def import_completed_downloads(settings):
             db.add_history("failed", book, f"Audiobookshelf scan failed: {error}")
 
 
-UNPACK_FOLDER = ".bayarr-unpack"  # In the Root Folder; library scans skip folders starting with "."
+UNPACK_FOLDER = ".borgarr-unpack"  # In the Root Folder; library scans skip folders starting with "."
 
 NOT_FOUND_GRACE = 10 * 60  # A finished download may still be being moved into place
 _not_found_since = {}       # book id -> when its finished download was first not found
@@ -682,7 +682,7 @@ def _not_found(book, path, setting):
         logger.info(f"Finished download of {book.get('title')} not found yet at {path}")
         return
     _not_found_since.pop(book["id"], None)
-    _hold_for_review(book, f"The download finished, but Bayarr can't find it at {path}. If the download client "
+    _hold_for_review(book, f"The download finished, but BorgArr can't find it at {path}. If the download client "
                            f"sees its files at another path, set {setting}, then set the book back to Downloaded.")
 
 
@@ -691,7 +691,7 @@ def _found_again(book):
 
 
 def _map_usenet_path(path, settings):
-    """The Usenet client's path for a finished job, as Bayarr sees it: the job's folder inside
+    """The Usenet client's path for a finished job, as BorgArr sees it: the job's folder inside
     Settings > Usenet > Completed Downloads Folder when that's set."""
     folder = settings.get("usenet_downloads_folder")
     if not folder or not path:
@@ -797,7 +797,7 @@ def _hold_for_review(book, reason):
 
 
 async def _safe_import(book, content_path, staging, settings, root_folder):
-    """_import_download, but an unexpected error (e.g. a folder Bayarr may not read) holds
+    """_import_download, but an unexpected error (e.g. a folder BorgArr may not read) holds
     the book for review with the error, rather than stopping the downloads after it from
     being imported, every round."""
     try:
@@ -883,7 +883,7 @@ async def _place_book(book, audio, cover, settings, root_folder, unpacked=False,
     logger.info(f"Importing {title} into {dest_dir}")
     try:
         # Large copies run in a thread so the web UI stays responsive. Unpacked files are
-        # Bayarr's own temporary copies on the library's drive, so they're moved instead
+        # BorgArr's own temporary copies on the library's drive, so they're moved instead
         plan = audio + ([cover] if cover else [])
         if own:
             set_aside = await asyncio.to_thread(_set_aside_previous, dest_dir, audio)
@@ -1008,7 +1008,7 @@ def _set_aside_previous(folder, audio):
 def _copy_files(plan, dest_dir, move=False):
     """Copies files so the client keeps seeding the originals. Copies are written under a
     temporary name first, so an interrupted copy is redone on the next check rather than
-    mistaken for a finished one. With move (files Bayarr unpacked itself), they're moved
+    mistaken for a finished one. With move (files BorgArr unpacked itself), they're moved
     instead when they're on the same drive. Returns the number of files added."""
     copied = 0
     for src, rel in plan:

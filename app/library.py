@@ -678,7 +678,7 @@ def safe_filename(text):
 def _safe_to_copy(path, extensions):
     """A download's file that may be copied into the library. A symbolic link (some
     cross-seeding setups use them) only when it leads to a file of the same kind outside
-    Bayarr's config folder: "book.mp3" pointing at the database would otherwise put it in
+    BorgArr's config folder: "book.mp3" pointing at the database would otherwise put it in
     the library, where Audiobookshelf shows it."""
     if not os.path.islink(path):
         return True

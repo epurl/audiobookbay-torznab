@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bayarr</title>
+    <title>BorgArr</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
@@ -16,7 +16,7 @@
         <aside class="sidebar">
             <div class="sidebar-header">
                 <img src="/static/logo.svg" alt="" class="sidebar-logo-img">
-                <span class="logo-text">Bayarr</span>
+                <span class="logo-text">BorgArr</span>
             </div>
             <nav class="sidebar-nav">
                 <button type="button" class="nav-item active" data-view="libraryView">
@@ -527,12 +527,12 @@
                         </div>
                         <p class="settings-hint" id="abbUsage"></p>
 
-                        <h3>Bayarr as an Indexer</h3>
-                        <p class="settings-hint">Prowlarr, Listenarr and others can search AudiobookBay through Bayarr as a Torznab indexer at <code>http://this-server:port/api</code>. That works without your login, so anyone who can reach Bayarr can use it; with an API key set, only apps given the key can (enter it as the indexer's API key).</p>
+                        <h3>BorgArr as an Indexer</h3>
+                        <p class="settings-hint">Prowlarr, Listenarr and others can search AudiobookBay through BorgArr as a Torznab indexer at <code>http://this-server:port/api</code>. That works without your login, so anyone who can reach BorgArr can use it; with an API key set, only apps given the key can (enter it as the indexer's API key).</p>
                         <div class="settings-group">
                             <label for="setTorznabKey">API Key</label>
                             <div class="inline-actions">
-                                <input type="text" id="setTorznabKey" class="form-input" autocomplete="off" spellcheck="false" placeholder="None: open to anyone who can reach Bayarr">
+                                <input type="text" id="setTorznabKey" class="form-input" autocomplete="off" spellcheck="false" placeholder="None: open to anyone who can reach BorgArr">
                                 <button type="button" class="secondary-btn" id="torznabKeyNew">Generate</button>
                             </div>
                         </div>
@@ -629,7 +629,7 @@
                                 <input type="text" id="setDownloadsFolder" class="form-input" placeholder="e.g. /downloads/audiobooks">
                                 <button type="button" class="secondary-btn browse-btn" data-target="setDownloadsFolder">Browse</button>
                             </div>
-                            <p class="settings-hint">Only needed when qBittorrent sees its downloads at a different path than Bayarr (e.g. separate Docker containers). Set it to Bayarr's path for qBittorrent's audiobooks save folder.</p>
+                            <p class="settings-hint">Only needed when qBittorrent sees its downloads at a different path than BorgArr (e.g. separate Docker containers). Set it to BorgArr's path for qBittorrent's audiobooks save folder.</p>
                         </div>
 
                         <h3>Usenet</h3>
@@ -676,7 +676,7 @@
                                     <input type="text" id="setUsenetFolder" class="form-input" placeholder="e.g. /usenet/completed/audiobooks">
                                     <button type="button" class="secondary-btn browse-btn" data-target="setUsenetFolder">Browse</button>
                                 </div>
-                                <p class="settings-hint">Only needed when the Usenet client sees its downloads at a different path than Bayarr. Set it to Bayarr's path for the category's completed folder.</p>
+                                <p class="settings-hint">Only needed when the Usenet client sees its downloads at a different path than BorgArr. Set it to BorgArr's path for the category's completed folder.</p>
                             </div>
                             <div class="settings-group">
                                 <label class="checkbox-label">
@@ -698,7 +698,7 @@
                                 <input type="checkbox" id="setRemoveStalled">
                                 Remove Stalled Torrents from qBittorrent
                             </label>
-                            <p class="settings-hint">Deletes the unfinished torrent and its partial files. Only affects torrents Bayarr added.</p>
+                            <p class="settings-hint">Deletes the unfinished torrent and its partial files. Only affects torrents BorgArr added.</p>
                         </div>
 
                         <h3>Seeding</h3>
@@ -707,7 +707,7 @@
                                 <input type="checkbox" id="setSeedCleanup">
                                 Remove Torrents After Seeding
                             </label>
-                            <p class="settings-hint">Once a book is imported (its files are copied into your library), its torrent is removed from qBittorrent when it reaches the ratio or has seeded for the number of days, whichever comes first. 0 turns a limit off. Only affects torrents Bayarr added; Activity shows them under Seeding.</p>
+                            <p class="settings-hint">Once a book is imported (its files are copied into your library), its torrent is removed from qBittorrent when it reaches the ratio or has seeded for the number of days, whichever comes first. 0 turns a limit off. Only affects torrents BorgArr added; Activity shows them under Seeding.</p>
                         </div>
                         <div class="settings-row">
                             <div class="settings-group">
@@ -734,7 +734,7 @@
                             <h3>Lists</h3>
                             <button type="button" class="secondary-btn" id="listsUpdateAll" title="Check every enabled list now">Update All Lists</button>
                         </div>
-                        <p class="settings-hint">Bayarr reads your lists every 6 hours and adds the books that are new on them, looked up on Audible (clear matches only: the title and author must match). A book you remove from your library isn't added back. Choose a list to change it, or + to add one.</p>
+                        <p class="settings-hint">BorgArr reads your lists every 6 hours and adds the books that are new on them, looked up on Audible (clear matches only: the title and author must match). A book you remove from your library isn't added back. Choose a list to change it, or + to add one.</p>
                         <div id="listCards" class="arr-cards"></div>
 
                         <div class="settings-heading">
@@ -782,13 +782,13 @@
                                 <button type="button" id="absSeriesOrderBtn" class="secondary-btn">Update Audiobookshelf</button>
                                 <span class="action-status" id="absSeriesOrderStatus"></span>
                             </div>
-                            <p class="settings-hint">Makes Audiobookshelf match Bayarr: its <b>Abridged</b> setting follows each book's edition (abridged includes dramatizations), abridged editions become a series of their own ("Name (Abridged)") and books sold in parts are numbered by part (book 1 in two parts: #1.1 and #1.2), so series sort properly. Updates each imported book's metadata.json, and Audiobookshelf itself when a server and library are set above. New imports get this automatically.</p>
+                            <p class="settings-hint">Makes Audiobookshelf match BorgArr: its <b>Abridged</b> setting follows each book's edition (abridged includes dramatizations), abridged editions become a series of their own ("Name (Abridged)") and books sold in parts are numbered by part (book 1 in two parts: #1.1 and #1.2), so series sort properly. Updates each imported book's metadata.json, and Audiobookshelf itself when a server and library are set above. New imports get this automatically.</p>
                         </div>
                     </section>
 
                     <!-- Security (saved separately) -->
                     <section class="settings-section" data-section="security" hidden>
-                        <p class="settings-hint" id="authHint">Set a login to access Bayarr from outside your local network. Until one is set, only local network addresses can connect.</p>
+                        <p class="settings-hint" id="authHint">Set a login to access BorgArr from outside your local network. Until one is set, only local network addresses can connect.</p>
                         <div class="field-pair">
                             <div class="settings-group">
                                 <label for="setAuthUser">Username</label>
@@ -807,7 +807,7 @@
                         <div class="settings-group">
                             <label>Download Backup</label>
                             <a href="/api/backup" class="secondary-btn button-link" download>Download database.json</a>
-                            <p class="settings-hint">Your library, series, history and settings. The file includes your qBittorrent password and Audiobookshelf token, so keep it private. Bayarr also keeps a daily copy of the last 7 days in its config folder, under backups.</p>
+                            <p class="settings-hint">Your library, series, history and settings. The file includes your qBittorrent password and Audiobookshelf token, so keep it private. BorgArr also keeps a daily copy of the last 7 days in its config folder, under backups.</p>
                         </div>
                         <div class="settings-group">
                             <label for="restoreFile">Restore</label>
@@ -976,7 +976,7 @@
                 <button type="button" class="close-btn" id="closeAddListModal" aria-label="Close">&times;</button>
             </div>
             <div class="modal-pad">
-                <p class="modal-lead">Bayarr watches lists for books to add to your library. Choose the kind of list.</p>
+                <p class="modal-lead">BorgArr watches lists for books to add to your library. Choose the kind of list.</p>
                 <h4 class="list-type-group">Goodreads</h4>
                 <div class="list-types">
                     <button type="button" class="list-type" data-kind="shelf"><b>Goodreads Shelf</b><span>Want to Read, or any shelf of yours or a friend's</span></button>
@@ -1152,7 +1152,7 @@
                         <tbody id="splitRows"></tbody>
                     </table>
                 </div>
-                <p class="settings-hint">Each book's files are copied into a new folder next to the original, with its own cover and metadata.json, and added to the library. The original folder and its files aren't changed or deleted: remove it yourself (and from Audiobookshelf) once you're happy. Its entry is removed from Bayarr.</p>
+                <p class="settings-hint">Each book's files are copied into a new folder next to the original, with its own cover and metadata.json, and added to the library. The original folder and its files aren't changed or deleted: remove it yourself (and from Audiobookshelf) once you're happy. Its entry is removed from BorgArr.</p>
             </div>
             <div class="modal-footer">
                 <span id="splitStatus" class="action-status"></span>

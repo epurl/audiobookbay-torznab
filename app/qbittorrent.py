@@ -70,7 +70,7 @@ async def send_to_qbittorrent(host: str, username: str, password: str, magnet_ur
         }
         if title:
             safe_title = title.replace(",", "").strip()
-            data["tags"] = f"bayarr-{safe_title}"
+            data["tags"] = f"borgarr-{safe_title}"
             
         # qBittorrent can take a while to answer when it's busy (e.g. deleting files)
         response = await client.post("/api/v2/torrents/add", data=data, timeout=15.0)
@@ -96,7 +96,7 @@ async def send_torrent_file(host: str, username: str, password: str, torrent: by
     try:
         data = {"category": "audiobooks"}
         if title:
-            data["tags"] = f"bayarr-{title.replace(',', '').strip()}"
+            data["tags"] = f"borgarr-{title.replace(',', '').strip()}"
         response = await client.post("/api/v2/torrents/add", data=data, timeout=15.0,
                                      files={"torrents": ("release.torrent", torrent, "application/x-bittorrent")})
         if _succeeded(response):

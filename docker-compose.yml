@@ -10,8 +10,8 @@ services:
       # Put secrets in a .env file next to this one (see .env.example); never commit them
       - ABB_COOKIE=${ABB_COOKIE:-}
       - ABB_USER_AGENT=${ABB_USER_AGENT:-Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36}
-      - BAYARR_USERNAME=${BAYARR_USERNAME:-}
-      - BAYARR_PASSWORD=${BAYARR_PASSWORD:-}
+      - BORGARR_USERNAME=${BORGARR_USERNAME:-}
+      - BORGARR_PASSWORD=${BORGARR_PASSWORD:-}
     volumes:
       - ./config:/config
       # Your audiobooks and qBittorrent's downloads (imports are copied from one to the other):
