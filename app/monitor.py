@@ -2,6 +2,7 @@ import asyncio
 import logging
 import datetime
 import os
+import re
 import shutil
 from . import archives, audible, audiobookshelf, book_search, convert, db, editions, indexers, release_match, scraper, usenet
 from .library import (audio_files, build_folder_name, describe_files, plan_import_files,
@@ -622,7 +623,15 @@ def _map_usenet_path(path, settings):
     folder = settings.get("usenet_downloads_folder")
     if not folder or not path:
         return path
-    return os.path.join(folder, os.path.basename(path.rstrip("/\\")))
+    parts = [p for p in re.split(r"[/\\]+", path) if p]
+    direct = os.path.join(folder, parts[-1])
+    # The folder set may be the client's completed folder rather than its category's
+    # ("complete" vs "complete/audiobooks"): then the job is one level further down
+    if not os.path.exists(direct) and len(parts) >= 2:
+        nested = os.path.join(folder, parts[-2], parts[-1])
+        if os.path.exists(nested):
+            return nested
+    return direct
 
 
 async def check_usenet_downloads(settings):
