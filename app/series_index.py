@@ -284,11 +284,13 @@ def _attach_owned(asin, title, catalog_books):
     """Records the series (with its number) on library books Audible lists in it, and fills
     in Audible details they lack (the runtime is what the download length check uses)."""
     index = LibraryIndex(db.get_library())
+    # Gathered, then saved once: one save per book is slow with a large library
+    entries, fills = {}, {}
     for cb in catalog_books:
         owned = index.find(cb)
         if not owned:
             continue
-        db.add_series_to_books({"name": title, "asin": asin, "sequence": cb.get("catalog_sequence") or ""}, {owned["id"]})
+        entries.setdefault(owned["id"], []).append({"name": title, "asin": asin, "sequence": cb.get("catalog_sequence") or ""})
         fill = {k: cb[k] for k in _FILL_FROM_AUDIBLE if cb.get(k) and not owned.get(k)}
         if cb.get("placeholder"):
             fill.pop("asin", None)  # Listed by Audible, not sold there: its ASIN leads nowhere
@@ -296,7 +298,11 @@ def _attach_owned(asin, title, catalog_books):
         if reordered:
             fill["authors"] = reordered
         if fill:
-            db.update_book(owned["id"], **fill)
+            fills.setdefault(owned["id"], {}).update(fill)
+    if entries:
+        db.add_series_entries(entries)
+    if fills:
+        db.update_books(fills)
 
 
 def _find_group(groups, base, drama):

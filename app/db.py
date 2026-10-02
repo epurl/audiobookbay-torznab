@@ -162,8 +162,11 @@ def _save_db(data):
         # Write atomically so a crash mid-write can't corrupt the database
         fd, tmp_path = tempfile.mkstemp(dir=CONFIG_DIR, prefix=".database-", suffix=".json")
         try:
+            # Compact, in one piece: Python's fast encoder (an indented file takes three
+            # times as long to write, and saves happen often)
+            text = json.dumps(data)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4)
+                f.write(text)
             os.replace(tmp_path, DB_FILE)
         except Exception:
             if os.path.exists(tmp_path):
@@ -292,13 +295,18 @@ def apply_audible_match(book_id, audible_book):
 
 def add_series_to_books(entry, book_ids):
     """Records that these books belong to a series (e.g. after a series sync)."""
+    add_series_entries({book_id: [entry] for book_id in book_ids})
+
+
+def add_series_entries(entries_by_book):
+    """Records series memberships for many books in one save: {book id: [series entry]}."""
     with _lock:
         db = _load_db()
         changed = False
         for b in db["library"]:
-            if b.get("id") not in book_ids:
+            if b.get("id") not in entries_by_book:
                 continue
-            merged = merge_series_lists(series_entries(b), [entry])
+            merged = merge_series_lists(series_entries(b), entries_by_book[b["id"]])
             if merged != b.get("series_list"):
                 b["series_list"] = merged
                 if not b.get("series"):
