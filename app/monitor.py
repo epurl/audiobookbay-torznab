@@ -317,6 +317,14 @@ async def grab(book, magnet, settings, release=None, torrent=None):
     else:
         success = await send_to_qbittorrent(settings.get("qbt_host"), settings.get("qbt_user"), settings.get("qbt_pass"),
                                             magnet, title)
+    download_hash = indexers.torrent_infohash(torrent) if torrent else db.extract_infohash(magnet)
+    if not success and download_hash:
+        # qBittorrent refuses a torrent it already has: then it's there, and can be tracked
+        existing = await get_torrents(settings.get("qbt_host"), settings.get("qbt_user"), settings.get("qbt_pass"),
+                                      [download_hash])
+        success = bool(existing)
+        if success:
+            logger.info(f"qBittorrent already has the release for {title}; tracking it")
     if not success:
         logger.error(f"Failed to send {title} to qBittorrent")
         db.add_history("failed", book, "Could not send the release to qBittorrent")
@@ -324,7 +332,6 @@ async def grab(book, magnet, settings, release=None, torrent=None):
 
     logger.info(f"Sent {title} to qBittorrent")
     release_name = (release or {}).get("raw_title") or (release or {}).get("title", "")
-    download_hash = indexers.torrent_infohash(torrent) if torrent else db.extract_infohash(magnet)
     db.update_book(book["id"], status="Downloading", download_hash=download_hash, release_key=download_hash,
                    release_title=release_name, review_reason="", skip_verify=False)
     details = ", ".join(x for x in (release_name, (release or {}).get("format"), (release or {}).get("size_str"),

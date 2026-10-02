@@ -9,6 +9,8 @@ import logging
 
 import httpx
 
+from app.qbittorrent import normalize_host  # "host:port" gets http://
+
 logger = logging.getLogger(__name__)
 
 PREFIXES = ("nzbget:", "sab:")
@@ -27,7 +29,7 @@ def is_usenet_id(download_id):
 # --- NZBGet: JSON-RPC --------------------------------------------------------
 
 async def _nzbget(settings, method, *params):
-    url = settings["usenet_host"].rstrip("/") + "/jsonrpc"
+    url = normalize_host(settings["usenet_host"]) + "/jsonrpc"
     auth = (settings.get("usenet_user") or "", settings.get("usenet_pass") or "")
     async with httpx.AsyncClient(timeout=30.0, auth=auth if auth[0] else None) as http:
         res = await http.post(url, json={"method": method, "params": list(params), "id": 1})
@@ -51,7 +53,7 @@ def _nzbget_size(item, prefix="FileSize"):
 # --- SABnzbd: its HTTP API --------------------------------------------------
 
 async def _sab(settings, mode, files=None, **params):
-    url = settings["usenet_host"].rstrip("/") + "/api"
+    url = normalize_host(settings["usenet_host"]) + "/api"
     params = {"mode": mode, "output": "json", "apikey": settings.get("usenet_apikey") or "", **params}
     async with httpx.AsyncClient(timeout=30.0) as http:
         if files:

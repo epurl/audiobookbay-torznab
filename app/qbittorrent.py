@@ -10,9 +10,17 @@ def _succeeded(response) -> bool:
     200 "Fails." or a 4xx status."""
     return 200 <= response.status_code < 300 and response.text.strip() != "Fails."
 
+def normalize_host(host: str) -> str:
+    """ "192.168.1.5:8080" -> "http://192.168.1.5:8080" (the scheme is easy to leave out)."""
+    host = (host or "").strip().rstrip("/")
+    if host and "://" not in host:
+        host = "http://" + host
+    return host
+
+
 async def login_qbittorrent(host: str, username: str, password: str) -> Optional[httpx.AsyncClient]:
     """Authenticates with qBittorrent Web API and returns an authenticated httpx client."""
-    client = httpx.AsyncClient(base_url=host)
+    client = httpx.AsyncClient(base_url=normalize_host(host))
     try:
         data = {"username": username, "password": password}
         response = await client.post("/api/v2/auth/login", data=data, timeout=5.0)
@@ -127,7 +135,7 @@ async def get_torrents(host: str, username: str, password: str, hashes):
 
 async def test_connection(host: str, username: str, password: str):
     """Logs in and returns qBittorrent's version, or raises with a readable message."""
-    async with httpx.AsyncClient(base_url=host, timeout=5.0) as client:
+    async with httpx.AsyncClient(base_url=normalize_host(host), timeout=5.0) as client:
         try:
             login = await client.post("/api/v2/auth/login", data={"username": username, "password": password})
         except httpx.HTTPError as e:

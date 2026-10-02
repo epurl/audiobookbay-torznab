@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import httpx
 
 from app.editions import ABRIDGED, edition_of
+from app.qbittorrent import normalize_host
 from app.library import format_sequence, part_count, part_number
 
 logger = logging.getLogger(__name__)
@@ -209,7 +210,7 @@ async def download_cover(image_url, folder):
 
 
 def _client(url, token):
-    return httpx.AsyncClient(base_url=url.rstrip("/"), headers={"Authorization": f"Bearer {token}"}, timeout=15.0)
+    return httpx.AsyncClient(base_url=normalize_host(url), headers={"Authorization": f"Bearer {token}"}, timeout=15.0)
 
 
 async def list_libraries(url, token):

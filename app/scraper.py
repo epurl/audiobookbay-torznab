@@ -349,8 +349,15 @@ async def search_audiobooks(query: str, offset: int = 0, limit: int = 100, known
 
     skip = offset % RESULTS_PER_PAGE
     final_results = all_results[skip:skip + limit]
-    await add_details(final_results)
+    # Detail pages (with the magnet) only for the first few results and ones already
+    # cached: loading every one, a second apart, would outlast the client's time-out. The
+    # rest link to /api/download, which finds the magnet when the release is grabbed.
+    await add_details([r for i, r in enumerate(final_results)
+                       if i < TORZNAB_DETAILS or _detail_cache.get(r.get("link")) is not None])
     return final_results
+
+
+TORZNAB_DETAILS = 10
 
 
 # --- Detail pages ------------------------------------------------------------

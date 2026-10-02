@@ -52,7 +52,7 @@ def build_rss(results: list, host_url: str, offset: int = 0) -> str:
         etree.SubElement(item, "description").text = description
         
         encoded_title = urllib.parse.quote(title)
-        dl_url = f"{host_url}/api/download?url={res.get('link', '')}&title={encoded_title}"
+        dl_url = f"{host_url}/api/download?url={urllib.parse.quote(res.get('link', ''), safe='')}&title={encoded_title}"
         
         magnet_url = res.get("magnet_url") or dl_url
         
