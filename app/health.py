@@ -13,7 +13,7 @@ import tempfile
 from collections import defaultdict
 
 from app import db, editions, splitter
-from app.library import audio_files, normalize, primary_author, title_key
+from app.library import audio_files, normalize, part_number, primary_author, title_key
 
 logger = logging.getLogger(__name__)
 
@@ -142,14 +142,18 @@ def check():
                 issues.append(_issue("wrong_length", book, f"The files run {actual} min; Audible lists {expected} min"))
 
     # The same book (title, author, edition) in more than one folder
+    # (a book's parts, or another recording of it with its own ASIN, aren't copies)
     copies = defaultdict(list)
     for book in on_disk:
-        copies[(title_key(book.get("title")), normalize(primary_author(book.get("authors"))), editions.edition_of(book))].append(book)
+        copies[(title_key(book.get("title")), normalize(primary_author(book.get("authors"))), editions.edition_of(book),
+                part_number(book.get("title")))].append(book)
     for same in copies.values():
-        if len(same) > 1:
-            for book in same:
-                others = [_shown_path(b["path"], settings.get("root_folder")) for b in same if b is not book]
-                issues.append(_issue("duplicate", book, "Also in: " + ", ".join(others)))
+        for book in same:
+            others = [b for b in same if b is not book
+                      and not (b.get("asin") and book.get("asin") and b["asin"] != book["asin"])]
+            if others:
+                shown = [_shown_path(b["path"], settings.get("root_folder")) for b in others]
+                issues.append(_issue("duplicate", book, "Also in: " + ", ".join(shown)))
 
     order = list(KINDS)
     issues.sort(key=lambda i: (order.index(i["kind"]), i["authors"], i["title"]))

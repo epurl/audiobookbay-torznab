@@ -83,16 +83,24 @@ async def check(settings):
     if torrents is None:
         return  # qBittorrent unreachable
     by_hash = {t["hash"].lower(): t for t in torrents}
+    # A pack's torrent another book still needs (being imported, or held for review) stays
+    in_use = {(b.get("download_hash") or "").lower() for b in db.get_library()
+              if b.get("download_hash") and b.get("status") != "Imported"}
+    handled = set()
     for book in books:
-        torrent = by_hash.get(book["download_hash"])
+        key = book["download_hash"].lower()
+        torrent = by_hash.get(key)
         if torrent is None:
             db.update_book(book["id"], download_hash="")  # Removed in qBittorrent
             continue
-        if (torrent.get("progress") or 0) < 1 or not settings.get("seed_cleanup"):
+        if key in handled:  # Several books from one pack: removed once
+            db.update_book(book["id"], download_hash="")
+            continue
+        if (torrent.get("progress") or 0) < 1 or not settings.get("seed_cleanup") or key in in_use:
             continue
         why = limit_reached(torrent, settings)
-        if why:
-            await _remove(book, torrent, settings, why, settings.get("seed_delete_files", True))
+        if why and await _remove(book, torrent, settings, why, settings.get("seed_delete_files", True)):
+            handled.add(key)
 
 
 async def status(settings):
@@ -106,7 +114,7 @@ async def status(settings):
     by_hash = {t["hash"].lower(): t for t in torrents}
     rows = []
     for book in books:
-        t = by_hash.get(book["download_hash"])
+        t = by_hash.get(book["download_hash"].lower())
         if not t:
             continue
         rows.append({
@@ -131,5 +139,9 @@ async def remove_now(book_id, settings, delete_files):
     if not torrents:
         db.update_book(book_id, download_hash="")
         return ""
+    waiting = [b.get("title", "") for b in db.get_library() if b["id"] != book_id and b.get("status") != "Imported"
+               and (b.get("download_hash") or "").lower() == book["download_hash"].lower()]
+    if waiting:
+        return f"{waiting[0]} hasn't been imported from this download yet."
     ok = await _remove(book, torrents[0], settings, "removed by you", delete_files)
     return "" if ok else "qBittorrent didn't remove it."

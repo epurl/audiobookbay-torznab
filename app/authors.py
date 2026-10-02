@@ -6,7 +6,7 @@ import re
 import uuid
 
 from app import audible, db
-from app.library import normalize, title_key
+from app.library import normalize, part_number, title_key
 from app.series_index import LibraryIndex, wanted_editions
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ async def catalog(name):
                 continue
             if language != "all" and book.get("language") and book["language"].lower() != language:
                 continue
-            key = (title_key(book["title"]), book["edition"])
+            key = (title_key(book["title"]), book["edition"], part_number(book["title"]))  # Parts are separate releases
             if key in seen:
                 if (book["release_date"] or "9999") < (seen[key]["release_date"] or "9999"):
                     books[books.index(seen[key])] = book

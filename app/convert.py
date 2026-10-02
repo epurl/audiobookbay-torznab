@@ -59,6 +59,14 @@ def can_convert(book):
     path = book.get("path") or ""
     if not os.path.isdir(path):
         return "The book has no folder"
+    # Joining a folder that holds other books would make one file of all of them
+    from app.library import same_path
+    if same_path(path, db.get_settings().get("root_folder")):
+        return "The book's folder is the Root Folder"
+    inside = os.path.normcase(os.path.normpath(path)) + os.sep
+    if any(b["id"] != book.get("id") and os.path.normcase(os.path.normpath(b.get("path") or "")).startswith(inside)
+           for b in db.get_library()):
+        return "Another book's folder is inside this book's folder"
     files = audio_files(path)
     if not files:
         return "No audio files"
@@ -133,6 +141,10 @@ async def _run(book):
     out = os.path.join(folder, stem + ".m4b")
     if os.path.exists(out) and out not in files:
         raise RuntimeError(f"{stem}.m4b already exists in the folder")
+    # Renaming over originals kept from an earlier conversion would lose them
+    kept = [os.path.basename(f) for f in files if os.path.exists(f + ORIGINAL_SUFFIX)]
+    if kept:
+        raise RuntimeError(f"Originals from an earlier conversion are still there ({kept[0]}{ORIGINAL_SUFFIX}); delete them first")
     # Not an audio extension, so a crash can't leave a half file that looks like the book
     partial = os.path.join(folder, f"{stem}.m4b.converting")
     workdir = os.path.join(db.CONFIG_DIR, "convert")
@@ -155,13 +167,27 @@ async def _run(book):
         problem = await verify(partial, sum(durations), len(files))
         if problem:
             raise RuntimeError(f"{problem}; the original files are unchanged")
+        if _cancelled:  # Cancelled while the new file was being checked
+            raise RuntimeError("Cancelled")
+        renamed = []
+        try:
+            for f in files:
+                os.rename(f, f + ORIGINAL_SUFFIX)
+                renamed.append(f)
+            os.replace(partial, out)
+        except OSError as e:
+            # Put back what was renamed, so the book is as it was
+            for f in reversed(renamed):
+                try:
+                    if os.path.exists(f + ORIGINAL_SUFFIX) and not os.path.exists(f):
+                        os.rename(f + ORIGINAL_SUFFIX, f)
+                except OSError:
+                    logger.error(f"Couldn't rename {f}{ORIGINAL_SUFFIX} back")
+            raise RuntimeError(f"Couldn't switch to the converted file: {e}; the original files are unchanged")
     except BaseException:
         if os.path.exists(partial):
             os.remove(partial)
         raise
-    for f in files:
-        os.rename(f, f + ORIGINAL_SUFFIX)
-    os.replace(partial, out)
     # Disc folders left with only .original files stay; they hold the originals
     db.update_book(book["id"], **describe_files(folder))
     db.add_history("converted", book, f"Converted {len(files)} file{'s' if len(files) != 1 else ''} to {os.path.basename(out)}")

@@ -171,6 +171,21 @@ def _new_book(original, group, match, settings, title=None, number=None):
     return book, build_folder_name(settings.get("naming_format"), book)
 
 
+def _targets(files):
+    """Where each of a book's files goes in its new folder: just the name, or, when names
+    repeat (01.mp3 on each disc), under its disc folder, so none is skipped as a copy."""
+    names = [os.path.basename(rel) for rel in files]
+    if len({n.lower() for n in names}) == len(names):
+        return names
+    targets = []
+    for rel in files:
+        parts = rel.replace("\\", "/").split("/")
+        if len(parts) > 1 and not DISC_FOLDER_RE.match(parts[0]):
+            parts = parts[1:]  # The book's own subfolder in the collection
+        targets.append(os.path.join(*parts))
+    return targets
+
+
 _proposals = {}  # book id -> the last proposal, which a split may only use
 
 
@@ -227,7 +242,8 @@ async def apply(book_id, choices):
     source = proposal["path"]
     parent = os.path.dirname(os.path.normpath(source))
     cover_src = os.path.join(source, original["cover"]) if original.get("cover") else ""
-    made = []
+    # Every folder is checked before anything is copied, so a problem leaves nothing half done
+    chosen, folders = [], set()
     for choice in choices:
         group = next((g for g in proposal["groups"] if g["index"] == choice.get("index")), None)
         if group is None:
@@ -236,11 +252,18 @@ async def apply(book_id, choices):
         title = str(choice.get("title") or "").strip() or None
         new, folder = _new_book(original, group, group["_match"], settings, title=title, number=number)
         dest = os.path.join(parent, folder)
-        if os.path.normcase(os.path.normpath(dest)) == os.path.normcase(os.path.normpath(source)):
+        key = os.path.normcase(os.path.normpath(dest))
+        if key == os.path.normcase(os.path.normpath(source)):
             raise ValueError(f'"{folder}" is the original folder; give the book another title.')
+        if key in folders:
+            raise ValueError(f'Two books would both go in "{folder}"; give one another title or number.')
         if os.path.exists(dest) and os.listdir(dest):
             raise ValueError(f'A folder named "{folder}" already exists.')
-        plan = [(os.path.join(source, rel), os.path.basename(rel)) for rel in group["files"]]
+        folders.add(key)
+        chosen.append((group, new, dest))
+    made = []
+    for group, new, dest in chosen:
+        plan = list(zip((os.path.join(source, rel) for rel in group["files"]), _targets(group["files"])))
         await asyncio.to_thread(_copy_files, plan, dest)
         cover = await audiobookshelf.download_cover(new.get("imageUrl", ""), dest)
         if not cover and cover_src and os.path.isfile(cover_src):
