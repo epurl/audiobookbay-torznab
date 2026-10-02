@@ -62,6 +62,8 @@ def plan(rename_files=False, book_ids=None):
         key = os.path.normcase(proposed)
         if key in taken:
             conflict = f'"{taken[key]}" would get the same folder'
+        elif not is_file and (same_path(current, root) or _within(proposed, current)) and not same_path(current, proposed):
+            conflict = "The book's folder holds the new one (or is the Root Folder); move it by hand"
         elif os.path.exists(proposed) and not same_path(current, proposed):
             conflict = "A folder with that name already exists"
         taken.setdefault(key, book.get("title"))

@@ -55,10 +55,15 @@ def scan(settings):
     candidates = None  # Folders in the Root Folder no book uses, found when first needed
     fingerprints = {}
 
+    # A downloads folder inside the Root Folder holds downloads, not books
+    downloads = [_norm(settings[k]).rstrip(os.sep) + os.sep for k in ("downloads_folder", "usenet_downloads_folder")
+                 if settings.get(k)]
+
     def untracked():
         nonlocal candidates
         if candidates is None:
-            candidates = [c for c in library.scan_library(root) if _norm(c["path"]) not in tracked] if root_ok else []
+            candidates = [c for c in library.scan_library(root) if _norm(c["path"]) not in tracked
+                          and not any((_norm(c["path"]) + os.sep).startswith(d) for d in downloads)] if root_ok else []
         return candidates
 
     def fingerprint(path):

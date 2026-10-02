@@ -635,8 +635,11 @@ def _safe_to_remove(content, settings, root_folder):
     target = norm(content)
     if _inside_library(content, root_folder):
         return False
-    if settings.get("usenet_downloads_folder") and target == norm(settings["usenet_downloads_folder"]):
-        return False
+    # Neither downloads folder (torrent or Usenet), nor a folder holding one
+    for key in ("usenet_downloads_folder", "downloads_folder"):
+        folder = norm(settings.get(key)) if settings.get(key) else ""
+        if folder and (folder == target or folder.startswith(target.rstrip(os.sep) + os.sep)):
+            return False
     parts = [p for p in os.path.splitdrive(target)[1].replace("\\", "/").split("/") if p]
     return len(parts) >= 3
 
