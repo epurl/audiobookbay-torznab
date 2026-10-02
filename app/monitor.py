@@ -362,13 +362,25 @@ async def grab_usenet(book, release, settings):
     return True
 
 
+def _books_for_torrent(library, torrent):
+    """The library books waiting on a torrent: by info hash (several books can wait on one
+    pack), else by the bayarr tag."""
+    active = [b for b in library if b.get("status") in ("Downloading", "Downloaded")]
+    torrent_hash = (torrent.get("hash") or "").lower()
+    by_hash = [b for b in active if torrent_hash and (b.get("download_hash") or "").lower() == torrent_hash]
+    if by_hash:
+        return by_hash
+    book = _find_book_for_torrent(library, torrent)
+    return [book] if book else []
+
+
 def _find_book_for_torrent(library, torrent):
     """Matches a torrent to a library book by info hash, falling back to the bayarr tag."""
     active = [b for b in library if b.get("status") in ("Downloading", "Downloaded")]
 
     torrent_hash = (torrent.get("hash") or "").lower()
     for book in active:
-        if torrent_hash and book.get("download_hash") == torrent_hash:
+        if torrent_hash and (book.get("download_hash") or "").lower() == torrent_hash:
             return book
 
     tag_list = [t.strip() for t in (torrent.get("tags") or "").split(",")]
@@ -502,10 +514,9 @@ async def import_completed_downloads(settings):
         settings.get("qbt_pass")
     )
 
-    for torrent in completed or []:
-        book = _find_book_for_torrent(library, torrent)
-        if not book:
-            continue
+    for torrent, book in [(t, b) for t in completed or [] for b in _books_for_torrent(library, t)]:
+        if (db.get_book(book["id"]) or {}).get("status") not in ("Downloading", "Downloaded"):
+            continue  # Imported meanwhile (e.g. as another book's pack sibling)
 
         title = book.get("title", "").strip()
         if book.get("status") == "Downloading":
