@@ -286,7 +286,23 @@ def choose_best_result(book, results, settings):
     return release_match.choose_best(book, results, settings)
 
 
+_searching = set()  # Books being searched for: one search per book at a time
+
+
 async def auto_download_book(book, settings):
+    """Searches for a book and grabs the best release. A book already being searched for
+    (e.g. by the library check and right after being added) isn't searched twice, which
+    could grab two releases."""
+    if book["id"] in _searching:
+        return False
+    _searching.add(book["id"])
+    try:
+        return await _auto_download_book(book, settings)
+    finally:
+        _searching.discard(book["id"])
+
+
+async def _auto_download_book(book, settings):
     title = book.get("title")
     try:
         results, _ = await book_search.find_releases(book, settings, mode="auto")
