@@ -5,6 +5,26 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+class Refused(str):
+    """Why a torrent wasn't added. False as a truth value, so a send's result reads like a
+    bool, and still says what went wrong."""
+    def __bool__(self):
+        return False
+
+
+def _error_text(e):
+    """An exception as words: httpx's timeouts have no message of their own."""
+    return str(e) or {"ReadTimeout": "no answer in time", "ConnectTimeout": "couldn't connect in time"}.get(
+        type(e).__name__, type(e).__name__)
+
+
+def _refusal(response):
+    text = " ".join(response.text.split())[:200]
+    if text == "Fails.":
+        return Refused('qBittorrent answered "Fails." (the torrent or magnet link is invalid, or it was refused)')
+    return Refused(f"qBittorrent answered {response.status_code}{': ' + text if text else ''}")
+
+
 def _succeeded(response) -> bool:
     """qBittorrent 4.x answers 200 "Ok.", newer versions 204 with no body; failures are
     200 "Fails." or a 4xx status."""
@@ -32,16 +52,17 @@ async def login_qbittorrent(host: str, username: str, password: str) -> Optional
             await client.aclose()
             return None
     except Exception as e:
-        logger.error(f"Error connecting to qBittorrent at {host}: {e}")
+        logger.error(f"Error connecting to qBittorrent at {host}: {_error_text(e)}")
         await client.aclose()
         return None
 
-async def send_to_qbittorrent(host: str, username: str, password: str, magnet_url: str, title: str = "") -> bool:
-    """Sends a magnet link to qBittorrent with a tag for tracking."""
+async def send_to_qbittorrent(host: str, username: str, password: str, magnet_url: str, title: str = ""):
+    """Sends a magnet link to qBittorrent with a tag for tracking. True, or a Refused
+    saying why not."""
     client = await login_qbittorrent(host, username, password)
     if not client:
-        return False
-        
+        return Refused("couldn't connect or log in to qBittorrent")
+
     try:
         data = {
             "urls": magnet_url,
@@ -51,25 +72,27 @@ async def send_to_qbittorrent(host: str, username: str, password: str, magnet_ur
             safe_title = title.replace(",", "").strip()
             data["tags"] = f"bayarr-{safe_title}"
             
-        response = await client.post("/api/v2/torrents/add", data=data, timeout=5.0)
-        
+        # qBittorrent can take a while to answer when it's busy (e.g. deleting files)
+        response = await client.post("/api/v2/torrents/add", data=data, timeout=15.0)
+
         if _succeeded(response):
             logger.info("Successfully added torrent to qBittorrent")
             return True
         else:
             logger.error(f"qBittorrent add torrent failed: {response.status_code} - {response.text}")
-            return False
+            return _refusal(response)
     except Exception as e:
-        logger.error(f"Error adding torrent to qBittorrent: {e}")
-        return False
+        logger.error(f"Error adding torrent to qBittorrent: {_error_text(e)}")
+        return Refused(f"adding it failed: {_error_text(e)}")
     finally:
         await client.aclose()
 
-async def send_torrent_file(host: str, username: str, password: str, torrent: bytes, title: str = "") -> bool:
-    """Uploads a .torrent file to qBittorrent (for indexers that don't give magnet links)."""
+async def send_torrent_file(host: str, username: str, password: str, torrent: bytes, title: str = ""):
+    """Uploads a .torrent file to qBittorrent (for indexers that don't give magnet links).
+    True, or a Refused saying why not."""
     client = await login_qbittorrent(host, username, password)
     if not client:
-        return False
+        return Refused("couldn't connect or log in to qBittorrent")
     try:
         data = {"category": "audiobooks"}
         if title:
@@ -80,10 +103,10 @@ async def send_torrent_file(host: str, username: str, password: str, torrent: by
             logger.info("Successfully added torrent file to qBittorrent")
             return True
         logger.error(f"qBittorrent add torrent failed: {response.status_code} - {response.text}")
-        return False
+        return _refusal(response)
     except Exception as e:
-        logger.error(f"Error adding torrent to qBittorrent: {e}")
-        return False
+        logger.error(f"Error adding torrent to qBittorrent: {_error_text(e)}")
+        return Refused(f"adding it failed: {_error_text(e)}")
     finally:
         await client.aclose()
 
