@@ -14,8 +14,9 @@ from app.library import format_sequence, part_count, part_number
 
 logger = logging.getLogger(__name__)
 
-# Covers are only fetched from Amazon's image CDN (where Audible's cover URLs point)
-_COVER_HOSTS = ("media-amazon.com", "ssl-images-amazon.com")
+# Covers are only fetched from Amazon's image CDN (where Audible's cover URLs point) and
+# GraphicAudio's store (its releases' covers)
+_COVER_HOSTS = ("media-amazon.com", "ssl-images-amazon.com", "graphicaudio.net")
 
 
 def abs_series(book):
@@ -67,7 +68,7 @@ def build_metadata(book):
         "publishedDate": release if len(release) == 10 else None,
         "publisher": book.get("publisher") or None,
         "description": book.get("description") or None,
-        "isbn": None,
+        "isbn": book.get("isbn") or None,
         "asin": book.get("asin") or None,
         "language": book.get("language") or None,
         "explicit": False,
@@ -193,8 +194,8 @@ def start_fix_series_order(books, settings):
 
 async def download_cover(image_url, folder):
     """Saves Audible's cover (at 1000px) as cover.jpg. Returns the file name or ''."""
-    host = urlparse(image_url or "").hostname or ""
-    if not image_url.startswith("https://") or not host.endswith(_COVER_HOSTS):
+    host = (urlparse(image_url or "").hostname or "").lower()
+    if not (image_url or "").startswith("https://") or not any(host == h or host.endswith("." + h) for h in _COVER_HOSTS):
         return ""
     large = re.sub(r"\._SL\d+_\.", "._SL1000_.", image_url)
     try:
@@ -203,6 +204,9 @@ async def download_cover(image_url, folder):
             res.raise_for_status()
     except Exception as e:
         logger.warning(f"Could not download cover {large}: {e}")
+        return ""
+    if not res.headers.get("content-type", "").startswith("image/") or not res.content:
+        logger.warning(f"Could not download cover {large}: not an image")
         return ""
     with open(os.path.join(folder, "cover.jpg"), "wb") as f:
         f.write(res.content)
