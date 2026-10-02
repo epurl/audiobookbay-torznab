@@ -378,6 +378,17 @@ async function fetchSettings() {
         document.getElementById('setQbtUser').value = appSettings.qbt_user || "admin";
         document.getElementById('setQbtPass').value = "";
         document.getElementById('setQbtPass').placeholder = appSettings.qbt_pass_set ? "Unchanged" : "";
+        document.getElementById('setUsenetClient').value = appSettings.usenet_client || "";
+        document.getElementById('setUsenetHost').value = appSettings.usenet_host || "";
+        document.getElementById('setUsenetUser').value = appSettings.usenet_user || "";
+        document.getElementById('setUsenetPass').value = "";
+        document.getElementById('setUsenetPass').placeholder = appSettings.usenet_pass_set ? "Unchanged" : "";
+        document.getElementById('setUsenetApikey').value = "";
+        document.getElementById('setUsenetApikey').placeholder = appSettings.usenet_apikey_set ? "Unchanged" : "";
+        document.getElementById('setUsenetCategory').value = appSettings.usenet_category || "audiobooks";
+        document.getElementById('setUsenetFolder').value = appSettings.usenet_downloads_folder || "";
+        document.getElementById('setUsenetRemove').checked = appSettings.usenet_remove_completed ?? true;
+        showUsenetFields();
         document.getElementById('setFormatPref').value = appSettings.format_preference || "prefer_m4b";
         document.getElementById('setEditionPref').value = appSettings.edition_preference === 'dramatized' ? 'abridged' : (appSettings.edition_preference || "narrated");
         document.getElementById('setAuthUser').value = appSettings.auth_username || "";
@@ -446,7 +457,10 @@ function setupSettings() {
             abs_token: document.getElementById('setAbsToken').value,
             abs_library_id: document.getElementById('setAbsLibrary').value,
             qbt_user: document.getElementById('setQbtUser').value,
-            qbt_pass: document.getElementById('setQbtPass').value
+            qbt_pass: document.getElementById('setQbtPass').value,
+            ...usenetFormValues(),
+            usenet_downloads_folder: document.getElementById('setUsenetFolder').value.trim(),
+            usenet_remove_completed: document.getElementById('setUsenetRemove').checked,
         };
 
         try {
@@ -458,6 +472,8 @@ function setupSettings() {
             if (!res.ok) throw new Error(`Save failed (${res.status})`);
             if (newSettings.abs_token) appSettings.abs_token_set = true;
             delete newSettings.qbt_pass;
+            delete newSettings.usenet_pass;
+            delete newSettings.usenet_apikey;
             delete newSettings.abs_token;
             delete newSettings.abb_cookie;
             delete newSettings.abb_cookie_clear;
@@ -483,6 +499,18 @@ function setupSettings() {
         // Indexers are saved on their own, not with the save bar
         section.addEventListener('input', e => { if (!e.target.closest('.no-dirty')) markSettingsDirty(); });
         section.addEventListener('change', e => { if (!e.target.closest('.no-dirty')) markSettingsDirty(); });
+    });
+
+    document.getElementById('setUsenetClient').addEventListener('change', showUsenetFields);
+    document.getElementById('usenetTestBtn').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        const status = document.getElementById('usenetStatus');
+        btn.disabled = true;
+        status.textContent = 'Connecting...';
+        const { ok, data } = await postJSON('/api/usenet/test', usenetFormValues());
+        btn.disabled = false;
+        status.textContent = ok ? `${data.message}.` : (data.detail || 'Connection failed');
+        status.className = `settings-hint ${ok ? 'ok-text' : 'error-text'}`;
     });
 
     document.getElementById('qbtTestBtn').addEventListener('click', async (e) => {
@@ -935,8 +963,8 @@ async function openBookModal(bookId) {
     // Folders with several audio files might hold several books (a collection)
     document.getElementById('splitBookBtn').hidden = !(book.path && (book.file_count || 0) > 1);
     setActionStatus(document.getElementById('bookStatusMsg'), '');
-    document.getElementById('searchNowBtn').disabled = !appSettings.qbt_enabled;
-    document.getElementById('searchNowBtn').title = appSettings.qbt_enabled ? 'Search AudiobookBay and grab the best match' : 'Enable qBittorrent in Settings first';
+    document.getElementById('searchNowBtn').disabled = !downloadsEnabled();
+    document.getElementById('searchNowBtn').title = downloadsEnabled() ? 'Search your indexers and AudiobookBay, and grab the best match' : 'Set up a download client in Settings first';
 
     const pathEl = document.getElementById('bookPath');
     const filesEl = document.getElementById('bookFiles');
@@ -2152,8 +2180,8 @@ async function renderActivity() {
     }
 
     const notice = document.getElementById('queueNotice');
-    notice.textContent = !appSettings.qbt_enabled ? 'qBittorrent is not enabled in Settings, so live progress is unavailable.'
-        : (!queueData.client_reachable ? "Can't reach qBittorrent; showing the last known state." : '');
+    notice.textContent = !downloadsEnabled() ? 'No download client is set up in Settings, so live progress is unavailable.'
+        : (!queueData.client_reachable ? "Can't reach the download client; showing the last known state." : '');
 
     const qRows = document.getElementById('queueRows');
     qRows.innerHTML = queueData.queue.map(q => {
@@ -2481,10 +2509,11 @@ function renderABBResults() {
             </a>
         `;
 
-        if (appSettings.qbt_enabled) {
+        const isUsenet = res.protocol === 'usenet';
+        if (isUsenet ? !!(appSettings.usenet_client && appSettings.usenet_host) : appSettings.qbt_enabled) {
             actionsHtml = `
                 <div style="display: flex; gap: 8px;">
-                    <button class="download-icon-btn send-to-client-btn" data-url="${esc(res.link)}" data-index="${displayData.indexOf(res)}" title="Send to qBittorrent">
+                    <button class="download-icon-btn send-to-client-btn" data-url="${esc(res.link)}" data-index="${displayData.indexOf(res)}" title="Send to ${isUsenet ? (appSettings.usenet_client === 'sabnzbd' ? 'SABnzbd' : 'NZBGet') : 'qBittorrent'}">
                         <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"></path></svg>
                     </button>
                     ${actionsHtml}
@@ -2522,7 +2551,7 @@ function renderABBResults() {
             const picked = displayData[Number(button.dataset.index)] || {};
             const release = { magnet_url: picked.magnet_url, download_url: picked.download_url, link: picked.link,
                               title: picked.title, raw_title: picked.raw_title, format: picked.format, size_str: picked.size_str,
-                              source: picked.source };
+                              source: picked.source, protocol: picked.protocol, release_key: picked.release_key };
 
             button.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px;"></div>';
             button.disabled = true;
@@ -3278,7 +3307,7 @@ function drawIndexers() {
     const box = document.getElementById('indexerList');
     box.innerHTML = indexerList.length ? indexerList.map(ix => `<div class="indexer-row" data-id="${esc(ix.id)}">
         <label class="check-label" title="Search this indexer"><input type="checkbox" class="ix-enabled" ${ix.enabled ? 'checked' : ''}></label>
-        <div class="indexer-info"><b>${esc(ix.name)}</b><div class="muted">${esc(ix.url)} · categories ${esc(ix.categories)}${ix.api_key_set ? ' · API key saved' : ''}</div></div>
+        <div class="indexer-info"><b>${esc(ix.name)}</b><div class="muted">${ix.protocol === 'usenet' ? 'Newznab (Usenet)' : 'Torznab'} · ${esc(ix.url)} · categories ${esc(ix.categories)}${ix.api_key_set ? ' · API key saved' : ''}</div></div>
         <button type="button" class="link-btn ix-edit">Edit</button>
         <button type="button" class="link-btn ix-remove">Remove</button>
     </div>`).join('') : '<p class="muted">No indexers yet.</p>';
@@ -3306,6 +3335,7 @@ function fillIndexerForm(ix) {
     document.getElementById('ixKey').value = '';
     document.getElementById('ixKey').placeholder = ix && ix.api_key_set ? 'Unchanged' : '';
     document.getElementById('ixCats').value = ix ? ix.categories : '';
+    document.getElementById('ixProtocol').value = ix && ix.protocol === 'usenet' ? 'usenet' : 'torrent';
     document.getElementById('ixSaveBtn').textContent = ix ? 'Save Indexer' : 'Add Indexer';
     document.getElementById('ixCancelBtn').hidden = !ix;
     setActionStatus(document.getElementById('ixStatus'), '');
@@ -3318,6 +3348,7 @@ function indexerFormValues() {
         url: document.getElementById('ixUrl').value.trim(),
         api_key: document.getElementById('ixKey').value.trim(),
         categories: document.getElementById('ixCats').value.trim(),
+        protocol: document.getElementById('ixProtocol').value,
         enabled: true,
     };
 }
@@ -3419,6 +3450,30 @@ async function runAbsSeriesOrder(e) {
         if (st.abs_missing) parts.push(`${st.abs_missing} not found there`);
     }
     setActionStatus(status, parts.join(' · ') + (st.error ? ` · ${st.error}` : ''), st.error ? 'error' : 'ok');
+}
+
+// Settings > Download Client > Usenet: the fields for the chosen client
+function usenetFormValues() {
+    return {
+        usenet_client: document.getElementById('setUsenetClient').value,
+        usenet_host: document.getElementById('setUsenetHost').value.trim(),
+        usenet_user: document.getElementById('setUsenetUser').value.trim(),
+        usenet_pass: document.getElementById('setUsenetPass').value,
+        usenet_apikey: document.getElementById('setUsenetApikey').value.trim(),
+        usenet_category: document.getElementById('setUsenetCategory').value.trim() || 'audiobooks',
+    };
+}
+
+function showUsenetFields() {
+    const kind = document.getElementById('setUsenetClient').value;
+    document.querySelector('.usenet-fields').hidden = !kind;
+    document.querySelector('.usenet-nzbget').hidden = kind !== 'nzbget';
+    document.querySelector('.usenet-sabnzbd').hidden = kind !== 'sabnzbd';
+}
+
+// A download client is set up: qBittorrent, or NZBGet / SABnzbd
+function downloadsEnabled() {
+    return !!(appSettings.qbt_enabled || (appSettings.usenet_client && appSettings.usenet_host));
 }
 
 function setupWatchedLists() {

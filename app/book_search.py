@@ -95,7 +95,10 @@ async def find_releases(book, settings, mode="auto"):
 
     queries = build_queries(book)
     # Torznab indexers (e.g. Prowlarr): their own search, with the two most specific queries
-    sources = [i for i in indexers.get_all() if i.get("enabled", True)]
+    # Each indexer needs its kind of download client: Newznab ones a Usenet client
+    from app import usenet
+    sources = [i for i in indexers.get_all() if i.get("enabled", True)
+               and (indexers.protocol(i) == "torrent" or usenet.client(settings))]
     if sources:
         for query, _ in queries[:2]:
             batches = await asyncio.gather(*(indexers.search(i, query) for i in sources), return_exceptions=True)

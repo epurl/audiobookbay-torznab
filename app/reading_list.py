@@ -214,7 +214,7 @@ async def check_list(list_id):
         added = db.add_to_library({**match, "description": match.get("description", "")})
         if entry["monitor"] == "Unmonitored" and added.get("status") in ("Monitored", "Unreleased"):
             db.update_library_status(added["id"], "Unmonitored")
-        elif added.get("status") == "Monitored" and settings.get("qbt_enabled"):
+        elif added.get("status") == "Monitored" and (settings.get("qbt_enabled") or settings.get("usenet_client")):
             schedule_search(db.get_book(added["id"]))
         db.add_history("list", added, f"Added from {entry['name']}")
         result["added"] += 1

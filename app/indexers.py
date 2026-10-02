@@ -1,6 +1,7 @@
-"""Torznab indexers (e.g. Prowlarr, Jackett) searched alongside AudiobookBay, and getting
-a release's download: a magnet link, or a .torrent file (whose info hash is read so the
-download can be tracked)."""
+"""Indexers (e.g. from Prowlarr or Jackett) searched alongside AudiobookBay: Torznab ones
+for torrents and Newznab ones for Usenet (same feed format). And getting a release's
+download: a magnet link, a .torrent file (whose info hash is read so the download can be
+tracked), or an NZB for the Usenet client."""
 import email.utils
 import hashlib
 import logging
@@ -16,6 +17,7 @@ from app import db, scraper
 logger = logging.getLogger(__name__)
 
 TORZNAB_NS = "{http://torznab.com/schemas/2015/feed}"
+NEWZNAB_NS = "{http://www.newznab.com/DTD/2010/feeds/attributes/}"
 AUDIOBOOK_CATEGORIES = "3030"
 
 
@@ -44,6 +46,8 @@ def save(indexer):
         "api_key": (indexer.get("api_key") or "").strip() or (existing or {}).get("api_key", ""),
         "categories": re.sub(r"[^\d,]", "", indexer.get("categories") or AUDIOBOOK_CATEGORIES) or AUDIOBOOK_CATEGORIES,
         "enabled": bool(indexer.get("enabled", True)),
+        # Torznab (torrents) or Newznab (Usenet)
+        "protocol": "usenet" if indexer.get("protocol") == "usenet" else "torrent",
     }
     items = [entry if i.get("id") == entry["id"] else i for i in items] if existing else items + [entry]
     db.set_setting("indexers", items)
@@ -70,14 +74,30 @@ def _guess(pattern, text):
     return m.group(1) if m else ""
 
 
+def protocol(indexer):
+    return "usenet" if indexer.get("protocol") == "usenet" else "torrent"
+
+
+def release_key(result):
+    """What identifies a release (for rejecting it): a torrent's info hash, or for Usenet
+    its NZB link."""
+    if result.get("protocol") == "usenet":
+        ident = result.get("download_url") or result.get("link") or result.get("raw_title") or ""
+        return "nzb:" + hashlib.sha1(ident.encode("utf-8", "replace")).hexdigest()[:20]
+    return db.extract_infohash(result.get("magnet_url")) or ""
+
+
 def _item(item, indexer):
+    # Newznab uses the same attributes under its own namespace
     attrs = {a.get("name"): a.get("value") for a in item.findall(f"{TORZNAB_NS}attr")}
+    attrs.update({a.get("name"): a.get("value") for a in item.findall(f"{NEWZNAB_NS}attr")})
+    usenet = protocol(indexer) == "usenet"
     title = (item.findtext("title") or "").strip()
     enclosure = item.find("enclosure")
     download = (enclosure.get("url") if enclosure is not None else "") or item.findtext("link") or ""
     size = int(item.findtext("size") or (enclosure.get("length") if enclosure is not None else 0) or attrs.get("size") or 0)
-    magnet = attrs.get("magneturl") or (download if download.startswith("magnet:") else "")
-    if not magnet and attrs.get("infohash"):
+    magnet = "" if usenet else attrs.get("magneturl") or (download if download.startswith("magnet:") else "")
+    if not usenet and not magnet and attrs.get("infohash"):
         magnet = f"magnet:?xt=urn:btih:{attrs['infohash']}&dn={urllib.parse.quote(title)}"
     posted = ""
     try:
@@ -94,8 +114,8 @@ def _item(item, indexer):
     parsed_title = re.sub(r"\s*\b\d{2,3}\s*k(?:bps)?\b", "", parsed_title, flags=re.IGNORECASE).strip()
     fmt = _guess(r"\b(m4b|mp3|m4a|flac|aac|opus)\b", title).upper()
     bitrate = _guess(r"\b(\d{2,3})\s*k(?:bps)?\b", title)
-    seeders = attrs.get("seeders")
-    return {
+    seeders = None if usenet else attrs.get("seeders")
+    result = {
         "title": attrs.get("booktitle") or parsed_title,
         "author": known or author,
         "raw_title": title,
@@ -113,7 +133,10 @@ def _item(item, indexer):
         "categories": [],
         "keywords": [],
         "source": indexer.get("name") or "Indexer",
+        "protocol": "usenet" if usenet else "torrent",
     }
+    result["release_key"] = release_key(result)
+    return result
 
 
 async def search(indexer, query, limit=50):
@@ -210,6 +233,18 @@ async def fetch_download(url):
             torrent_infohash(res.content)  # Checks that it really is a torrent
             return "torrent", res.content
     raise ValueError("Too many redirects")
+
+
+async def fetch_nzb(url):
+    """An NZB from one of your indexers (checked to really be one)."""
+    if not _allowed(url):
+        raise ValueError("That download isn't from one of your indexers.")
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        res = await client.get(url, timeout=30.0)
+        res.raise_for_status()
+    if b"<nzb" not in res.content[:4000].lower():
+        raise ValueError("The indexer didn't return an NZB.")
+    return res.content
 
 
 async def get_download(result):

@@ -160,7 +160,7 @@ def evaluate(book, result, settings, blocklist=None):
     narrator_names = _names(book.get("narrators"))
 
     # --- Blocklist ---
-    result_hash = extract_infohash(result.get("magnet_url"))
+    result_hash = extract_infohash(result.get("magnet_url")) or result.get("release_key")  # Usenet: its NZB
     if result_hash and result_hash in (blocklist if blocklist is not None else book.get("blocklist") or []):
         problems.append("You rejected this release before")
         score -= 50

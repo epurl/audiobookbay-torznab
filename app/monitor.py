@@ -3,7 +3,7 @@ import logging
 import datetime
 import os
 import shutil
-from . import archives, audible, audiobookshelf, book_search, convert, db, editions, indexers, release_match, scraper
+from . import archives, audible, audiobookshelf, book_search, convert, db, editions, indexers, release_match, scraper, usenet
 from .library import (audio_files, build_folder_name, describe_files, find_match, plan_import_files,
                       read_abs_metadata, series_entries, series_key, titles_match, total_duration_min)
 from .qbittorrent import delete_torrents, get_completed_torrents, get_torrents, send_to_qbittorrent, send_torrent_file
@@ -49,6 +49,8 @@ async def _import_loop():
                 await import_completed_downloads(settings)
                 from app import seeding  # Torrents of imported books: removed once they've seeded enough
                 await seeding.check(settings)
+            if usenet.client(settings):
+                await check_usenet_downloads(settings)
         except Exception as e:
             logger.error(f"Error in import loop: {e}", exc_info=True)
         await asyncio.sleep(IMPORT_INTERVAL)
@@ -104,6 +106,11 @@ def _run_in_background(coro):
     task.add_done_callback(_background_tasks.discard)
 
 
+def downloads_enabled(settings):
+    """A download client is set up: qBittorrent, or a Usenet client."""
+    return bool(settings.get("qbt_enabled") or usenet.client(settings))
+
+
 def schedule_search(book):
     """Searches for a book in the background, e.g. right after it's added to the library."""
     schedule_searches([book])
@@ -116,7 +123,7 @@ def schedule_searches(books):
         for book in books:
             try:
                 settings = db.get_settings()
-                if not settings.get("qbt_enabled"):
+                if not downloads_enabled(settings):
                     return
                 current = db.get_book(book["id"])
                 if current and current.get("status") == "Monitored":
@@ -242,7 +249,7 @@ async def check_library():
 
         # 2. Search for Monitored books
         if status == "Monitored":
-            if not settings.get("qbt_enabled"):
+            if not downloads_enabled(settings):
                 continue
             if scraper.is_paused():
                 continue  # AudiobookBay isn't responding; try again next round
@@ -278,6 +285,8 @@ async def auto_download_book(book, settings):
         return False
 
     logger.info(f"Found match for {title}: {book_search.describe(best_match)}")
+    if best_match.get("protocol") == "usenet":
+        return await grab_usenet(book, best_match, settings)
     try:
         magnet, torrent = await indexers.get_download(best_match)
     except Exception as e:
@@ -308,11 +317,33 @@ async def grab(book, magnet, settings, release=None, torrent=None):
     logger.info(f"Sent {title} to qBittorrent")
     release_name = (release or {}).get("raw_title") or (release or {}).get("title", "")
     download_hash = indexers.torrent_infohash(torrent) if torrent else db.extract_infohash(magnet)
-    db.update_book(book["id"], status="Downloading", download_hash=download_hash,
+    db.update_book(book["id"], status="Downloading", download_hash=download_hash, release_key=download_hash,
                    release_title=release_name, review_reason="", skip_verify=False)
     details = ", ".join(x for x in (release_name, (release or {}).get("format"), (release or {}).get("size_str"),
                                     (release or {}).get("source")) if x and x != "Unknown")
     db.add_history("grabbed", book, f"Sent to qBittorrent{': ' + details if details else ''}")
+    return True
+
+
+async def grab_usenet(book, release, settings):
+    """Fetches a Usenet release's NZB from its indexer and hands it to NZBGet or SABnzbd."""
+    title = book.get("title")
+    name = release.get("raw_title") or release.get("title") or title
+    try:
+        nzb = await indexers.fetch_nzb(release.get("download_url") or "")
+        download_id = await usenet.add(settings, nzb, name)
+    except Exception as e:
+        logger.error(f"Couldn't send {title} to the Usenet client: {e}")
+        db.add_history("failed", book, f"Could not send the release to the Usenet client: {e}")
+        return False
+    client_name = "NZBGet" if download_id.startswith("nzbget:") else "SABnzbd"
+    logger.info(f"Sent {title} to {client_name}")
+    db.update_book(book["id"], status="Downloading", download_hash=download_id,
+                   release_key=release.get("release_key") or indexers.release_key(release),
+                   release_title=name, review_reason="", skip_verify=False)
+    details = ", ".join(x for x in (name, release.get("format"), release.get("size_str"), release.get("source"))
+                        if x and x != "Unknown")
+    db.add_history("grabbed", book, f"Sent to {client_name}{': ' + details if details else ''}")
     return True
 
 
@@ -358,7 +389,8 @@ STALLED_STATES = {"stalledDL", "metaDL", "error", "missingFiles"}
 async def check_active_downloads(settings):
     """Watches downloads in progress: one with no progress for too long is rejected and
     the next-best release is grabbed; one removed from qBittorrent goes back to Monitored."""
-    downloading = [b for b in db.get_library() if b.get("status") == "Downloading" and b.get("download_hash")]
+    downloading = [b for b in db.get_library() if b.get("status") == "Downloading" and b.get("download_hash")
+                   and not usenet.is_usenet_id(b["download_hash"])]
     if not downloading:
         return
     creds = (settings.get("qbt_host"), settings.get("qbt_user"), settings.get("qbt_pass"))
@@ -392,7 +424,7 @@ async def check_active_downloads(settings):
         logger.warning(f"Giving up on {book['title']}: stalled for {stall_hours}h at {progress}%")
         if settings.get("remove_stalled", True):
             await delete_torrents(*creds, [book["download_hash"]], delete_files=True)
-        blocklist = list(dict.fromkeys((book.get("blocklist") or []) + [book["download_hash"]]))
+        blocklist = list(dict.fromkeys((book.get("blocklist") or []) + [book.get("release_key") or book["download_hash"]]))
         db.update_book(book["id"], status="Monitored", download_hash="", stalled_since="", blocklist=blocklist)
         db.add_history("stalled", book, f"No progress for {stall_hours} hours (stuck at {progress}%, "
                                         f"state {torrent.get('state')}); rejected, searching for another release")
@@ -494,6 +526,81 @@ async def import_completed_downloads(settings):
 
 
 UNPACK_FOLDER = ".bayarr-unpack"  # In the Root Folder; library scans skip folders starting with "."
+
+
+def _map_usenet_path(path, settings):
+    """The Usenet client's path for a finished job, as Bayarr sees it: the job's folder inside
+    Settings > Usenet > Completed Downloads Folder when that's set."""
+    folder = settings.get("usenet_downloads_folder")
+    if not folder or not path:
+        return path
+    return os.path.join(folder, os.path.basename(path.rstrip("/\\")))
+
+
+async def check_usenet_downloads(settings):
+    """Follows Usenet jobs: a finished one is imported and its download deleted (nothing to
+    seed); a failed one is rejected and the next-best release searched for; one removed
+    from the client puts the book back to Monitored."""
+    books = [b for b in db.get_library() if b.get("status") in ("Downloading", "Downloaded")
+             and usenet.is_usenet_id(b.get("download_hash"))]
+    if not books:
+        return
+    states = await usenet.status(settings, [b["download_hash"] for b in books])
+    if states is None:
+        return  # The client can't be reached: don't draw conclusions
+    root_folder = settings.get("root_folder")
+    for book in books:
+        state = states.get(book["download_hash"]) or {}
+        title = book.get("title", "")
+        if state.get("state") == "missing":
+            logger.info(f"{title} was removed from the Usenet client; back to Monitored")
+            db.update_book(book["id"], status="Monitored", download_hash="")
+            db.add_history("failed", book, "The download was removed from the Usenet client; the book is Monitored again")
+        elif state.get("state") == "failed":
+            logger.warning(f"Usenet download of {title} failed: {state.get('message')}")
+            blocklist = list(dict.fromkeys((book.get("blocklist") or []) + [book.get("release_key") or book["download_hash"]]))
+            db.update_book(book["id"], status="Monitored", download_hash="", blocklist=blocklist)
+            db.add_history("failed", book, f"{state.get('message') or 'The download failed'}; rejected, searching for another release")
+            await usenet.forget(settings, book["download_hash"])
+            schedule_search(db.get_book(book["id"]))
+        elif state.get("state") == "completed":
+            if book.get("status") == "Downloading":
+                logger.info(f"Download finished for {title}")
+                db.update_library_status(book["id"], "Downloaded")
+                book["status"] = "Downloaded"
+            if not root_folder or not os.path.isdir(root_folder):
+                continue
+            content = _map_usenet_path(state.get("path"), settings)
+            if not content or not os.path.exists(content):
+                logger.warning(f"Finished Usenet download not found: {content}")
+                continue
+            staging = os.path.join(root_folder, UNPACK_FOLDER, book["id"])
+            try:
+                imported = await _import_download(book, content, staging, settings, root_folder)
+            finally:
+                await asyncio.to_thread(shutil.rmtree, staging, True)
+            if not imported:
+                continue
+            # Imported (copied): the download isn't needed any more
+            db.update_book(book["id"], download_hash="")
+            if settings.get("usenet_remove_completed", True) and not _inside_library(content, root_folder):
+                await asyncio.to_thread(_remove_download, content)
+            await usenet.forget(settings, book["download_hash"])
+            error = await audiobookshelf.scan_library(settings)
+            if error:
+                db.add_history("failed", book, f"Audiobookshelf scan failed: {error}")
+
+
+def _inside_library(path, root_folder):
+    a, b = os.path.normcase(os.path.abspath(path)), os.path.normcase(os.path.abspath(root_folder))
+    return a == b or a.startswith(b.rstrip(os.sep) + os.sep) or b.startswith(a.rstrip(os.sep) + os.sep)
+
+
+def _remove_download(path):
+    try:
+        shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
+    except OSError as e:
+        logger.warning(f"Couldn't delete the finished download {path}: {e}")
 
 
 def _hold_for_review(book, reason):

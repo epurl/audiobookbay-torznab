@@ -46,6 +46,15 @@ DEFAULT_SETTINGS = {
     "seed_ratio": 0,             # ... at this ratio (0 = no ratio limit)
     "seed_days": 0,              # ... or after this many days of seeding (0 = no time limit)
     "seed_delete_files": True,   # ... with their downloaded files (the library has its own copy)
+    # Usenet (NZBGet or SABnzbd), used for releases from Newznab indexers
+    "usenet_client": "",            # "" | nzbget | sabnzbd
+    "usenet_host": "",
+    "usenet_user": "",
+    "usenet_pass": "",              # NZBGet
+    "usenet_apikey": "",            # SABnzbd
+    "usenet_category": "audiobooks",
+    "usenet_downloads_folder": "",  # Bayarr's path for the client's finished downloads (when it differs)
+    "usenet_remove_completed": True,  # Delete a download once it's imported (nothing to seed)
     "verify_runtime": True,
     "runtime_tolerance": 10,  # percent
     "write_metadata": True,
@@ -78,6 +87,7 @@ EDITABLE_SETTINGS = {
     "language", "auto_match_narrator", "format_preference", "qbt_enabled",
     "qbt_host", "qbt_user", "root_folder", "downloads_folder", "naming_format",
     "rename_files", "stall_hours", "remove_stalled", "seed_cleanup", "seed_ratio", "seed_days", "seed_delete_files",
+    "usenet_client", "usenet_host", "usenet_user", "usenet_category", "usenet_downloads_folder", "usenet_remove_completed",
     "verify_runtime", "runtime_tolerance", "write_metadata", "edition_preference",
     "auto_convert_m4b", "delete_originals_after_convert",
     "pref_narrators", "avoid_narrators", "preferred_words", "blocked_words", "blocked_uploaders",
@@ -85,7 +95,7 @@ EDITABLE_SETTINGS = {
     "abs_url", "abs_library_id",
 }
 # Secrets: never sent to the browser, and a blank value from the UI keeps the stored one
-SECRET_SETTINGS = {"qbt_pass", "abs_token", "abb_cookie"}
+SECRET_SETTINGS = {"qbt_pass", "abs_token", "abb_cookie", "usenet_pass", "usenet_apikey"}
 
 # Monitored books are searched for; Unmonitored and Missing ones are left alone.
 # Needs Review: the download finished but didn't pass the checks, so it wasn't imported.

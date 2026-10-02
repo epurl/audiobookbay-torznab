@@ -44,7 +44,9 @@ def _remove_in(torrent, settings):
 
 
 def _watched():
-    return [b for b in db.get_library() if b.get("status") == "Imported" and b.get("download_hash")]
+    from app.usenet import is_usenet_id  # Usenet downloads don't seed
+    return [b for b in db.get_library() if b.get("status") == "Imported" and b.get("download_hash")
+            and not is_usenet_id(b["download_hash"])]
 
 
 def _safe_to_delete_files(book, torrent, settings):

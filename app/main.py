@@ -13,7 +13,9 @@ from fastapi.staticfiles import StaticFiles
 from app import (audible, audiobookshelf, auth, authors, book_search, convert, db, editions, health, indexers, library,
                  manual_import, organize, reading_list, release_calendar, scraper, seeding, series_index, splitter,
                  stats)
-from app.monitor import (auto_download_book, classify_editions, find_missing_books, grab, match_job, run_monitor_loop,
+from app import usenet
+from app.monitor import (auto_download_book, classify_editions, downloads_enabled, find_missing_books, grab, grab_usenet,
+                         match_job, run_monitor_loop,
                          schedule_search, schedule_searches, start_match_job, sync_series)
 from app.qbittorrent import get_torrents, test_connection
 from app.scraper import fetch_detail_info, search_audiobooks
@@ -557,8 +559,10 @@ async def api_reject_download(book_id: str):
     book = _get_book_or_404(book_id)
     if not book.get("download_hash"):
         raise HTTPException(status_code=400, detail="This book has no download to reject.")
-    blocklist = list(dict.fromkeys((book.get("blocklist") or []) + [book["download_hash"]]))
+    blocklist = list(dict.fromkeys((book.get("blocklist") or []) + [book.get("release_key") or book["download_hash"]]))
     db.update_book(book_id, status="Monitored", blocklist=blocklist, download_hash="", review_reason="", skip_verify=False)
+    if usenet.is_usenet_id(book["download_hash"]):
+        await usenet.forget(db.get_settings(), book["download_hash"])
     db.add_history("rejected", book, f"Rejected release {book.get('release_title') or book['download_hash']}; searching again")
     schedule_search(db.get_book(book_id))
     return {"success": True}
@@ -575,7 +579,7 @@ async def api_search_book(book_id: str):
     """Searches AudiobookBay for one book now and grabs the best match."""
     book = _get_book_or_404(book_id)
     settings = db.get_settings()
-    if not settings.get("qbt_enabled"):
+    if not downloads_enabled(settings):
         raise HTTPException(status_code=400, detail="Download client is not enabled in settings.")
     grabbed = await auto_download_book(book, settings)
     return {"success": True, "grabbed": bool(grabbed)}
@@ -657,11 +661,20 @@ async def api_queue():
     books = [b for b in db.get_library() if b.get("status") in ("Downloading", "Downloaded", "Needs Review")]
     settings = db.get_settings()
     torrents, reachable = {}, True
-    hashes = [b["download_hash"] for b in books if b.get("download_hash")]
+    hashes = [b["download_hash"] for b in books if b.get("download_hash") and not usenet.is_usenet_id(b["download_hash"])]
     if settings.get("qbt_enabled") and hashes:
         info = await get_torrents(settings.get("qbt_host"), settings.get("qbt_user"), settings.get("qbt_pass"), hashes)
         reachable = info is not None
         torrents = {t["hash"].lower(): t for t in info or []}
+    # Usenet jobs, in the same shape as qBittorrent's torrents
+    jobs = [b["download_hash"] for b in books if usenet.is_usenet_id(b.get("download_hash"))]
+    if jobs:
+        states = await usenet.status(settings, jobs)
+        reachable = reachable and states is not None
+        for job_id, st in (states or {}).items():
+            if st["state"] != "missing":
+                torrents[job_id] = {"progress": st["progress"], "state": st["message"] or st["state"], "size": st["size"],
+                                    "dlspeed": st["speed"], "eta": st["eta"]}
     queue = []
     for b in books:
         t = torrents.get(b.get("download_hash") or "", {})
@@ -1025,7 +1038,8 @@ async def api_send_to_client(request: Request):
     title = book.get("title")
     # The release as Manual Search showed it (AudiobookBay or a Torznab indexer)
     release = {k: v for k, v in (data.get("release") or {}).items()
-               if k in ("magnet_url", "download_url", "link", "title", "raw_title", "format", "size_str", "source")}
+               if k in ("magnet_url", "download_url", "link", "title", "raw_title", "format", "size_str", "source",
+                        "protocol", "release_key")}
     release.setdefault("link", url)
     release.setdefault("title", title)
     if not (release.get("link") or release.get("download_url") or release.get("magnet_url")) or not title:
@@ -1034,6 +1048,13 @@ async def api_send_to_client(request: Request):
         raise HTTPException(status_code=400, detail="Not a magnet link")
 
     settings = db.get_settings()
+    if release.get("protocol") == "usenet":
+        if not usenet.client(settings):
+            raise HTTPException(status_code=400, detail="Set up NZBGet or SABnzbd in Settings > Download Client first.")
+        entry = db.add_to_library(book)
+        if await grab_usenet(entry, release, settings):
+            return {"success": True}
+        raise HTTPException(status_code=500, detail="Failed to send the NZB to the Usenet client (see History)")
     if not settings.get("qbt_enabled"):
         raise HTTPException(status_code=400, detail="Download client is not enabled in settings.")
 
@@ -1054,6 +1075,18 @@ async def api_send_to_client(request: Request):
         return {"success": True}
     else:
         raise HTTPException(status_code=500, detail="Failed to send torrent to qBittorrent")
+
+@app.post("/api/usenet/test")
+async def api_usenet_test(request: Request):
+    """Tests the Usenet client with the form's values (a blank password or API key uses the
+    saved one)."""
+    data = await request.json()
+    saved = db.get_settings()
+    settings = {**saved, **{k: v for k, v in data.items() if k.startswith("usenet_") and (v or k not in db.SECRET_SETTINGS)}}
+    try:
+        return {"success": True, "message": f"Connected to {await usenet.test(settings)}"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/browse")
 async def browse_directory_post(request: Request):

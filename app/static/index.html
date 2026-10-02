@@ -505,6 +505,7 @@
                                 <label>Torznab URL<input type="text" id="ixUrl" class="form-input" placeholder="http://prowlarr:9696/1/api"></label>
                                 <label>API Key<input type="password" id="ixKey" class="form-input" autocomplete="off"></label>
                                 <label>Categories<input type="text" id="ixCats" class="form-input" placeholder="3030"></label>
+                                <label>Type<select id="ixProtocol" class="form-select"><option value="torrent">Torznab (torrents)</option><option value="usenet">Newznab (Usenet)</option></select></label>
                             </div>
                             <div class="inline-actions">
                                 <button type="button" class="primary-btn" id="ixSaveBtn">Add Indexer</button>
@@ -587,6 +588,61 @@
                                 <button type="button" class="secondary-btn browse-btn" data-target="setDownloadsFolder">Browse</button>
                             </div>
                             <p class="settings-hint">Only needed when qBittorrent sees its downloads at a different path than Bayarr (e.g. separate Docker containers). Set it to Bayarr's path for qBittorrent's audiobooks save folder.</p>
+                        </div>
+
+                        <h3>Usenet</h3>
+                        <div class="settings-group">
+                            <label for="setUsenetClient">Usenet Client</label>
+                            <select id="setUsenetClient" class="form-select">
+                                <option value="">None</option>
+                                <option value="nzbget">NZBGet</option>
+                                <option value="sabnzbd">SABnzbd</option>
+                            </select>
+                            <p class="settings-hint">Downloads releases from Newznab indexers (Settings &gt; Indexers). Finished downloads are imported like torrents (copied and renamed), then deleted, since nothing needs to seed.</p>
+                        </div>
+                        <div class="usenet-fields">
+                            <div class="settings-group">
+                                <label for="setUsenetHost">URL</label>
+                                <input type="text" id="setUsenetHost" class="form-input full" placeholder="e.g. http://nzbget:6789 or http://sabnzbd:8080">
+                            </div>
+                            <div class="field-pair usenet-nzbget">
+                                <div class="settings-group">
+                                    <label for="setUsenetUser">Username</label>
+                                    <input type="text" id="setUsenetUser" class="form-input full" autocomplete="off">
+                                </div>
+                                <div class="settings-group">
+                                    <label for="setUsenetPass">Password</label>
+                                    <input type="password" id="setUsenetPass" class="form-input full" autocomplete="off">
+                                </div>
+                            </div>
+                            <div class="settings-group usenet-sabnzbd">
+                                <label for="setUsenetApikey">API Key</label>
+                                <input type="password" id="setUsenetApikey" class="form-input full" autocomplete="off">
+                                <p class="settings-hint">In SABnzbd: Config &gt; General &gt; Security &gt; API Key.</p>
+                            </div>
+                            <div class="settings-group">
+                                <label for="setUsenetCategory">Category</label>
+                                <input type="text" id="setUsenetCategory" class="form-input narrow" placeholder="audiobooks">
+                            </div>
+                            <div class="settings-group">
+                                <button type="button" id="usenetTestBtn" class="secondary-btn">Test Connection</button>
+                                <p class="settings-hint" id="usenetStatus"></p>
+                            </div>
+                            <div class="settings-group">
+                                <label for="setUsenetFolder">Completed Downloads Folder (optional)</label>
+                                <div class="input-row">
+                                    <input type="text" id="setUsenetFolder" class="form-input" placeholder="e.g. /usenet/completed/audiobooks">
+                                    <button type="button" class="secondary-btn browse-btn" data-target="setUsenetFolder">Browse</button>
+                                </div>
+                                <p class="settings-hint">Only needed when the Usenet client sees its downloads at a different path than Bayarr. Set it to Bayarr's path for the category's completed folder.</p>
+                            </div>
+                            <div class="settings-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="setUsenetRemove">
+                                    Delete Downloads Once Imported
+                                </label>
+                                <p class="settings-hint">The library has its own copy. Off: finished downloads stay in the client's folder.</p>
+                            </div>
                         </div>
 
                         <h3>Stalled Downloads</h3>
