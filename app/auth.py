@@ -109,6 +109,8 @@ LOGIN_REMEMBERED = 600          # seconds
 MAX_FAILURES, FAILURE_WINDOW = 10, 300  # wrong logins from one address, and the period
 _good_logins = {}               # digest -> when it stops being remembered
 _failures = {}                  # client address -> times of recent wrong logins
+MAX_TRACKED = 10_000            # addresses with recent wrong logins kept in memory
+_hashing = None                 # At most two password checks at once (each takes ~200 ms of CPU)
 
 
 def _login_key(username, password):
@@ -122,9 +124,13 @@ def _remembered(username, password):
 
 
 async def _check_login(username, password):
+    global _hashing
     if _remembered(username, password):
         return True
-    ok = await asyncio.to_thread(check_credentials, username, password)
+    if _hashing is None:
+        _hashing = asyncio.Semaphore(2)
+    async with _hashing:
+        ok = await asyncio.to_thread(check_credentials, username, password)
     if ok:
         now = time.monotonic()
         for key in [k for k, until in _good_logins.items() if until <= now]:
@@ -237,6 +243,11 @@ async def _authorize(request: Request, call_next):
             if len(_recent_failures(ip)) >= MAX_FAILURES:
                 return _too_many()
             if not await _check_login(*creds):
+                if len(_failures) >= MAX_TRACKED:  # Many addresses: forget the stale ones
+                    for address in list(_failures):
+                        _recent_failures(address)  # Drops it when its failures are old
+                    if len(_failures) >= MAX_TRACKED:
+                        _failures.clear()
                 _failures.setdefault(ip, []).append(time.monotonic())
                 if len(_failures[ip]) == MAX_FAILURES:
                     logger.warning(f"{MAX_FAILURES} wrong logins from {ip}; refusing it for {FAILURE_WINDOW // 60} minutes")

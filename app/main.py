@@ -37,14 +37,22 @@ class _RedactSecrets(logging.Filter):
     _SECRET = re.compile(r"(?<![A-Za-z0-9_])((?:api_?key|passkey|token|password|passwd|pass|key|secret|auth)=)[^&\s'\"<>]+",
                          re.IGNORECASE)
 
+    def _clean(self, value):
+        """The value, or its text with secrets blanked out when it has any."""
+        text = value if isinstance(value, str) else str(value)
+        cleaned = self._SECRET.sub(r"\1REDACTED", text)
+        return value if cleaned == text else cleaned
+
     def filter(self, record):
-        try:
-            message = record.getMessage()
-        except Exception:
-            return True
-        redacted = self._SECRET.sub(r"\1REDACTED", message)
-        if redacted != message:
-            record.msg, record.args = redacted, None
+        # The message and each argument separately: formatters such as uvicorn's access log
+        # unpack the arguments, so they stay a tuple of the same length (and types, unless
+        # an argument held a secret)
+        if isinstance(record.msg, str):
+            record.msg = self._clean(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(self._clean(a) for a in record.args)
+        elif isinstance(record.args, dict):
+            record.args = {k: self._clean(v) for k, v in record.args.items()}
         return True
 
 
