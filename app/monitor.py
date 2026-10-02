@@ -546,7 +546,7 @@ async def import_completed_downloads(settings):
         # there, and the folder removed afterwards; the archive itself keeps seeding
         staging = os.path.join(root_folder, UNPACK_FOLDER, book["id"])
         try:
-            if not await _import_download(book, content_path, staging, settings, root_folder):
+            if not await _safe_import(book, content_path, staging, settings, root_folder):
                 continue
         finally:
             await asyncio.to_thread(shutil.rmtree, staging, True)
@@ -632,7 +632,7 @@ async def check_usenet_downloads(settings):
             _found_again(book)
             staging = os.path.join(root_folder, UNPACK_FOLDER, book["id"])
             try:
-                imported = await _import_download(book, content, staging, settings, root_folder)
+                imported = await _safe_import(book, content, staging, settings, root_folder)
             finally:
                 await asyncio.to_thread(shutil.rmtree, staging, True)
             if not imported:
@@ -679,6 +679,18 @@ def _hold_for_review(book, reason):
     logger.warning(f"Holding {book.get('title', '')} for review: {reason}")
     db.update_book(book["id"], status="Needs Review", review_reason=reason)
     db.add_history("needs_review", book, reason)
+
+
+async def _safe_import(book, content_path, staging, settings, root_folder):
+    """_import_download, but an unexpected error (e.g. a folder Bayarr may not read) holds
+    the book for review with the error, rather than stopping the downloads after it from
+    being imported, every round."""
+    try:
+        return await _import_download(book, content_path, staging, settings, root_folder)
+    except Exception as e:
+        logger.error(f"Importing {book.get('title')} failed: {e}", exc_info=True)
+        _hold_for_review(book, f"Importing failed: {e}")
+        return False
 
 
 async def _import_download(book, content_path, staging, settings, root_folder):
