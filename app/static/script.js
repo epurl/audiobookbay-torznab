@@ -966,7 +966,9 @@ async function openBookModal(bookId) {
     document.getElementById('bookReviewReason').textContent = book.review_reason || '';
     renderBookSeriesLinks(book);
     document.getElementById('matchPanel').hidden = true;
-    document.getElementById('matchBookBtn').textContent = book.asin ? 'Rematch on Audible' : 'Match on Audible';
+    document.getElementById('matchBookBtn').textContent = book.asin || book.ga_url ? 'Rematch on Audible' : 'Match on Audible';
+    // A GraphicAudio release has no ASIN: its store page is what it's matched to
+    document.getElementById('bookAsin').placeholder = book.ga_url ? 'None (matched to a GraphicAudio release)' : '';
     // Folders with several audio files might hold several books (a collection)
     document.getElementById('splitBookBtn').hidden = !(book.path && (book.file_count || 0) > 1);
     setActionStatus(document.getElementById('bookStatusMsg'), '');

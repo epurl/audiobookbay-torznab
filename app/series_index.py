@@ -249,6 +249,10 @@ async def ensure_catalog(asin, force=False):
     if catalog and not force and db.catalog_is_fresh(catalog):
         return catalog
     title, books, alternates = await audible.get_series_books(asin, db.get_settings().get("language", "All"))
+    if not books and not alternates and catalog and (catalog.get("books") or catalog.get("alternates")):
+        # Audible answering with nothing (a hiccup) doesn't wipe the series' list
+        logger.warning(f"Audible listed no books for series {asin}; keeping the saved list")
+        return catalog
     # A dramatized series Audible only lists placeholders for: GraphicAudio's own releases
     from app import graphicaudio
     if graphicaudio.needs_graphicaudio(title, books, alternates):
