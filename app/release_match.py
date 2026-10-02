@@ -177,7 +177,7 @@ def evaluate(book, result, settings, blocklist=None):
     rel_parts, rel_total = release_parts(body)
     # Bracketed tags ("(Part 1 of 3)", "(Dramatized Adaptation)") aren't needed in a release's name
     title = re.sub(r"\s{2,}", " ", re.sub(r"\s*[\(\[][^\)\]]*[\)\]]", " ", _PART_OF.sub(" ", title))).strip() or title
-    if rel_parts:
+    if rel_parts and book_part:  # (A title can have "Part 1" in it: "Part 1: The Beginning")
         body = re.sub(r"\s{2,}", " ", _RELEASE_PART.sub(" ", body)).strip()
     body_words = tokens(body)
     body_set = set(body_words)
