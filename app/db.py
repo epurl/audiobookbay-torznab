@@ -67,6 +67,8 @@ DEFAULT_SETTINGS = {
     "abb_enabled": True,
     "abb_url": "",
     "abb_user_agent": "",
+    "abb_verify_tls": True,  # Check AudiobookBay's certificate
+    "torznab_api_key": "",  # When set, Prowlarr & co. must send it to use /api
     "abb_cookie": "",
     "indexers": [],  # Torznab indexers, managed on their own (see indexers.py)
     # Release preferences (scoring of releases); comma-separated lists, 0 = off
@@ -93,7 +95,7 @@ EDITABLE_SETTINGS = {
     "verify_runtime", "runtime_tolerance", "write_metadata", "edition_preference",
     "auto_convert_m4b", "delete_originals_after_convert",
     "pref_narrators", "avoid_narrators", "preferred_words", "blocked_words", "blocked_uploaders",
-    "min_bitrate", "max_size_gb", "abb_enabled", "abb_url", "abb_user_agent",
+    "min_bitrate", "max_size_gb", "abb_enabled", "abb_url", "abb_user_agent", "abb_verify_tls", "torznab_api_key",
     "abs_url", "abs_library_id",
 }
 # Secrets: never sent to the browser, and a blank value from the UI keeps the stored one

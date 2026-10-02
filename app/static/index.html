@@ -497,9 +497,23 @@
                             <input type="text" id="setAbbUserAgent" class="form-input full" placeholder="Leave empty for the default (Chrome on Windows)">
                             <p class="settings-hint">Cloudflare checks it against the cookie: use the browser the cookie came from (search "what is my user agent").</p>
                         </div>
+                        <div class="settings-group">
+                            <label class="checkbox-label"><input type="checkbox" id="setAbbVerifyTls"> Check the Site's Certificate</label>
+                            <p class="settings-hint">Leave this on: it stops anyone between you and the site from swapping search results or reading your cookie. Turn it off only for a mirror with a broken certificate.</p>
+                        </div>
                         <div class="settings-group inline-actions">
                             <button type="button" class="secondary-btn" id="abbTestBtn">Test</button>
                             <span class="action-status" id="abbTestStatus"></span>
+                        </div>
+
+                        <h3>Bayarr as an Indexer</h3>
+                        <p class="settings-hint">Prowlarr, Listenarr and others can search AudiobookBay through Bayarr as a Torznab indexer at <code>http://this-server:port/api</code>. That works without your login, so anyone who can reach Bayarr can use it; with an API key set, only apps given the key can (enter it as the indexer's API key).</p>
+                        <div class="settings-group">
+                            <label for="setTorznabKey">API Key</label>
+                            <div class="inline-actions">
+                                <input type="text" id="setTorznabKey" class="form-input" autocomplete="off" spellcheck="false" placeholder="None: open to anyone who can reach Bayarr">
+                                <button type="button" class="secondary-btn" id="torznabKeyNew">Generate</button>
+                            </div>
                         </div>
 
                         <h3>Torznab Indexers</h3>

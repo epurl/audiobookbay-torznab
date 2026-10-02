@@ -44,6 +44,16 @@ function safeUrl(url, fallback = '#') {
 
 const PLACEHOLDER_COVER = '/static/placeholder.svg';
 
+// Covers marked data-fallback show the placeholder when they can't load. A listener rather
+// than inline onerror="...": the page's content security policy allows no inline script
+document.addEventListener('error', e => {
+    const img = e.target;
+    if (img instanceof HTMLImageElement && img.hasAttribute('data-fallback') && !img.dataset.failed) {
+        img.dataset.failed = '1';
+        img.src = PLACEHOLDER_COVER;
+    }
+}, true);
+
 // Same matching rules as the server: ASIN, or title (before any subtitle) + first author
 function normKey(text) {
     return String(text || '').toLowerCase().replace(/^(the|a|an)\s+/, '').replace(/[^a-z0-9]+/g, '');
@@ -358,6 +368,8 @@ async function fetchSettings() {
         document.getElementById('setAbbEnabled').checked = appSettings.abb_enabled ?? true;
         document.getElementById('setAbbUrl').value = appSettings.abb_url || '';
         document.getElementById('setAbbUserAgent').value = appSettings.abb_user_agent || '';
+        document.getElementById('setAbbVerifyTls').checked = appSettings.abb_verify_tls ?? true;
+        document.getElementById('setTorznabKey').value = appSettings.torznab_api_key || '';
         document.getElementById('setAbbCookie').value = '';
         abbCookieClearing = false;
         updateAbbCookieState();
@@ -453,6 +465,8 @@ function setupSettings() {
             abb_enabled: document.getElementById('setAbbEnabled').checked,
             abb_url: document.getElementById('setAbbUrl').value.trim(),
             abb_user_agent: document.getElementById('setAbbUserAgent').value.trim(),
+            abb_verify_tls: document.getElementById('setAbbVerifyTls').checked,
+            torznab_api_key: document.getElementById('setTorznabKey').value.trim(),
             abb_cookie: document.getElementById('setAbbCookie').value.trim(),
             abb_cookie_clear: abbCookieClearing,
             abs_url: document.getElementById('setAbsUrl').value.trim(),
@@ -2780,11 +2794,16 @@ function calTag(ev) {
         : { open: 'button', link: '', close: 'button' };
 }
 
+// A status as a class name: only letters, digits and dashes
+function calClass(status) {
+    return String(status || '').replace(/[^A-Za-z0-9-]/g, '');
+}
+
 function calEventHtml(ev, index) {
     const b = ev.book;
     const tag = calTag(ev);
     const trendBadge = ev.kind === 'trending' && b.rank && b.rank <= 100 ? `<span class="cal-rank" title="Audible best seller #${b.rank}">#${b.rank}</span>` : '';
-    return `<${tag.open} class="cal-event cal-${ev.status}${trendBadge ? ' ranked' : ''}${tag.link}" data-event="${index}" title="${esc(`${b.title} — ${CAL_STATUS_LABELS[ev.status]}`)}">
+    return `<${tag.open} class="cal-event cal-${calClass(ev.status)}${trendBadge ? ' ranked' : ''}${tag.link}" data-event="${index}" title="${esc(`${b.title} — ${CAL_STATUS_LABELS[ev.status]}`)}">
         <span class="cal-event-title">${esc(b.title)}</span>${trendBadge}
         <span class="cal-event-sub">${esc(eventSubtitle(b))}</span></${tag.close}>`;
 }
@@ -2793,8 +2812,8 @@ function calCardHtml(ev, index) {
     const b = ev.book;
     const label = ev.kind === 'library' ? CAL_STATUS_LABELS[ev.status] : (b.rank ? `Best seller #${b.rank}` : 'Trending');
     const tag = calTag(ev);
-    return `<${tag.open} class="cal-card cal-${ev.status}${tag.link}" data-event="${index}">
-        <img src="${esc(coverUrl(b))}" alt="" loading="lazy" onerror="this.src='${PLACEHOLDER_COVER}'">
+    return `<${tag.open} class="cal-card cal-${calClass(ev.status)}${tag.link}" data-event="${index}">
+        <img src="${esc(coverUrl(b))}" alt="" loading="lazy" data-fallback>
         <span class="cal-card-text">
             <span class="cal-event-title">${esc(b.title)}</span>
             <span class="cal-event-sub">${esc(eventSubtitle(b))}</span>
@@ -2902,7 +2921,7 @@ function openCalendarEvent(ev) {
     ].filter(([, v]) => v);
     document.getElementById('calendarModalBody').innerHTML = `
         <div class="cal-detail">
-            <img src="${esc(coverUrl(b))}" alt="" onerror="this.src='${PLACEHOLDER_COVER}'">
+            <img src="${esc(coverUrl(b))}" alt="" data-fallback>
             <div>
                 <h3>${esc(b.title)}</h3>
                 ${b.subtitle ? `<div class="muted">${esc(b.subtitle)}</div>` : ''}
@@ -3533,6 +3552,12 @@ function setupIndexers() {
         updateAbbCookieState();
         markSettingsDirty();
     });
+    document.getElementById('torznabKeyNew').addEventListener('click', () => {
+        const bytes = crypto.getRandomValues(new Uint8Array(16));
+        const input = document.getElementById('setTorznabKey');
+        input.value = [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
+        input.dispatchEvent(new Event('input', { bubbles: true }));  // Unsaved until Save
+    });
     document.getElementById('abbTestBtn').addEventListener('click', async (e) => {
         const status = document.getElementById('abbTestStatus');
         const btn = e.currentTarget;
@@ -3542,6 +3567,7 @@ function setupIndexers() {
             url: document.getElementById('setAbbUrl').value.trim(),
             cookie: document.getElementById('setAbbCookie').value.trim(),
             user_agent: document.getElementById('setAbbUserAgent').value.trim(),
+            verify_tls: document.getElementById('setAbbVerifyTls').checked,
         });
         btn.disabled = false;
         setActionStatus(status, ok ? data.message : (data.detail || 'Test failed'), ok && data.ok ? (data.logged_in ? 'ok' : '') : 'error');
@@ -3697,7 +3723,7 @@ async function renderFollowedAuthors() {
     const box = document.getElementById('authorsList');
     const data = await fetch('/api/authors').then(r => r.json()).catch(() => ({ authors: [] }));
     box.innerHTML = data.authors.length ? data.authors.map(a => `<button class="author-card" data-author="${esc(a.name)}">
-        <img src="${esc(safeUrl(a.cover, PLACEHOLDER_COVER))}" alt="" loading="lazy" onerror="this.src='${PLACEHOLDER_COVER}'">
+        <img src="${esc(safeUrl(a.cover, PLACEHOLDER_COVER))}" alt="" loading="lazy" data-fallback>
         <span class="author-card-text"><b>${esc(a.name)}</b>
             <span class="muted">${a.in_library} in library · ${a.on_disk} on disk${a.monitored ? '' : ' · paused'}</span>
             ${a.last_sync ? `<span class="muted">Checked ${esc(new Date(a.last_sync).toLocaleDateString())}</span>` : ''}</span>

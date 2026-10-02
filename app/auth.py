@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -5,6 +6,7 @@ import ipaddress
 import logging
 import os
 import secrets
+import time
 
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
@@ -97,13 +99,125 @@ def _challenge():
     )
 
 
+# --- Logins -------------------------------------------------------------------
+# Checking a password takes about 200 ms on purpose (PBKDF2), and the browser sends it with
+# every request. A login that checked out is remembered for a while (by a hash of it and of
+# the stored password, so changing the password forgets it), and checks run off the event
+# loop, so neither the UI nor a stream of wrong guesses can stall the server.
+
+LOGIN_REMEMBERED = 600          # seconds
+MAX_FAILURES, FAILURE_WINDOW = 10, 300  # wrong logins from one address, and the period
+_good_logins = {}               # digest -> when it stops being remembered
+_failures = {}                  # client address -> times of recent wrong logins
+
+
+def _login_key(username, password):
+    stored = "env" if env_credentials_set() else db.get_settings().get("auth_password_hash", "")
+    raw = "\0".join((username, password, stored)).encode("utf-8", "surrogateescape")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _remembered(username, password):
+    return _good_logins.get(_login_key(username, password), 0) > time.monotonic()
+
+
+async def _check_login(username, password):
+    if _remembered(username, password):
+        return True
+    ok = await asyncio.to_thread(check_credentials, username, password)
+    if ok:
+        now = time.monotonic()
+        for key in [k for k, until in _good_logins.items() if until <= now]:
+            del _good_logins[key]
+        _good_logins[_login_key(username, password)] = now + LOGIN_REMEMBERED
+    return ok
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "?"
+
+
+def _recent_failures(ip):
+    now = time.monotonic()
+    recent = [t for t in _failures.get(ip, []) if now - t < FAILURE_WINDOW]
+    if recent:
+        _failures[ip] = recent
+    else:
+        _failures.pop(ip, None)
+    return recent
+
+
+def _too_many():
+    return Response(status_code=429, content="Too many wrong logins from this address; try again in a few minutes.",
+                    headers={"Retry-After": str(FAILURE_WINDOW)})
+
+
+# --- Without a login --------------------------------------------------------------
+# Only local addresses are let in, and only under a local name: a web page can point its
+# own domain at a local address (DNS rebinding) to drive Bayarr from your browser, but its
+# requests then carry its domain in the Host header.
+LOCAL_SUFFIXES = (".local", ".lan", ".home", ".internal", ".localdomain", ".home.arpa", ".localhost")
+
+
+def _local_host_header(request: Request) -> bool:
+    host = (request.headers.get("host") or "").strip()
+    if host.startswith("["):  # [IPv6]:port
+        name = host[1:host.find("]")] if "]" in host else ""
+    else:
+        name = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+    try:
+        ipaddress.ip_address(name)
+        return True
+    except ValueError:
+        pass
+    name = name.lower().rstrip(".")
+    return bool(name) and (name == "localhost" or "." not in name or name.endswith(LOCAL_SUFFIXES))
+
+
+# --- Torznab --------------------------------------------------------------------
+
+def torznab_key_ok(request: Request) -> bool:
+    """With a Torznab API key set (Settings > Indexers), Prowlarr must send it."""
+    key = (db.get_settings().get("torznab_api_key") or "").strip()
+    if not key:
+        return True
+    given = request.query_params.get("apikey") or ""
+    return hmac.compare_digest(given.encode("utf-8", "surrogateescape"), key.encode("utf-8", "surrogateescape"))
+
+
+# --- Headers ----------------------------------------------------------------------
+# No framing by other sites (clickjacking), and only Bayarr's own script runs
+SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: http:; connect-src 'self'; "
+        "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"),
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+}
+
+
+def _secured(response):
+    for name, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    return response
+
+
 async def auth_middleware(request: Request, call_next):
+    return _secured(await _authorize(request, call_next))
+
+
+async def _authorize(request: Request, call_next):
     # The path the router dispatches on. Not request.url.path: that's rebuilt from the Host
     # header, which a client can craft (e.g. "host/api?x=") to make any path look like an
     # open Torznab path (Starlette GHSA-86qp-5c8j-p5mr)
     path = request.scope.get("path", "").rstrip("/") or "/"
 
     if path in TORZNAB_PATHS:
+        if not torznab_key_ok(request):
+            return Response(status_code=401, media_type="application/xml",
+                            content='<?xml version="1.0" encoding="UTF-8"?><error code="100" description="Incorrect user credentials"/>')
         return await call_next(request)
 
     # Cross-site pages can't send application/json without a CORS preflight (which
@@ -115,17 +229,36 @@ async def auth_middleware(request: Request, call_next):
 
     if credentials_configured():
         creds = _parse_basic_auth(request)
-        if not creds or not check_credentials(*creds):
+        if not creds:
             return _challenge()
+        ip = _client_ip(request)
+        # A login already known to be right gets in even while an address is held back
+        if not _remembered(*creds):
+            if len(_recent_failures(ip)) >= MAX_FAILURES:
+                return _too_many()
+            if not await _check_login(*creds):
+                _failures.setdefault(ip, []).append(time.monotonic())
+                if len(_failures[ip]) == MAX_FAILURES:
+                    logger.warning(f"{MAX_FAILURES} wrong logins from {ip}; refusing it for {FAILURE_WINDOW // 60} minutes")
+                return _challenge()
+            _failures.pop(ip, None)
         return await call_next(request)
 
-    # No credentials yet: only allow clients on the local network so the owner
-    # can reach the Settings page and set a username and password.
+    # No credentials yet: only allow clients on the local network, under a local address, so
+    # the owner can reach the Settings page and set a username and password.
     if not _is_local_client(request):
-        logger.warning(f"Rejected request from non-local address {request.client.host if request.client else '?'}: no credentials configured")
+        logger.warning(f"Rejected request from non-local address {_client_ip(request)}: no credentials configured")
         return Response(
             status_code=403,
             content="Bayarr has no login configured, so it only accepts connections from the local network. "
                     "Set BAYARR_USERNAME and BAYARR_PASSWORD, or set a login from Settings on your local network.",
+        )
+    if not _local_host_header(request):
+        logger.warning(f"Rejected request for host {request.headers.get('host')!r}: no credentials configured")
+        return Response(
+            status_code=403,
+            content="Bayarr has no login configured, so it only answers at its local address (e.g. "
+                    "http://192.168.1.10:8085), not at a domain name. Open it that way and set a login in "
+                    "Settings > Security (or set BAYARR_USERNAME and BAYARR_PASSWORD) to use this address.",
         )
     return await call_next(request)

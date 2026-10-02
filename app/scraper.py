@@ -71,10 +71,7 @@ async def fetch_html(url: str, params: Optional[dict] = None) -> str:
         req.data = query_string.encode('ascii')
         req.method = 'POST'
 
-    # Bypass SSL verification
-    context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
+    context = _tls_context()
 
     def fetch():
         with urllib.request.urlopen(req, context=context, timeout=30.0) as response:
@@ -103,6 +100,18 @@ async def fetch_html(url: str, params: Optional[dict] = None) -> str:
             raise error
         logger.info(f"AudiobookBay request failed ({error}); retrying in {backoff}s")
         await asyncio.sleep(backoff)
+
+
+def _tls_context(verify=None):
+    """The site's certificate is checked (so nobody in between can swap results or read the
+    cookie), unless Settings > Indexers turns that off for a mirror with a broken one."""
+    context = ssl.create_default_context()
+    if verify is None:
+        verify = _settings().get("abb_verify_tls", True)
+    if not verify:
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+    return context
 
 
 def is_paused():
@@ -514,7 +523,7 @@ async def add_details(results, concurrency=3):
     return results
 
 
-async def test_connection(url="", cookie_value=None, agent=""):
+async def test_connection(url="", cookie_value=None, agent="", verify=None):
     """Reaches the site and says whether the cookie logs in. Unsaved values from the form
     can be tried before saving them."""
     global _paused_until
@@ -524,9 +533,7 @@ async def test_connection(url="", cookie_value=None, agent=""):
     if value:
         headers["Cookie"] = value
     req = urllib.request.Request(url + "/", headers=headers)
-    context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
+    context = _tls_context(verify)
 
     def fetch():
         with urllib.request.urlopen(req, context=context, timeout=20.0) as response:
@@ -535,6 +542,10 @@ async def test_connection(url="", cookie_value=None, agent=""):
     try:
         html = await asyncio.get_running_loop().run_in_executor(None, fetch)
     except Exception as e:
+        if isinstance(getattr(e, "reason", e), ssl.SSLCertVerificationError):
+            return {"ok": False, "logged_in": False,
+                    "message": f"{url} has an invalid certificate ({getattr(e, 'reason', e)}). Check the address; "
+                               "only if it's right, turn off Check the Site's Certificate."}
         return {"ok": False, "logged_in": False, "message": f"Couldn't reach {url}: {e}"}
     _paused_until = 0.0  # It answers again: no need to keep searches paused
     if "challenge-platform" in html and "postTitle" not in html:

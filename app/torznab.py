@@ -23,7 +23,7 @@ def build_caps() -> str:
     
     return etree.tostring(root, xml_declaration=True, encoding="utf-8").decode()
 
-def build_rss(results: list, host_url: str, offset: int = 0) -> str:
+def build_rss(results: list, host_url: str, offset: int = 0, apikey: str = "") -> str:
     """Builds the RSS feed containing the search results."""
     logger.debug(f"Building RSS feed for {len(results)} results with host_url {host_url}, offset {offset}")
     TORZNAB_NS = "http://torznab.com/schemas/2015/feed"
@@ -53,6 +53,8 @@ def build_rss(results: list, host_url: str, offset: int = 0) -> str:
         
         encoded_title = urllib.parse.quote(title)
         dl_url = f"{host_url}/api/download?url={urllib.parse.quote(res.get('link', ''), safe='')}&title={encoded_title}"
+        if apikey:  # The download link needs the key too
+            dl_url += f"&apikey={urllib.parse.quote(apikey, safe='')}"
         
         magnet_url = res.get("magnet_url") or dl_url
         

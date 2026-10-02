@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import platform
+import re
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -28,6 +29,35 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+class _RedactSecrets(logging.Filter):
+    """Blanks out API keys, passwords and tokens in log lines: request URLs carry them
+    (indexer and SABnzbd API keys, a private Goodreads feed's key, the Torznab key) and
+    httpx logs every request's URL, as error messages repeat it."""
+    _SECRET = re.compile(r"(?<![A-Za-z0-9_])((?:api_?key|passkey|token|password|passwd|pass|key|secret|auth)=)[^&\s'\"<>]+",
+                         re.IGNORECASE)
+
+    def filter(self, record):
+        try:
+            message = record.getMessage()
+        except Exception:
+            return True
+        redacted = self._SECRET.sub(r"\1REDACTED", message)
+        if redacted != message:
+            record.msg, record.args = redacted, None
+        return True
+
+
+def _redact_logs():
+    """On every handler, including uvicorn's own (its access log shows request URLs)."""
+    for name in ("", "uvicorn", "uvicorn.error", "uvicorn.access"):
+        for handler in logging.getLogger(name).handlers:
+            if not any(isinstance(f, _RedactSecrets) for f in handler.filters):
+                handler.addFilter(_RedactSecrets())
+
+
+_redact_logs()
+
 class SafeJSONResponse(JSONResponse):
     """JSON with non-ASCII characters escaped, so file names that aren't valid UTF-8 (kept
     as surrogates by Python) can be sent to the browser and back without crashing."""
@@ -44,6 +74,7 @@ _loops = set()  # Kept here: the event loop only holds weak references to tasks
 
 @app.on_event("startup")
 async def startup_event():
+    _redact_logs()  # uvicorn's handlers exist by now
     # Start the background monitor loop, and the M4B conversion queue
     _loops.add(asyncio.create_task(run_monitor_loop()))
     _loops.add(asyncio.create_task(convert.run_queue()))
@@ -105,7 +136,7 @@ async def torznab_api(request: Request, t: str = "", q: str = "", author: str = 
             results = []
             
         host_url = f"{request.url.scheme}://{request.url.netloc}"
-        xml = build_rss(results, host_url, offset=offset)
+        xml = build_rss(results, host_url, offset=offset, apikey=db.get_settings().get("torznab_api_key") or "")
         return Response(content=xml, media_type="application/xml")
 
     # Fallback for unsupported operations
@@ -452,7 +483,9 @@ async def api_test_abb(request: Request):
     url = (data.get("url") or "").strip()
     if url and not url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="The address must start with https://")
-    return await scraper.test_connection(url, data.get("cookie") or None, data.get("user_agent") or "")
+    verify = data.get("verify_tls")
+    return await scraper.test_connection(url, data.get("cookie") or None, data.get("user_agent") or "",
+                                         None if verify is None else bool(verify))
 
 @app.get("/api/stats")
 async def api_stats():
