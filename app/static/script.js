@@ -339,6 +339,7 @@ async function fetchSettings() {
         document.getElementById('setDownloadsFolder').value = appSettings.downloads_folder || "";
         document.getElementById('setNamingFormat').value = appSettings.naming_format || "";
         document.getElementById('setRenameFiles').checked = appSettings.rename_files ?? true;
+        document.getElementById('setAutoAddFolders').checked = appSettings.auto_add_folders ?? true;
         document.getElementById('setStallHours').value = appSettings.stall_hours ?? 6;
         document.getElementById('setRemoveStalled').checked = appSettings.remove_stalled ?? true;
         document.getElementById('setSeedCleanup').checked = appSettings.seed_cleanup ?? false;
@@ -430,6 +431,7 @@ function setupSettings() {
             downloads_folder: document.getElementById('setDownloadsFolder').value,
             naming_format: document.getElementById('setNamingFormat').value,
             rename_files: document.getElementById('setRenameFiles').checked,
+            auto_add_folders: document.getElementById('setAutoAddFolders').checked,
             stall_hours: parseInt(document.getElementById('setStallHours').value, 10) || 0,
             remove_stalled: document.getElementById('setRemoveStalled').checked,
             seed_cleanup: document.getElementById('setSeedCleanup').checked,
@@ -902,7 +904,12 @@ function setupLibrary() {
             const data = await res.json();
             await fetchLibrary();
             renderLibrary();
-            toast(`Rescan finished: ${data.missing} newly missing, ${data.restored} found again`, data.missing ? 'error' : 'ok');
+            const parts = [data.added ? `${data.added} new folder${data.added === 1 ? '' : 's'} added` : '',
+                data.linked ? `${data.linked} linked to books you track` : '',
+                data.moved ? `${data.moved} moved folder${data.moved === 1 ? '' : 's'} found` : '',
+                data.asins ? `${data.asins} ASIN${data.asins === 1 ? '' : 's'} from metadata.json` : '',
+                data.restored ? `${data.restored} found again` : '', data.missing ? `${data.missing} newly missing` : ''].filter(Boolean);
+            toast(`Rescan finished${parts.length ? ': ' + parts.join(', ') : ': nothing changed'}`, data.missing ? 'error' : 'ok');
         } catch (err) {
             console.error(err);
             toast('Rescan failed', 'error');
@@ -1849,7 +1856,7 @@ function setupSeriesPages() {
 const EVENT_LABELS = {
     grabbed: 'Grabbed', imported: 'Imported', needs_review: 'Needs review', approved: 'Approved',
     rejected: 'Rejected', failed: 'Failed', missing: 'Missing', series: 'Series', released: 'Released', seeded: 'Seeded',
-    list: 'List',
+    list: 'List', moved: 'Moved', found: 'Found',
 };
 
 // -----------------

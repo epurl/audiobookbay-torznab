@@ -40,6 +40,7 @@ DEFAULT_SETTINGS = {
     "downloads_folder": "",
     "naming_format": DEFAULT_NAMING_FORMAT,
     "rename_files": True,
+    "auto_add_folders": True,  # Library scans add folders in the Root Folder no book uses
     "stall_hours": 6,  # 0 = never give up on a stalled download
     "remove_stalled": True,
     "seed_cleanup": False,       # Remove torrents of imported books once they've seeded enough
@@ -86,7 +87,7 @@ DEFAULT_SETTINGS = {
 EDITABLE_SETTINGS = {
     "language", "auto_match_narrator", "format_preference", "qbt_enabled",
     "qbt_host", "qbt_user", "root_folder", "downloads_folder", "naming_format",
-    "rename_files", "stall_hours", "remove_stalled", "seed_cleanup", "seed_ratio", "seed_days", "seed_delete_files",
+    "rename_files", "auto_add_folders", "stall_hours", "remove_stalled", "seed_cleanup", "seed_ratio", "seed_days", "seed_delete_files",
     "usenet_client", "usenet_host", "usenet_user", "usenet_category", "usenet_downloads_folder", "usenet_remove_completed",
     "verify_runtime", "runtime_tolerance", "write_metadata", "edition_preference",
     "auto_convert_m4b", "delete_originals_after_convert",

@@ -994,14 +994,11 @@ async def api_import_library(request: Request):
 
 @app.post("/api/library/rescan")
 async def api_rescan_library():
-    """Refreshes file info for books on disk and flags ones whose files are gone."""
-    missing, restored = await asyncio.to_thread(find_missing_books)
-
-    def refresh():
-        return {b["id"]: library.describe_files(b["path"]) for b in db.get_library()
-                if b.get("status") == "Imported" and b.get("path")}
-    db.update_books(await asyncio.to_thread(refresh))
-    return {"success": True, "missing": missing, "restored": restored}
+    """Brings the library up to date with the disk: moved and new folders, Missing books,
+    ASINs from metadata.json, and file details."""
+    from app import library_scan
+    summary = await library_scan.run(db.get_settings())
+    return {"success": True, **{k: v for k, v in summary.items() if k != "added_ids"}}
 
 @app.get("/api/settings")
 async def api_get_settings():

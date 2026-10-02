@@ -315,6 +315,18 @@ def audio_files(path):
     return sorted(found)
 
 
+def _fingerprint(files):
+    import hashlib
+    parts = sorted(f"{os.path.basename(f).lower()}:{size}" for f, size in files)
+    return hashlib.sha1("|".join(parts).encode("utf-8", "replace")).hexdigest()[:16] if parts else ""
+
+
+def fingerprint(path):
+    """The book's audio files by name and size: the same files in another folder (renamed or
+    moved) have the same fingerprint."""
+    return _fingerprint(audio_files(path))
+
+
 def describe_files(path):
     files = audio_files(path)
     formats = sorted({os.path.splitext(f)[1].lstrip(".").upper() for f, _ in files})
@@ -322,6 +334,7 @@ def describe_files(path):
         "file_count": len(files),
         "size_bytes": sum(size for _, size in files),
         "format": ", ".join(formats),
+        "fingerprint": _fingerprint(files),
     }
 
 

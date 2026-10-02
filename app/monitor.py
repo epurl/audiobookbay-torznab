@@ -210,7 +210,12 @@ async def check_library():
     settings = db.get_settings()
     today = datetime.date.today()
 
-    await asyncio.to_thread(find_missing_books)
+    # The disk: moved and new folders, Missing books, ASINs from metadata.json
+    from app import library_scan
+    try:
+        await library_scan.run(settings)
+    except Exception as e:
+        logger.error(f"Library scan failed: {e}", exc_info=True)
 
     for series in db.get_series_list():
         if series.get("monitored"):
