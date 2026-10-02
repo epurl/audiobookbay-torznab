@@ -425,7 +425,8 @@ def check_download(book, audio_files, settings, folder=""):
             tolerance = max(tolerance, 25)  # GraphicAudio only gives whole hours
         off = abs(actual - expected) / expected * 100
         if off > tolerance:
-            return (f"The files run {actual} min, but Audible lists {expected} min ({off:.0f}% off, "
+            source = "GraphicAudio lists about" if book.get("runtime_approx") else "Audible lists"
+            return (f"The files run {actual} min, but {source} {expected} min ({off:.0f}% off, "
                     f"allowed {tolerance}%). It may be a different book, or abridged.")
     return ""
 

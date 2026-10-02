@@ -259,7 +259,8 @@ def update_book(book_id, **fields):
 
 # Fields taken from Audible when a book is matched; status, path and files stay as they are
 AUDIBLE_FIELDS = ("title", "authors", "narrators", "asin", "series", "series_asin", "sequence", "runtime_min",
-                  "description", "publisher", "language", "release_date", "imageUrl", "edition", "edition_reason")
+                  "description", "publisher", "language", "release_date", "imageUrl", "edition", "edition_reason",
+                  "ga_url", "runtime_approx", "isbn")  # The last ones for GraphicAudio releases
 
 
 def apply_audible_match(book_id, audible_book):

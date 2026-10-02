@@ -964,7 +964,9 @@ async def api_import_library(request: Request):
     for c in chosen:
         book = {k: c.get(k, "") for k in fields}
         if matches.get(c["path"]):
-            book["asin"] = matches[c["path"]]  # Links to a tracked book with that ASIN
+            from app import graphicaudio
+            key = "ga_url" if graphicaudio.is_release_url(matches[c["path"]]) else "asin"
+            book[key] = matches[c["path"]]  # Links to a tracked book with that ASIN (or GraphicAudio page)
         books.append(book)
     added, linked = db.import_books(books)
     # Audible's details for the matches chosen in the preview

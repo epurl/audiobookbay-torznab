@@ -263,6 +263,10 @@ def _title_rank(want, title):
     return None
 
 
+# "Title: Spin-off Volume 1", "Title: Book 2": a subtitle that numbers another book or series
+_NUMBERED_SUBTITLE = re.compile(r"(?:\bvol(?:ume)?\.?|\bbook|\bissue|#)\s*\d", re.IGNORECASE)
+
+
 async def auto_match(book):
     """Finds the Audible edition of a library book, or None when it isn't clear-cut.
     The title and first author must match, in the book's edition (narrated unless it's
@@ -287,6 +291,14 @@ async def auto_match(book):
         rank = _title_rank(want_title, candidate["title"])
         if rank is None:
             continue
+        if rank == 1:
+            # Only the main title matches; a numbered subtitle is a different book unless
+            # it's in the book's own series ("Title: Spin-off Volume 1" isn't "Title")
+            subtitle = re.sub(r"\s*[\(\[][^\)\]]*[\)\]]", "", candidate["title"]).partition(":")[2]
+            same_series = bool(book.get("series")) and any(
+                series_key(e["name"]) == series_key(book["series"]) for e in candidate.get("series_list") or [])
+            if _NUMBERED_SUBTITLE.search(subtitle) and not same_series:
+                continue
         if want_author and normalize(primary_author(candidate["authors"])) != want_author:
             continue
         found.append((rank, candidate))

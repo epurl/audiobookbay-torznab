@@ -1122,7 +1122,7 @@ function importAudibleHtml(b, i) {
     const change = `<button class="link-btn import-choose" data-index="${i}">${m && m.kind === 'audible' ? 'Change' : 'Choose…'}</button>`;
     if (!m) return importLooking.has(b.path) ? '<span class="muted">Looking…</span>' : `<span class="muted">Not matched</span> ${change}`;
     if (m.kind === 'as_is') return `<span class="muted">As named</span> ${change}`;
-    const sub = [m.series ? `${m.series}${m.sequence ? ' #' + m.sequence : ''}` : '', m.asin].filter(Boolean).join(' · ');
+    const sub = [m.series ? `${m.series}${m.sequence ? ' #' + m.sequence : ''}` : '', matchSource(m)].filter(Boolean).join(' · ');
     return `${esc(m.title)}${abridgedIcon(m)} ${change}<span class="book-sub">${esc(sub)}</span>`;
 }
 
@@ -1591,18 +1591,34 @@ function openSeriesDetail(key) {
     navigate('/series/' + encodeURIComponent(key));
 }
 
+let seriesLoadToken = 0;
+
 async function showSeriesDetail(key) {
     showView('seriesDetailView', 'seriesView');
     const box = document.getElementById('seriesDetail');
-    box.innerHTML = '<div class="loader"><div class="spinner"></div></div>';
-    const res = await fetch(`/api/series/detail?key=${encodeURIComponent(key)}`);
-    const data = await res.json().catch(() => ({}));
+    const token = ++seriesLoadToken;
+    box.innerHTML = `<div class="loader"><div class="spinner"></div></div>
+        <p class="muted series-loading-note">Loading the series from Audible…</p>`;
+    // The first look at a series fetches its book list; dramatized ones also read GraphicAudio's store
+    const slow = setTimeout(() => {
+        const note = box.querySelector('.series-loading-note');
+        if (note) note.textContent = "Still loading: the first look at a series fetches Audible's full list, and a dramatized one also reads GraphicAudio's store, which can take up to 20 seconds. After that it's quick.";
+    }, 4000);
+    let res, data;
+    try {
+        res = await fetch(`/api/series/detail?key=${encodeURIComponent(key)}`);
+        data = await res.json().catch(() => ({}));
+    } finally {
+        clearTimeout(slow);
+    }
+    if (token !== seriesLoadToken) return;  // Another series was opened meanwhile
     if (!res.ok) {
         box.innerHTML = `<div class="empty-state"><h3>Couldn't load this series</h3><p>${esc(data.detail || 'Try again in a moment.')}</p></div>`;
         return;
     }
-    currentSeries = data;
     await Promise.all([fetchLibrary(), fetchSeries()]);
+    if (token !== seriesLoadToken) return;
+    currentSeries = data;
     renderSeriesDetail();
 }
 
@@ -1900,9 +1916,16 @@ async function suggestManualMatches() {
     }
 }
 
+// A match to send with an import: an Audible book by its ASIN, or a GraphicAudio release (one
+// Audible doesn't sell) by its page, which the server takes in the same place
 function audibleChoice(b) {
-    return { kind: 'audible', asin: b.asin, title: b.title, authors: b.authors, edition: b.edition,
+    const ga = !b.asin && !!b.ga_url;
+    return { kind: 'audible', asin: b.asin || b.ga_url, ga, title: b.title, authors: b.authors, edition: b.edition,
              sequence: b.sequence, series: b.series };
+}
+
+function matchSource(m) {
+    return m.ga ? 'GraphicAudio' : m.asin;
 }
 
 function manualChoiceHtml(it) {
@@ -1915,9 +1938,9 @@ function manualChoiceHtml(it) {
     }
     if (c.kind === 'library') return `${bookLink(c.book_id, c.title)} <span class="muted">· in your library</span> ${change}`;
     if (c.kind === 'audible') {
-        const extra = [c.authors, c.series ? `${c.series}${c.sequence ? ' #' + c.sequence : ''}` : '', c.asin].filter(Boolean).join(' · ');
+        const extra = [c.authors, c.series ? `${c.series}${c.sequence ? ' #' + c.sequence : ''}` : '', c.ga ? '' : c.asin].filter(Boolean).join(' · ');
         return `${esc(c.title)}${abridgedIcon(c)}
-            <span class="muted">· Audible</span> ${change}<div class="muted">${esc(extra)}</div>`;
+            <span class="muted">· ${c.ga ? 'GraphicAudio' : 'Audible'}</span> ${change}<div class="muted">${esc(extra)}</div>`;
     }
     const g = it.guess;
     return `${esc(g.title)} <span class="muted">· as named${g.authors ? ', by ' + esc(g.authors) : ''}</span> ${change}`;
@@ -3325,7 +3348,8 @@ function watchedResultText(l) {
     const when = new Date(l.last_check).toLocaleString();
     if (r.error) return `${when}: ${r.error}`;
     const parts = [`${r.on_list} on the list`, r.added ? `${r.added} added` : 'nothing new added',
-        r.already ? `${r.already} already in your library` : '', r.not_found ? `${r.not_found} not found on Audible` : ''];
+        r.already ? `${r.already} already in your library` : '', r.not_found ? `${r.not_found} not found on Audible` : '',
+        r.found_later ? `${r.found_later} found on Audible since (looked up again weekly)` : ''];
     return `${when}: ${parts.filter(Boolean).join(' · ')}`;
 }
 

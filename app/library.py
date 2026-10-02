@@ -432,6 +432,11 @@ def find_match(library, book):
         for entry in library:
             if entry.get("asin") == asin:
                 return entry
+    ga_url = book.get("ga_url")  # A GraphicAudio release Audible doesn't sell
+    if ga_url:
+        for entry in library:
+            if entry.get("ga_url") == ga_url:
+                return entry
     title = book.get("title")
     authors = author_keys(book.get("authors"))
     edition = edition_of(book)

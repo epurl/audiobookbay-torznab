@@ -122,6 +122,8 @@ def add(asins, status="Monitored"):
 # are listed so you can search for them yourself.
 
 UNMATCHED_KEPT = 100
+RETRY_DAYS = 7          # Books not found on Audible are looked up again this often
+RETRY_PER_CHECK = 25    # ... this many at a time, to go easy on Audible
 _checking = set()  # list ids being checked
 
 
@@ -198,9 +200,25 @@ async def check_list(list_id):
         return
     known = set(entry.get("known") or [])
     new = [i for i in data["items"] if i["book_id"] not in known]
-    unmatched = list(entry.get("unmatched") or [])
-    result = {"on_list": len(data["items"]), "new": len(new), "added": 0, "already": 0, "not_found": 0}
+    on_list = {i["book_id"] for i in data["items"]}
+    # Books taken off the list no longer need finding
+    unmatched = [u for u in entry.get("unmatched") or [] if u["book_id"] in on_list]
+    result = {"on_list": len(data["items"]), "new": len(new), "added": 0, "already": 0, "not_found": 0, "found_later": 0}
     settings = db.get_settings()
+
+    def add(match):
+        """Adds a match to the library (or counts it as already there)."""
+        if LibraryIndex(db.get_library()).find(match):
+            result["already"] += 1
+            return
+        added = db.add_to_library({**match, "description": match.get("description", "")})
+        if entry["monitor"] == "Unmonitored" and added.get("status") in ("Monitored", "Unreleased"):
+            db.update_library_status(added["id"], "Unmonitored")
+        elif added.get("status") == "Monitored" and settings.get("qbt_enabled"):
+            schedule_search(db.get_book(added["id"]))
+        db.add_history("list", added, f"Added from {entry['name']}")
+        result["added"] += 1
+
     for item in reversed(new):  # Oldest first, so the library gets them in the order you added them
         title, series, sequence = _clean_title(item["title"])
         try:
@@ -212,19 +230,29 @@ async def check_list(list_id):
         if not match:
             result["not_found"] += 1
             unmatched = [u for u in unmatched if u["book_id"] != item["book_id"]]
-            unmatched.insert(0, {"book_id": item["book_id"], "title": title, "author": item["author"]})
+            unmatched.insert(0, {"book_id": item["book_id"], "title": title, "author": item["author"], "tried": now,
+                                 "series": series, "sequence": sequence})
             continue
-        if LibraryIndex(db.get_library()).find(match):
-            result["already"] += 1
-            continue
-        added = db.add_to_library({**match, "description": match.get("description", "")})
-        if entry["monitor"] == "Unmonitored" and added.get("status") in ("Monitored", "Unreleased"):
-            db.update_library_status(added["id"], "Unmonitored")
-        elif added.get("status") == "Monitored" and settings.get("qbt_enabled"):
-            schedule_search(db.get_book(added["id"]))
-        db.add_history("list", added, f"Added from {entry['name']}")
-        result["added"] += 1
+        add(match)
         await asyncio.sleep(0.2)  # Gentle on Audible's API
+
+    # Books not found before are looked up again every week: Audible may have them by now
+    cutoff = (datetime.datetime.now() - datetime.timedelta(days=RETRY_DAYS)).isoformat(timespec="seconds")
+    due = [u for u in unmatched if (u.get("tried") or "") < cutoff][:RETRY_PER_CHECK]
+    for u in due:
+        try:
+            match = await audible.auto_match({"title": u["title"], "authors": u["author"],
+                                              "series": u.get("series", ""), "sequence": u.get("sequence", "")})
+        except Exception as e:
+            logger.warning(f"Watched list {entry['name']}: couldn't look up {u['title']} again: {e}")
+            continue
+        if match:
+            unmatched = [x for x in unmatched if x["book_id"] != u["book_id"]]
+            result["found_later"] += 1
+            add(match)
+        else:
+            u["tried"] = now
+        await asyncio.sleep(0.2)
     # Remembered, so a book you remove from the library isn't added back on the next check
     _update(list_id, known=sorted(known), unmatched=unmatched[:UNMATCHED_KEPT], last_check=now, last_result=result)
     if result["added"]:

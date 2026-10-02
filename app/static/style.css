@@ -1977,6 +1977,12 @@ tr.clickable {
     color: var(--text-primary);
 }
 
+.series-loading-note {
+    text-align: center;
+    max-width: 520px;
+    margin: 0 auto;
+}
+
 .edition-tabs {
     display: flex;
     gap: 4px;

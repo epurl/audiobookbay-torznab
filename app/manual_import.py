@@ -100,11 +100,20 @@ def scan(path):
     return items
 
 
-_audible_books = {}  # asin -> Audible's details, so previews don't ask Audible again
+_audible_books = {}  # match id -> its details, so previews don't ask again
 
 
 async def audible_book(asin, prefer_series=""):
+    """A chosen match: an Audible ASIN, or a GraphicAudio release's page (for dramatizations
+    Audible doesn't sell)."""
+    from app import graphicaudio
     if asin not in _audible_books:
+        if graphicaudio.is_release_url(asin):
+            found = await graphicaudio.release(asin)
+            if not found:
+                return None
+            _audible_books[asin] = found
+            return found
         products = await audible.get_products([asin])
         if not products:
             return None
@@ -124,7 +133,15 @@ async def suggest_for(guess):
     found = await audible.auto_match(guess)
     if found and found.get("asin"):
         _audible_books[found["asin"]] = found
-    return found
+        return found
+    # A dramatization Audible doesn't sell: GraphicAudio's own release
+    from app import editions, graphicaudio
+    if editions.edition_of(guess) == editions.ABRIDGED:
+        found = await graphicaudio.find_release(guess)
+        if found:
+            _audible_books[found["ga_url"]] = found
+            return found
+    return None
 
 
 async def suggest(item_id):

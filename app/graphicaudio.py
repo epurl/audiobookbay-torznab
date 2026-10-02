@@ -7,6 +7,7 @@ There's no API, so the store's pages are read: a series page lists every release
 ISBN, description and cover. Requests are spaced out and cached."""
 import asyncio
 import html
+import json
 import logging
 import re
 import time
@@ -14,7 +15,7 @@ from urllib.parse import quote_plus
 
 import httpx
 
-from app.library import series_key, titles_match
+from app.library import part_number, series_key, titles_match
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,14 @@ _last = 0.0
 
 # "The Stormlight Archive 1: The Way of Kings 1 of 5", "The Stormlight Archive: Dawnshard"
 _NAME = re.compile(r"^(?P<series>.+?)(?:\s+(?P<num>\d+(?:\.\d+)?))?:\s*(?P<title>.+?)(?:\s+(?P<part>\d+)\s+of\s+(?P<of>\d+))?$")
+GA_PREFIX = "https://www.graphicaudio.net/"
+
+
+def is_release_url(value):
+    """A GraphicAudio release's page: what identifies a release Audible doesn't sell."""
+    return str(value or "").startswith(GA_PREFIX)
+
+
 _SETS = re.compile(r"\((?:series|download)\s+set\)|\bbox\s*set\b|\bbundle\b", re.IGNORECASE)
 
 
@@ -144,6 +153,12 @@ async def search(query):
     if not (query or "").strip():
         return []
     final, page = await _get(f"{BASE}/catalogsearch/result/?q={quote_plus(query.strip())}")
+    if 'class="product-info-main"' in page and not _listed(page):
+        # Straight to a single release's page
+        found = await release(final.split("?")[0])
+        return [{"title": found["title"], "series": found["series"], "sequence": found["sequence"],
+                 "part": found["part"], "part_count": found["part_count"], "ga_url": found["ga_url"],
+                 "imageUrl": found["imageUrl"], "preorder": False, "authors": found["authors"]}] if found else []
     if "product_list_limit" not in final:
         final, page = await _get(final + ("&" if "?" in final else "?") + "product_list_limit=100")
     author = ""
@@ -204,7 +219,76 @@ async def release_details(url):
     sku = re.search(r'data-product-sku="([^"]+)"', page)
     if sku:
         details["sku"] = sku.group(1)
+    # Its full name ("Series 1: Title 1 of 5"), from the page's analytics data or its title
+    name = re.search(r'"sku":"[^"]*","name":("(?:[^"\\]|\\.)*")', page)
+    if name:
+        details["name"] = json.loads(name.group(1))
+    else:
+        og = re.search(r'<meta property="og:title" content="([^"]*)"', page)
+        if og:
+            details["name"] = html.unescape(og.group(1))
     return details
+
+
+def as_book(release, authors=""):
+    """A release listed by GraphicAudio as a library book (no Audible ASIN; its page is its id)."""
+    sequence = release.get("sequence") or ""
+    series = release.get("series") or ""
+    return {
+        "title": release["title"], "authors": release.get("authors") or authors, "narrators": "",
+        "imageUrl": release.get("imageUrl") or release.get("image", ""), "release_date": release.get("release_date", ""),
+        "asin": "", "series": series, "sequence": sequence,
+        "series_list": [{"name": series, "asin": "", "sequence": sequence}] if series else [],
+        "runtime_min": release.get("runtime_min", 0), "runtime_approx": release.get("runtime_approx", False),
+        "description": release.get("description", ""), "isbn": release.get("isbn", ""), "publisher": "GraphicAudio",
+        "language": "English", "edition": "abridged", "edition_reason": "a GraphicAudio dramatization",
+        "part": release.get("part"), "part_count": release.get("part_count"), "ga_url": release["ga_url"],
+    }
+
+
+async def release(url):
+    """A release from its page alone (e.g. one chosen as an import's match)."""
+    details = await release_details(url)
+    info = parse_name(details.get("name", "")) or {}
+    if not info.get("title"):
+        return None
+    return as_book({**info, **details, "title": release_title(info), "ga_url": url})
+
+
+async def find_release(guess):
+    """The GraphicAudio release some files are, for dramatizations Audible doesn't sell: the
+    same title (edition words aside), the same part, and the same book number when both
+    say one. None unless it's clear-cut."""
+    title = guess.get("title") or ""
+    if not title:
+        return None
+    part = part_number(title)
+    core = re.sub(r"\s*[\(\[].*$", "", title).split(":")[0].strip()
+    author = (guess.get("authors") or "").split(",")[0].strip()
+    # The store's search is loose ("Light Bringer" finds another author's "Lightbringer"), so
+    # the series and the author (whose page lists all their releases) come before the title
+    queries = list(dict.fromkeys(q for q in (guess.get("series"), author, core) if q))
+    for query in queries:
+        try:
+            results = await search(query)
+        except httpx.HTTPError as e:
+            logger.warning(f"GraphicAudio: search for {query} failed: {e}")
+            continue
+        found = [r for r in results if r["part"] == part and titles_match(r["title"], title)
+                 and (not author or not r["authors"] or series_key(r["authors"]) == series_key(author))]
+        number = str(guess.get("sequence") or "")
+        if number:
+            found = [r for r in found if not r["sequence"] or r["sequence"] == number] or found
+        if len({r["ga_url"] for r in found}) != 1:
+            continue
+        # Its own page says who wrote it (series pages don't): the author must agree
+        full = await release(found[0]["ga_url"])
+        if not full:
+            continue
+        if author and full["authors"] and series_key(full["authors"]) != series_key(author):
+            continue
+        return full
+    return None
 
 
 async def with_details(book):
