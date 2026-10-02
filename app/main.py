@@ -1098,6 +1098,17 @@ async def browse_directory(path: str = ""):
                  for d in sorted(dirs, key=lambda s: library.display_name(s).lower())],
     }
 
+@app.get("/api/search_graphicaudio")
+async def api_search_graphicaudio(q: str = ""):
+    """GraphicAudio's releases for a search (its dramatizations Audible may not sell). The
+    Search page adds them to its results once they arrive; the store is slow."""
+    from app import graphicaudio
+    try:
+        return {"releases": await asyncio.wait_for(graphicaudio.search(q), timeout=30)}
+    except Exception as e:
+        logger.warning(f"GraphicAudio search failed: {e}")
+        return {"releases": []}
+
 @app.get("/api/search_audible")
 async def search_audible(title: str = ""):
     """Searches Audible by title, author, narrator or series (the query is named title for

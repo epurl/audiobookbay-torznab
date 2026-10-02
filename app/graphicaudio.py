@@ -137,6 +137,30 @@ async def series_releases(series_name):
     return releases
 
 
+async def search(query):
+    """GraphicAudio's releases for a search: [{"title", "series", "sequence", "part",
+    "part_count", "ga_url", "imageUrl", "preorder", "authors"}]. The store's search goes
+    straight to a series or author page when the words name one."""
+    if not (query or "").strip():
+        return []
+    final, page = await _get(f"{BASE}/catalogsearch/result/?q={quote_plus(query.strip())}")
+    if "product_list_limit" not in final:
+        final, page = await _get(final + ("&" if "?" in final else "?") + "product_list_limit=100")
+    author = ""
+    if "/our-productions/authors/" in final:
+        heading = re.search(r'<span class="base"[^>]*>(.*?)</span>', page)
+        author = html.unescape(heading.group(1)).strip() if heading else ""
+    results = []
+    for item in _listed(page):
+        info = parse_name(item["name"])
+        if not info:
+            continue
+        results.append({"title": release_title(info), "series": info["series"], "sequence": info["sequence"],
+                        "part": info["part"], "part_count": info["part_count"], "ga_url": item["url"],
+                        "imageUrl": item["image"], "preorder": item["preorder"], "authors": author})
+    return results
+
+
 async def release_details(url):
     """A release's page: {"release_date", "runtime_min" (approximate), "isbn", "genre",
     "description", "imageUrl", "authors", "sku"}; {} if it can't be read."""

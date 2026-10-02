@@ -111,11 +111,18 @@ function findInLibrary(book) {
         const byAsin = appLibrary.find(b => b.asin && b.asin === book.asin);
         if (byAsin) return byAsin;
     }
+    if (book.ga_url) {
+        const byPage = appLibrary.find(b => b.ga_url && b.ga_url === book.ga_url);
+        if (byPage) return byPage;
+    }
     // Title (before any subtitle) and any shared author, in the same edition: books don't
     // always list their authors in the same order, and a dramatized version is its own book
     const authorKeys = authorKeyList(book.authors);
     const edition = editionOf(book);
-    const same = appLibrary.filter(b => editionOf(b) === edition && authorKeyList(b.authors).some(a => authorKeys.includes(a)));
+    // ... and for a book sold in parts, the same part
+    const part = partOf(book.title);
+    const same = appLibrary.filter(b => editionOf(b) === edition && partOf(b.title) === part
+        && authorKeyList(b.authors).some(a => authorKeys.includes(a)));
     const full = titleKeys(book.title).full;
     return same.find(b => titleKeys(b.title).full === full) || same.find(b => titlesMatch(b.title, book.title));
 }
@@ -2201,18 +2208,14 @@ async function runSearch(query) {
     }
 }
 
+// The results on screen, so GraphicAudio's can be added to them when they arrive
+let searchGroups = null;
+
 function renderResults(data) {
-    resultsContainer.innerHTML = '';
-
-    if (!data.products || data.products.length === 0) {
-        resultsContainer.innerHTML = '<div class="no-results">No audiobooks found on Audible.</div>';
-        return;
-    }
-
     const groups = {};
     const standalone = [];
 
-    data.products.forEach(product => {
+    (data.products || []).forEach(product => {
         const bookData = {
             title: product.title,
             authors: product.authors ? product.authors.map(a => a.name).join(', ') : 'Unknown Author',
@@ -2240,14 +2243,67 @@ function renderResults(data) {
         }
     });
 
+    searchGroups = { query: lastSearchQuery, groups, standalone };
+    drawSearchResults();
+    addGraphicAudioResults(lastSearchQuery);
+}
+
+function drawSearchResults() {
+    const { groups, standalone } = searchGroups;
+    resultsContainer.innerHTML = '';
+    if (!Object.keys(groups).length && !standalone.length) {
+        resultsContainer.innerHTML = '<div class="no-results">No audiobooks found on Audible.</div>';
+        return;
+    }
     for (const [seriesTitle, books] of Object.entries(groups)) {
-        books.sort((a, b) => (parseFloat(a.sequence) || 999) - (parseFloat(b.sequence) || 999));
+        // In order, and a book sold in parts part by part
+        books.sort((a, b) => ((parseFloat(a.sequence) || 999) - (parseFloat(b.sequence) || 999)) || (partOf(a.title) - partOf(b.title)));
         renderGroup(seriesTitle, books);
     }
-
     if (standalone.length > 0) {
         renderGroup("Standalone Books", standalone);
     }
+}
+
+// "The Stormlight Archive [Dramatized Adaptation]", "Stormlight Archive" and "Red Rising Saga" /
+// "Red Rising" name the same series
+function looseSeriesKey(name) {
+    return normKey(String(name || '').replace(/\s*[([][^)\]]*[)\]]/g, '').replace(/^the\s+/i, '').replace(/\s+(saga|series)$/i, ''));
+}
+
+// GraphicAudio's dramatizations, which Audible may not sell (or not all parts of), added to
+// the series they belong to in the results
+async function addGraphicAudioResults(query) {
+    let data;
+    try {
+        data = await fetch(`/api/search_graphicaudio?q=${encodeURIComponent(query)}`).then(r => r.json());
+    } catch (err) {
+        return;
+    }
+    if (!searchGroups || searchGroups.query !== query || query !== lastSearchQuery) return;  // Searched again since
+    const { groups } = searchGroups;
+    let added = 0;
+    (data.releases || []).forEach(rel => {
+        const key = looseSeriesKey(rel.series);
+        const names = key ? Object.keys(groups).filter(n => looseSeriesKey(n) === key) : [];
+        // Audible's dramatized series when there is one
+        const target = names.find(n => /dramati|abridged|graphic/i.test(n)) || names[0];
+        const existing = target ? groups[target] : [];
+        const part = partOf(rel.title);
+        // Audible sells this release: keep Audible's
+        if (existing.some(b => isAbridged(b) && titlesMatch(b.title, rel.title) && partOf(b.title) === part)) return;
+        const ref = existing.find(b => b.series_asin) || existing[0] || {};
+        const groupName = target || rel.series || 'GraphicAudio';
+        (groups[groupName] = groups[groupName] || []).push({
+            title: rel.title, authors: rel.authors || ref.authors || '', narrators: 'Full cast',
+            imageUrl: rel.imageUrl || PLACEHOLDER_COVER, release_date: '', asin: '', runtime_min: 0, description: '',
+            publisher: 'GraphicAudio', language: 'English', edition: 'abridged', edition_reason: 'a GraphicAudio dramatization',
+            ga_url: rel.ga_url, preorder: rel.preorder, series: target || rel.series || '', series_asin: ref.series_asin || '',
+            sequence: rel.sequence || '',
+        });
+        added++;
+    });
+    if (added) drawSearchResults();
 }
 
 function renderGroup(title, books) {
@@ -2292,9 +2348,9 @@ function renderGroup(title, books) {
             <div class="book-info">
                 <div class="book-title" title="${esc(book.title)}">${esc(book.title)}</div>
                 ${editionBadge(book) ? `<div class="edition-badges">${editionBadge(book)}</div>` : ''}
-                <div class="book-author"><button class="link-btn author-link" data-author="${esc(primaryAuthor(book.authors))}">${esc(book.authors)}</button></div>
-                <div class="book-narrator">Narrated by: ${esc(book.narrators)}</div>
-                <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px;">Release: ${esc(released || 'Unknown')}</div>
+                <div class="book-author">${book.authors ? `<button class="link-btn author-link" data-author="${esc(primaryAuthor(book.authors))}">${esc(book.authors)}</button>` : ''}</div>
+                <div class="book-narrator">Narrated by: ${esc(book.narrators)}${book.ga_url ? ' · <span title="From GraphicAudio\'s store; Audible doesn\'t sell it">GraphicAudio</span>' : ''}</div>
+                <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px;">Release: ${esc(released || (book.preorder ? 'Pre-order' : 'Unknown'))}</div>
                 ${addBtnHtml}
             </div>
         `;
