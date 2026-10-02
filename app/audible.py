@@ -253,20 +253,23 @@ async def get_series_books(series_asin, language="All"):
 async def find_series_for_book(title, author, series_name=""):
     """Looks up a book on Audible to find a series it belongs to (for books imported from
     folders). With series_name, returns that series if Audible lists it for the book."""
-    data = await search(title=title.split(":")[0], author=author, num_results=10)
-    want = normalize(title.split(":")[0])
-    for product in data.get("products") or []:
-        if _title_rank(want, product.get("title") or "") is None or not product.get("series"):
-            continue
-        entries = product_series(product)
-        if series_name:
-            key = series_key(series_name)
-            chosen = next((e for e in entries if series_key(e["name"]) == key), None) or next(
-                (e for e in entries if key in series_key(e["name"]) or series_key(e["name"]) in key), None)
-        else:
-            chosen = entries[0]
-        if chosen and chosen["asin"]:
-            return chosen["asin"], chosen["name"]
+    # The whole title first: "Universe: Book Title" searched as just "Universe" finds the
+    # universe's other books. Then the main title, for a subtitle Audible doesn't use.
+    for query in dict.fromkeys(q.strip() for q in (title, title.split(":")[0]) if q.strip()):
+        data = await search(title=query, author=author, num_results=10)
+        want = normalize(query)
+        for product in data.get("products") or []:
+            if _title_rank(want, product.get("title") or "") is None or not product.get("series"):
+                continue
+            entries = product_series(product)
+            if series_name:
+                key = series_key(series_name)
+                chosen = next((e for e in entries if series_key(e["name"]) == key), None) or next(
+                    (e for e in entries if key in series_key(e["name"]) or series_key(e["name"]) in key), None)
+            else:
+                chosen = entries[0]
+            if chosen and chosen["asin"]:
+                return chosen["asin"], chosen["name"]
     return None, None
 
 
