@@ -1088,10 +1088,15 @@ function setupBookModal() {
     });
 }
 
+// A dramatization's match search also looks at GraphicAudio's releases
+function matchSearchesGa() {
+    return isAbridged(appLibrary.find(b => b.id === currentBookId));
+}
+
 async function searchMatches() {
     const results = document.getElementById('matchResults');
     const query = document.getElementById('matchQuery').value.trim();
-    results.innerHTML = '<div class="muted">Searching Audible…</div>';
+    results.innerHTML = `<div class="muted">Searching Audible${matchSearchesGa() ? ' and GraphicAudio' : ''}…</div>`;
     const res = await fetch(`/api/library/${encodeURIComponent(currentBookId)}/match_candidates?q=${encodeURIComponent(query)}`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -1104,7 +1109,7 @@ async function searchMatches() {
     }
     results.innerHTML = data.candidates.map((c, i) => {
         const runtime = c.runtime_min ? `${Math.floor(c.runtime_min / 60)}h ${c.runtime_min % 60}m` : '';
-        const details = [c.authors, c.narrators && `read by ${c.narrators}`,
+        const details = [c.ga_url && 'GraphicAudio', c.authors, c.narrators && `read by ${c.narrators}`,
             seriesLabel(c), runtime, releaseDate(c.release_date, 4)].filter(Boolean).join(' · ');
         return `<div class="match-result">
             <img src="${esc(safeUrl(c.imageUrl, PLACEHOLDER_COVER))}" alt="">
@@ -1115,7 +1120,7 @@ async function searchMatches() {
     results.querySelectorAll('button[data-index]').forEach(btn => btn.addEventListener('click', async () => {
         const chosen = data.candidates[btn.dataset.index];
         btn.disabled = true;
-        const { ok, data: out } = await postJSON(`/api/library/${encodeURIComponent(currentBookId)}/match`, { asin: chosen.asin });
+        const { ok, data: out } = await postJSON(`/api/library/${encodeURIComponent(currentBookId)}/match`, { asin: chosen.asin || chosen.ga_url });
         if (!ok) {
             toast(out.detail || 'Match failed', 'error');
             btn.disabled = false;
@@ -1124,7 +1129,7 @@ async function searchMatches() {
         await fetchLibrary();
         renderLibrary();
         await openBookModal(currentBookId);
-        toast(`Matched to "${chosen.title}" on Audible`, 'ok');
+        toast(`Matched to "${chosen.title}" on ${chosen.ga_url ? 'GraphicAudio' : 'Audible'}`, 'ok');
     }));
 }
 

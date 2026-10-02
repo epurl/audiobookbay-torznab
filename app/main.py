@@ -184,16 +184,33 @@ async def api_match_candidates(book_id: str, q: str = ""):
     book = _get_book_or_404(book_id)
     query = q.strip() or f"{(book.get('title') or '').split(':')[0]} {library.primary_author(book.get('authors'))}"
     try:
-        return {"query": query, "candidates": await audible.match_candidates(query)}
+        candidates = await audible.match_candidates(query)
     except Exception as e:
         logger.error(f"Audible search failed: {e}")
         raise HTTPException(status_code=502, detail="Couldn't search Audible.")
+    # A dramatization: GraphicAudio's own releases too (Audible often doesn't sell them)
+    if editions.edition_of(book) == editions.ABRIDGED:
+        from app import graphicaudio
+        try:
+            found = await asyncio.wait_for(graphicaudio.search(query), timeout=30)
+            candidates += [graphicaudio.as_book(r) for r in found]
+        except Exception as e:
+            logger.warning(f"GraphicAudio search failed: {e}")
+    return {"query": query, "candidates": candidates}
 
 @app.post("/api/library/{book_id}/match")
 async def api_match_book(book_id: str, request: Request):
     """Fills in a book's details from the chosen Audible edition."""
     book = _get_book_or_404(book_id)
     asin = (await request.json()).get("asin", "")
+    from app import graphicaudio
+    if graphicaudio.is_release_url(asin):  # A GraphicAudio release (its page is its id)
+        found = await graphicaudio.release(asin)
+        if not found:
+            raise HTTPException(status_code=404, detail="That release wasn't found on GraphicAudio.")
+        db.apply_audible_match(book_id, found)
+        db.add_history("matched", book, f"Matched to GraphicAudio's {found.get('title')}")
+        return {"success": True, "book": db.get_book(book_id)}
     products = await audible.get_products([asin]) if asin else []
     if not products:
         raise HTTPException(status_code=404, detail="That book wasn't found on Audible.")
