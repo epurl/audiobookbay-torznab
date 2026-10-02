@@ -715,11 +715,16 @@ async def _place_book(book, audio, cover, settings, root_folder, unpacked=False,
     """Copies a book's planned files into its folder and marks it Imported."""
     title = book.get("title", "").strip()
     dest_dir = os.path.join(root_folder, build_folder_name(settings.get("naming_format"), book))
+    norm = lambda p: os.path.normcase(os.path.normpath(p or ""))
+    # A new release of a book already on disk goes in the book's own folder
+    own = book.get("path") or ""
+    own = own if own and os.path.isdir(own) and norm(own).startswith(norm(root_folder).rstrip(os.sep) + os.sep) else ""
+    if own:
+        dest_dir = own
     # Another book already has that folder (same author and title, no series to tell them
     # apart): this one gets its own, rather than sharing the other's files
-    norm = lambda p: os.path.normcase(os.path.normpath(p or ""))
     taken = {norm(b.get("path")) for b in db.get_library() if b.get("path") and b["id"] != book["id"]}
-    if norm(dest_dir) in taken:
+    if not own and norm(dest_dir) in taken:
         tag = book.get("asin") or (book.get("narrators") or "").split(",")[0].strip() or book["id"][:6]
         dest_dir = f"{dest_dir} ({tag})"
         n = 2
@@ -731,6 +736,11 @@ async def _place_book(book, audio, cover, settings, root_folder, unpacked=False,
         # Large copies run in a thread so the web UI stays responsive. Unpacked files are
         # Bayarr's own temporary copies on the library's drive, so they're moved instead
         plan = audio + ([cover] if cover else [])
+        if own:
+            set_aside = await asyncio.to_thread(_set_aside_previous, dest_dir, audio)
+            if set_aside:
+                note += (f" (the {set_aside} file{'s' if set_aside != 1 else ''} it had are kept as .original until"
+                         f" you delete them from the book's page)")
         copied = await asyncio.to_thread(_copy_files, plan, dest_dir, unpacked)
         cover_name = cover[1] if cover else ""
         if settings.get("write_metadata", True):
@@ -819,6 +829,31 @@ async def _import_pack_sibling(book, group, source, settings, root_folder, unpac
         await _place_book(other, audio, cover, settings, root_folder, unpacked,
                           f" (from the pack downloaded for {book.get('title')})")
         return
+
+
+def _set_aside_previous(folder, audio):
+    """Renames the audio files a book's folder already has to "<name>.original" (like a
+    conversion's originals), so a new release's files replace them rather than being
+    skipped as already there or mixed in. Files a previous attempt at this import already
+    copied (same name and size) stay. Returns how many were set aside."""
+    incoming = {}
+    for src, rel in audio:
+        try:
+            incoming[os.path.normcase(os.path.normpath(rel))] = os.path.getsize(src)
+        except OSError:
+            pass
+    count = 0
+    for path, size in audio_files(folder):
+        rel = os.path.normcase(os.path.relpath(path, folder))
+        if incoming.get(rel) == size:
+            continue
+        target, n = path + convert.ORIGINAL_SUFFIX, 2
+        while os.path.exists(target):
+            target = f"{path}.{n}{convert.ORIGINAL_SUFFIX}"
+            n += 1
+        os.rename(path, target)
+        count += 1
+    return count
 
 
 def _copy_files(plan, dest_dir, move=False):

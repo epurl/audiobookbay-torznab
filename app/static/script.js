@@ -4001,7 +4001,7 @@ function setupConvert() {
     });
     document.getElementById('deleteOriginalsBtn').addEventListener('click', async () => {
         const book = appLibrary.find(b => b.id === currentBookId);
-        if (!await confirmDialog(`Permanently delete the original files of "${book.title}"?\n\nOnly the files kept from before converting to M4B (*.original) are deleted. `
+        if (!await confirmDialog(`Permanently delete the original files of "${book.title}"?\n\nOnly the files kept from before converting to M4B or importing a new release (*.original) are deleted. `
             + 'This can\'t be undone.', { title: 'Delete original files', confirmText: 'Delete', danger: true })) return;
         const { ok, data } = await postJSON(`/api/library/${encodeURIComponent(currentBookId)}/originals/delete`);
         if (!ok) return setActionStatus(document.getElementById('bookStatusMsg'), data.detail || 'Could not delete', 'error');
