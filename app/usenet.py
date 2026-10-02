@@ -143,8 +143,14 @@ async def _nzbget_status(settings, ids):
             result = (h.get("Status") or "").upper()  # "SUCCESS/UNPACK", "FAILURE/PAR", "DELETED/MANUAL"...
             if result.startswith(("SUCCESS", "WARNING")):
                 found[i] = _state(1.0, "completed", _nzbget_size(h), path=h.get("FinalDir") or h.get("DestDir") or "")
+            elif result == "DELETED/MANUAL":
+                found[i] = _state(state="missing")  # Removed by you
             elif result.startswith("DELETED"):
-                found[i] = _state(state="missing")
+                # Dropped by NZBGet: too many missing articles (HEALTH), a duplicate (DUPE,
+                # GOOD, COPY), a broken NZB (BAD, SCAN). The release is no good: try another
+                why = {"HEALTH": "too many missing articles", "BAD": "a broken NZB", "SCAN": "a broken NZB"}.get(
+                    result.split("/", 1)[-1], "a duplicate of an earlier download")
+                found[i] = _state(state="failed", message=f"NZBGet deleted it ({why})")
             else:
                 found[i] = _state(state="failed", message=f"NZBGet: {result.lower()}")
         else:
