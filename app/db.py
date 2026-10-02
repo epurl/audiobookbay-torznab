@@ -625,6 +625,12 @@ def restore(data):
         raise ValueError("This isn't a Bayarr backup (expected library and settings).")
     if not all(isinstance(b, dict) and b.get("title") for b in data["library"]):
         raise ValueError("The backup's library has entries without a title.")
+    # A crafted backup could point books at system folders (which Organize would then move)
+    from app.library import is_unsafe_folder
+    unsafe = next((b for b in data["library"] if isinstance(b.get("path"), str) and is_unsafe_folder(b["path"])), None)
+    if unsafe or is_unsafe_folder(str(data["settings"].get("root_folder") or "")):
+        where = unsafe["path"] if unsafe else data["settings"].get("root_folder")
+        raise ValueError(f"The backup points at a system folder ({where}); it wasn't restored.")
     with _lock:
         backup_now(datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S") + "-before-restore")
         current = _load_db()["settings"]

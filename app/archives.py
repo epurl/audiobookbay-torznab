@@ -48,11 +48,20 @@ def _inside(dest, member):
     return target == dest or target.startswith(dest + os.sep)
 
 
+def _check_size(unpacked, dest):
+    """Refuses an archive that would fill the drive (a zip bomb, or just too big)."""
+    free = shutil.disk_usage(dest).free
+    size = lambda n: f"{n / 1024 ** 3:.1f} GB" if n >= 1024 ** 3 else f"{n / 1024 ** 2:.0f} MB"
+    if unpacked > free * 0.9:
+        raise ValueError(f"it would unpack to {size(unpacked)}, more than the free space ({size(free)})")
+
+
 def _extract_zip(archive, dest):
     with zipfile.ZipFile(archive) as z:
         for member in z.namelist():
             if not _inside(dest, member):
                 raise ValueError(f"it contains a file outside its folder ({member})")
+        _check_size(sum(info.file_size for info in z.infolist()), dest)
         z.extractall(dest)
 
 
@@ -65,14 +74,29 @@ def _extract_7z(archive, dest):
                              encoding="utf-8", errors="replace", timeout=300)
     if listing.returncode != 0:
         raise ValueError(_last_line(listing.stderr or listing.stdout) or "7-Zip can't open it")
+    unpacked = 0
     for line in listing.stdout.splitlines():
         # Older 7-Zip versions also list the archive itself
         if line.startswith("Path = ") and line[7:] != archive and not _inside(dest, line[7:]):
             raise ValueError(f"it contains a file outside its folder ({line[7:]})")
+        if line.startswith("Size = ") and line[7:].strip().isdigit():
+            unpacked += int(line[7:])
+    _check_size(unpacked, dest)
     result = subprocess.run([tool, "x", "-y", "-bd", f"-o{dest}", archive], capture_output=True, text=True,
                             encoding="utf-8", errors="replace", timeout=3600)
     if result.returncode != 0:
         raise ValueError(_last_line(result.stderr or result.stdout) or f"7-Zip failed (exit {result.returncode})")
+    _remove_links(dest)
+
+
+def _remove_links(dest):
+    """Symbolic links an archive created are removed: one pointing outside the folder could
+    otherwise lead a later copy or delete somewhere else. Audio files are never links."""
+    for root, dirs, files in os.walk(dest):
+        for name in dirs + files:
+            path = os.path.join(root, name)
+            if os.path.islink(path):
+                os.unlink(path)
 
 
 def _last_line(text):

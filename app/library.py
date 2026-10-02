@@ -25,6 +25,14 @@ SYSTEM_FOLDERS = {"/", "/proc", "/sys", "/dev", "/run", "/tmp", "/etc", "/usr", 
 def is_system_folder(path):
     return os.path.normpath(path).replace("\\", "/") in SYSTEM_FOLDERS
 
+
+def is_unsafe_folder(path):
+    """A system folder or the top of a drive: never a book's folder, scanned or moved."""
+    if not path:
+        return False
+    full = os.path.normpath(os.path.abspath(path))
+    return is_system_folder(path) or is_system_folder(full) or os.path.dirname(full) == full
+
 DEFAULT_NAMING_FORMAT = "{Author} - {Series} {SeriesNumber} - {Title}"
 # Added after the title for dramatized and abridged books when the format has no {Edition},
 # so two editions of a book never share a folder

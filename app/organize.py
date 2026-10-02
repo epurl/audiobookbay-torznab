@@ -8,7 +8,7 @@ import logging
 import os
 
 from app import db
-from app.library import _natural_key, audio_files, build_folder_name, same_path, safe_filename
+from app.library import _natural_key, audio_files, build_folder_name, is_unsafe_folder, same_path, safe_filename
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,8 @@ def plan(rename_files=False, book_ids=None):
         key = os.path.normcase(proposed)
         if key in taken:
             conflict = f'"{taken[key]}" would get the same folder'
+        elif is_unsafe_folder(current):
+            conflict = "The book's folder is a system folder; it's never moved"
         elif not is_file and (same_path(current, root) or _within(proposed, current)) and not same_path(current, proposed):
             conflict = "The book's folder holds the new one (or is the Root Folder); move it by hand"
         elif os.path.exists(proposed) and not same_path(current, proposed):

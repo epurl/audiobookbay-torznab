@@ -60,6 +60,9 @@ def scan(path):
     from app.splitter import detect_books  # The splitter imports the monitor
     if not path or not os.path.isdir(path):
         raise ValueError("That folder doesn't exist.")
+    from app.library import is_unsafe_folder
+    if is_unsafe_folder(path):
+        raise ValueError(f"{path} is a system folder. Choose the folder your downloads are in, e.g. /downloads.")
     library = db.get_library()
     items = []
     entries = sorted((e for e in os.scandir(path) if not e.name.startswith(".")), key=lambda e: e.name.lower())
@@ -236,6 +239,14 @@ def _keep_source(source, dest, root_folder, book_id):
     other = next((b for b in db.get_library() if b["id"] != book_id and b.get("path") and inside(norm(b["path"]), src)), None)
     if other:
         return f"the folder holds {other.get('title')}"
+    from app.library import is_unsafe_folder
+    settings = db.get_settings()
+    for key in ("downloads_folder", "usenet_downloads_folder"):
+        if settings.get(key) and inside(norm(settings[key]), src):
+            return "it's (or holds) your downloads folder"
+    parts = [p for p in os.path.splitdrive(src)[1].replace("\\", "/").split("/") if p]
+    if is_unsafe_folder(source) or len(parts) < 2:
+        return "it's a top-level folder"
     return ""
 
 

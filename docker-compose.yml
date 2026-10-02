@@ -17,4 +17,7 @@ services:
       # Your audiobooks and qBittorrent's downloads (imports are copied from one to the other):
       # - /path/to/audiobooks:/audiobooks
       # - /path/to/qbittorrent/downloads:/downloads
+    # Optional: run as your own user instead of root (it must own ./config and be able to
+    # write to the library), e.g.
+    # user: "1000:1000"
     restart: unless-stopped

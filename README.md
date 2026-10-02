@@ -43,11 +43,11 @@ Changes are saved with the **Save Changes** bar at the bottom.
 
 | Section | What to set |
 | --- | --- |
-| Security | A username and password. Until one is set, only local network addresses can connect. |
+| Security | A username and password (**set one**). Until one is set, only local network addresses can connect, and only by Bayarr's IP address or a local name (`localhost`, `nas`, `nas.local`, `bayarr.lan`), not a domain name. Ten wrong logins from one address hold it back for five minutes. |
 | Download Client | qBittorrent's URL (often `http://qbittorrent:8080`), username and password; **Test Connection** checks them. **Stalled Downloads:** a download with no progress for 6 hours (0 turns this off) is removed with its partial files, and the next-best release is grabbed. **Seeding:** with **Remove Torrents After Seeding** on, a torrent is removed once its book is imported and it reaches the **Ratio** or has seeded for the number of **Days** (whichever comes first; 0 turns a limit off), optionally with its downloaded files (the library copy stays). Only torrents Bayarr added; Activity lists them under **Seeding** with ratio, upload, seeding time, when each will be removed, and **Remove now**. **Usenet:** NZBGet or SABnzbd (URL, username and password, or API key; category `audiobooks`; **Test Connection**) for releases from Newznab indexers. The NZB is fetched from your indexer and handed to the client; a finished job is imported like a torrent (copied and renamed; checks and archives as usual), then its download is deleted (nothing needs to seed; turn **Delete Downloads Once Imported** off to keep it). A failed job is rejected and the next-best release searched for. **Completed Downloads Folder** maps the client's path when it differs from Bayarr's (the client's completed folder or its category folder both work). A job NZBGet deletes itself (too many missing articles, a duplicate, a broken NZB) counts as failed. |
 | Downloads Folder | Only when qBittorrent and Bayarr see downloads at different paths: Bayarr's path to qBittorrent's `audiobooks` save folder. If qBittorrent reports `/data/torrents/audiobooks/Book` and this is `/downloads/audiobooks`, Bayarr reads `/downloads/audiobooks/Book`. |
 | Media Management | **Root Folder** for imported books. **Book Folder Format**, default `{Author} - {Series} {SeriesNumber} - {Title}` (also `{Authors}`, `{Year}`, `{Edition}`; empty parts are dropped; abridged books (dramatizations included) get "(Abridged)" at the end even without `{Edition}`). **Rename Audio Files:** `Title.m4b`, or `Title - Part 01.mp3`… in disc and track order. |
-| Indexers | **AudiobookBay**: on/off, its address (if the domain moves), the session cookie (stored as a secret; **Test** says whether it logs in) and the user agent. **Torznab and Newznab indexers** (e.g. from Prowlarr or Jackett; Newznab ones are Usenet and need NZBGet or SABnzbd): name, feed URL, API key and categories; searched alongside AudiobookBay with the same scoring (plus seeders), grabbed by magnet or `.torrent`. |
+| Indexers | **AudiobookBay**: on/off, its address (if the domain moves), the session cookie (stored as a secret; **Test** says whether it logs in) and the user agent. **Torznab and Newznab indexers** (e.g. from Prowlarr or Jackett; Newznab ones are Usenet and need NZBGet or SABnzbd): name, feed URL, API key and categories; searched alongside AudiobookBay with the same scoring (plus seeders), grabbed by magnet or `.torrent`. **Check the Site's Certificate** (on by default) protects your AudiobookBay cookie and results from anyone in between. **Bayarr as an Indexer:** an optional API key that Prowlarr & co. must then send. |
 | Releases | Preferred and avoided narrators, preferred and blocked words, blocked uploaders (ABB's "Shared by"), minimum bitrate and maximum size. Preferences raise or lower a release's score; blocks, the bitrate and the size rule releases out. |
 | Lists | **Watched Goodreads Lists:** paste a shelf's link (e.g. your Want to Read list), your profile, the shelf's RSS link or your user number. Bayarr checks it every 6 hours (or **Check Now**) and adds the books new on it as Monitored or Unmonitored, looked up on Audible (only clear matches; the rest are listed with a **Search** link). Optionally the books already on it too. Books not found on Audible are looked up again every week. A book you remove from the library isn't added back. The profile must be public, unless you use the RSS link (it has a key). **Import a File:** a one-time import of a Goodreads or StoryGraph export (CSV): choose a shelf, check the matches, add them. |
 | Download Checks | Allowed difference from Audible's runtime (10% by default). |
@@ -198,10 +198,10 @@ Click a trending book for its details, then **Add to Library** (upcoming books b
 
 Add a **Torznab** indexer in Prowlarr, Listenarr or LazyLibrarian:
 - **URL:** `http://<your-server>:8000/api`.
-- **API key:** anything; it isn't checked.
+- **API key:** the one set in **Settings → Indexers → Bayarr as an Indexer** (**Generate** makes one). With none set, anything works and anyone who can reach Bayarr can search through it.
 - **Categories:** `3000` and `3030`.
 
-These endpoints don't need the Bayarr login. Searches (`t=search` / `t=book`) return AudiobookBay results with magnet links.
+These endpoints don't need the Bayarr login (only the API key, when one is set). Searches (`t=search` / `t=book`) return AudiobookBay results with magnet links.
 
 ## Environment variables
 
@@ -214,9 +214,22 @@ These endpoints don't need the Bayarr login. Searches (`t=search` / `t=book`) re
 
 ## Security
 
-- Passwords are never sent to the browser; the login is stored as a salted PBKDF2 hash.
-- `/api` and `/api/download` (Torznab) are public by design and only fetch AudiobookBay pages.
-- Behind a reverse proxy, requests can look local, so **set a login** before exposing Bayarr.
+- **Set a login.** Without one, Bayarr trusts any local address, and behind a reverse proxy every request looks local.
+  Requests must then also name Bayarr by IP or a local name, which stops web pages from reaching it through your
+  browser (DNS rebinding).
+- Passwords are never sent to the browser; the login is stored as a salted PBKDF2 hash. A login that checked out is
+  remembered for ten minutes (in memory, as a hash), and ten wrong logins from one address hold it back for five.
+- `/api` and `/api/download` (Torznab) don't need the login and only fetch AudiobookBay pages; set a Torznab API key so
+  only your apps can use them.
+- Responses carry a Content-Security-Policy (only Bayarr's own script runs, and no other site can frame it),
+  `X-Frame-Options`, `nosniff` and `no-referrer`.
+- API keys, passwords and tokens are blanked out of the logs.
+- AudiobookBay's certificate is checked (Settings → Indexers can turn that off for a mirror with a broken one).
+- Backups (Settings → Backup, `config/backups`) contain your passwords, tokens and API keys: keep them private. A
+  backup pointing books at system folders isn't restored.
+- Logins travel in plain HTTP: put Bayarr behind an HTTPS reverse proxy (or a VPN) to use it away from home.
+- The container runs as root by default; to run it as your own user, add `user: "1000:1000"` (your IDs) to the
+  service in `docker-compose.yml` and make sure that user owns `config` and can write to the library.
 
 ## Running without Docker
 
