@@ -6,6 +6,7 @@ import logging
 import os
 import platform
 import re
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -34,7 +35,7 @@ class _RedactSecrets(logging.Filter):
     """Blanks out API keys, passwords and tokens in log lines: request URLs carry them
     (indexer and SABnzbd API keys, a private Goodreads feed's key, the Torznab key) and
     httpx logs every request's URL, as error messages repeat it."""
-    _SECRET = re.compile(r"(?<![A-Za-z0-9_])((?:api_?key|passkey|token|password|passwd|pass|key|secret|auth)=)[^&\s'\"<>]+",
+    _SECRET = re.compile(r"(?<![A-Za-z0-9_])((?:api_?key|passkey|token|password|passwd|pass|secret|auth)=|key=(?!(?:asin|name)(?::|%3A)))[^&\s'\"<>]+",
                          re.IGNORECASE)
 
     def _clean(self, value):
@@ -74,18 +75,33 @@ class SafeJSONResponse(JSONResponse):
         return json.dumps(content, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
 
 
-app = FastAPI(title="Bayarr", default_response_class=SafeJSONResponse)
+_loops = set()  # Kept here: the event loop only holds weak references to tasks
+BACKGROUND = True  # The monitor and conversion loops (tests turn them off)
+
+
+@asynccontextmanager
+async def lifespan(app):
+    _redact_logs()  # uvicorn's handlers exist by now
+    if BACKGROUND:
+        # The background monitor loop, and the M4B conversion queue
+        _loops.add(asyncio.create_task(run_monitor_loop()))
+        _loops.add(asyncio.create_task(convert.run_queue()))
+    yield
+    # Shutting down: stopped rather than dropped mid-step (a conversion stops its ffmpeg)
+    for task in list(_loops):
+        task.cancel()
+    await asyncio.gather(*_loops, return_exceptions=True)
+    _loops.clear()
+
+
+app = FastAPI(title="Bayarr", default_response_class=SafeJSONResponse, lifespan=lifespan)
 app.middleware("http")(auth.auth_middleware)
 
-_loops = set()  # Kept here: the event loop only holds weak references to tasks
 
-
-@app.on_event("startup")
-async def startup_event():
-    _redact_logs()  # uvicorn's handlers exist by now
-    # Start the background monitor loop, and the M4B conversion queue
-    _loops.add(asyncio.create_task(run_monitor_loop()))
-    _loops.add(asyncio.create_task(convert.run_queue()))
+@app.exception_handler(json.JSONDecodeError)
+async def _bad_json(request: Request, exc: json.JSONDecodeError):
+    """A request body that isn't JSON: a clear 400, not a server error with a traceback."""
+    return JSONResponse({"detail": f"The request isn't valid JSON ({exc.msg})."}, status_code=400)
 
 # Ensure static directory exists
 os.makedirs("app/static", exist_ok=True)
