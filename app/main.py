@@ -377,7 +377,11 @@ async def api_follow_author(request: Request):
     name = (data.get("name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Missing author")
-    entry, added = await authors.follow(name, data.get("add_asins") or [])
+    try:
+        entry, added = await authors.follow(name, data.get("add_asins") or [])
+    except Exception as e:
+        logger.error(f"Following {name} failed: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail="Couldn't load the author's books from Audible.")
     schedule_searches([b for b in added if b["status"] == "Monitored"])
     return {"success": True, "author": entry, "added": len(added)}
 
@@ -395,7 +399,11 @@ async def api_sync_author(author_id: str):
     entry = authors.get(author_id)
     if not entry:
         raise HTTPException(status_code=404, detail="Author not followed")
-    added = await authors.sync(entry, db.get_settings())
+    try:
+        added = await authors.sync(entry, db.get_settings())
+    except Exception as e:
+        logger.error(f"Checking {entry.get('name')} failed: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail="Couldn't load the author's books from Audible.")
     schedule_searches([b for b in added if b["status"] == "Monitored"])
     return {"success": True, "added": len(added)}
 
@@ -820,7 +828,11 @@ async def api_sync_series(series_id: str):
     series = db.get_series(series_id)
     if not series:
         raise HTTPException(status_code=404, detail="Series not found")
-    added = await sync_series(series, db.get_settings())
+    try:
+        added = await sync_series(series, db.get_settings())
+    except Exception as e:
+        logger.error(f"Syncing {series.get('title')} failed: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail="Couldn't load the series from Audible.")
     schedule_searches([b for b in added if b["status"] == "Monitored"])
     return {"success": True, "added": len(added)}
 
