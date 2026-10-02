@@ -500,8 +500,12 @@ def _find_book_for_torrent(library, torrent):
     if not tag:
         return None
     safe_title_from_tag = tag.split("-", 1)[1]
+    # Only a book whose download's hash isn't known: one that knows it waits on that torrent.
+    # Otherwise a rejected release still seeding under the same tag would be checked again
+    # (and held for review) in place of the book's new download.
+    unknown = [b for b in active if not b.get("download_hash") and torrent_hash not in (b.get("blocklist") or [])]
     # The tag was created via title.replace(",", "").strip()
-    return next((b for b in active if b.get("title", "").replace(",", "").strip() == safe_title_from_tag), None)
+    return next((b for b in unknown if b.get("title", "").replace(",", "").strip() == safe_title_from_tag), None)
 
 
 def _map_content_path(torrent, downloads_folder):
