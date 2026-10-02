@@ -1758,7 +1758,7 @@ function renderSeriesDetail() {
             btn.disabled = false;
             return;
         }
-        toast(`Added "${row.title}" (${res.data.status})${res.data.status === 'Monitored' && appSettings.qbt_enabled ? '; searching now' : ''}`, 'ok');
+        toast(`Added "${row.title}" (${res.data.status})${res.data.status === 'Monitored' && downloadsEnabled() ? '; searching now' : ''}`, 'ok');
         refreshSeriesDetail();
     }));
 
