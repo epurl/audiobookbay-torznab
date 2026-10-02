@@ -471,7 +471,10 @@ function setupSettings() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newSettings)
             });
-            if (!res.ok) throw new Error(`Save failed (${res.status})`);
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(typeof data.detail === 'string' ? data.detail : `Save failed (${res.status})`);
+            }
             if (newSettings.abs_token) appSettings.abs_token_set = true;
             delete newSettings.qbt_pass;
             delete newSettings.usenet_pass;
@@ -488,7 +491,7 @@ function setupSettings() {
             toast('Settings saved', 'ok');
         } catch (err) {
             console.error(err);
-            toast('Could not save settings', 'error');
+            toast(`Could not save settings: ${err.message}`, 'error');
         }
     });
 

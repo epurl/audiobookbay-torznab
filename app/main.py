@@ -1042,6 +1042,13 @@ async def api_get_settings():
 @app.post("/api/settings")
 async def api_update_settings(request: Request):
     data = await request.json()
+    # The Root Folder is scanned every 6 hours (and new folders added): never a system folder
+    root = str(data.get("root_folder") or "").strip()
+    if root:
+        full = os.path.normpath(os.path.abspath(root))
+        if library.is_system_folder(root) or library.is_system_folder(full) or os.path.dirname(full) == full:
+            raise HTTPException(status_code=400, detail=f"{root} is a system folder. The Root Folder should be the folder "
+                                                        "that holds your audiobooks, e.g. /audiobooks.")
     db.update_settings(data)
     return {"success": True}
 
