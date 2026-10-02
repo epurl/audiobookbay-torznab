@@ -1116,13 +1116,13 @@ async def api_set_auth(request: Request):
     if auth.env_credentials_set():
         raise HTTPException(status_code=400, detail="Login is set by BAYARR_USERNAME/BAYARR_PASSWORD environment variables.")
     data = await request.json()
-    username = (data.get("username") or "").strip()
-    password = data.get("password") or ""
+    username = str(data.get("username") or "").strip()
+    password = str(data.get("password") or "")
     if not username or ":" in username:
         raise HTTPException(status_code=400, detail="Username is required and cannot contain ':'.")
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
-    db.set_auth_credentials(username, auth.hash_password(password))
+    db.set_auth_credentials(username, await asyncio.to_thread(auth.hash_password, password))  # ~200 ms of CPU
     return {"success": True}
 
 @app.post("/api/send_to_client")

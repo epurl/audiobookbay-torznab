@@ -65,7 +65,11 @@ def check_credentials(username: str, password: str) -> bool:
     stored_hash = settings.get("auth_password_hash", "")
     if not stored_user or not stored_hash:
         return False
-    return _same(username, stored_user) and _verify_hash(password, stored_hash)
+    # Both checked whatever the username: answering faster for a wrong one would give the
+    # username away
+    user_ok = _same(username, stored_user)
+    pass_ok = _verify_hash(password, stored_hash)
+    return user_ok and pass_ok
 
 
 def _is_local_client(request: Request) -> bool:
@@ -191,6 +195,38 @@ def torznab_key_ok(request: Request) -> bool:
     return hmac.compare_digest(given.encode("utf-8", "surrogateescape"), key.encode("utf-8", "surrogateescape"))
 
 
+# Torznab is reachable without the login: per address at most TORZNAB_PER_MINUTE
+# requests, and TORZNAB_AT_ONCE in progress overall, so nobody can queue up endless
+# AudiobookBay requests made with your cookie
+TORZNAB_PER_MINUTE, TORZNAB_AT_ONCE = 60, 4
+_torznab_recent = {}  # client address -> times of its requests in the last minute
+_torznab_running = 0
+
+
+def _torznab_slow_down(retry_after):
+    return Response(status_code=429, media_type="application/xml", headers={"Retry-After": str(retry_after)},
+                    content='<?xml version="1.0" encoding="UTF-8"?><error code="429" description="Too many requests; try again shortly"/>')
+
+
+async def _torznab(request: Request, call_next):
+    global _torznab_running
+    now, ip = time.monotonic(), _client_ip(request)
+    recent = [t for t in _torznab_recent.get(ip, []) if now - t < 60]
+    if len(_torznab_recent) > MAX_TRACKED:  # Many addresses: start afresh
+        _torznab_recent.clear()
+    if len(recent) >= TORZNAB_PER_MINUTE:
+        _torznab_recent[ip] = recent
+        return _torznab_slow_down(60)
+    if _torznab_running >= TORZNAB_AT_ONCE:
+        return _torznab_slow_down(10)
+    _torznab_recent[ip] = recent + [now]
+    _torznab_running += 1
+    try:
+        return await call_next(request)
+    finally:
+        _torznab_running -= 1
+
+
 # --- Headers ----------------------------------------------------------------------
 # No framing by other sites (clickjacking), and only Bayarr's own script runs
 SECURITY_HEADERS = {
@@ -224,7 +260,7 @@ async def _authorize(request: Request, call_next):
         if not torznab_key_ok(request):
             return Response(status_code=401, media_type="application/xml",
                             content='<?xml version="1.0" encoding="UTF-8"?><error code="100" description="Incorrect user credentials"/>')
-        return await call_next(request)
+        return await _torznab(request, call_next)
 
     # Cross-site pages can't send application/json without a CORS preflight (which
     # we never approve), so requiring it blocks CSRF against the JSON API.

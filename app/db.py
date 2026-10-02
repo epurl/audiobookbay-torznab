@@ -219,7 +219,8 @@ def _clean_description(text):
 
 def add_to_library(book, status=None):
     """Adds a book if it isn't tracked yet. Returns the stored entry."""
-    book = {k: v for k, v in book.items() if k in BOOK_FIELDS}
+    # Known fields only, and no structured values where text or numbers belong
+    book = {k: v for k, v in book.items() if k in BOOK_FIELDS and (k == "series_list" or not isinstance(v, (dict, list)))}
     if not isinstance(book.get("series_list"), list):
         book.pop("series_list", None)
     book["series_list"] = merge_series_lists(series_entries(book))
@@ -520,6 +521,18 @@ def get_public_settings():
     return public
 
 
+def _typed(key, value):
+    """A setting's value as the type its default has (text, yes/no), so a malformed one
+    from the browser or a backup can't break the code that uses it. Numbers are checked
+    below; settings without a default are kept as they are."""
+    default = DEFAULT_SETTINGS.get(key)
+    if isinstance(default, bool):
+        return value if isinstance(value, bool) else str(value).strip().lower() in ("1", "true", "yes", "on")
+    if isinstance(default, str):
+        return value if isinstance(value, str) else ("" if value is None or isinstance(value, (dict, list)) else str(value))
+    return value
+
+
 def update_settings(new_settings):
     """Merges whitelisted keys into the stored settings."""
     with _lock:
@@ -527,7 +540,7 @@ def update_settings(new_settings):
         settings = db["settings"]
         for k in EDITABLE_SETTINGS:
             if k in new_settings:
-                settings[k] = new_settings[k]
+                settings[k] = _typed(k, new_settings[k])
         # An empty password field means "keep the current one"
         for key in SECRET_SETTINGS:
             if new_settings.get(key):
@@ -636,7 +649,7 @@ def restore(data):
         current = _load_db()["settings"]
         restored = {
             "library": data["library"],
-            "settings": {**data["settings"],
+            "settings": {**{k: _typed(k, v) for k, v in data["settings"].items()},
                          "auth_username": current.get("auth_username", ""),
                          "auth_password_hash": current.get("auth_password_hash", "")},
             "series": data.get("series") if isinstance(data.get("series"), list) else [],

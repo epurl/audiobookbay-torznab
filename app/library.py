@@ -635,6 +635,23 @@ def safe_filename(text):
     return fit_name(re.sub(r'[\\/:*?"<>|]', "", text or "").strip(" .")).strip(" .")
 
 
+def _safe_to_copy(path, extensions):
+    """A download's file that may be copied into the library. A symbolic link (some
+    cross-seeding setups use them) only when it leads to a file of the same kind outside
+    Bayarr's config folder: "book.mp3" pointing at the database would otherwise put it in
+    the library, where Audiobookshelf shows it."""
+    if not os.path.islink(path):
+        return True
+    from app import db  # (db imports this module)
+    real = os.path.realpath(path)
+    config = os.path.realpath(db.CONFIG_DIR)
+    inside_config = real == config or real.startswith(config.rstrip(os.sep) + os.sep)
+    ok = os.path.isfile(real) and os.path.splitext(real)[1].lower() in extensions and not inside_config
+    if not ok:
+        logger.warning(f"Not importing {path}: it's a link to {real}")
+    return ok
+
+
 def plan_import_files(content_path, title, rename=True, expected_min=0, tolerance=10, only=None):
     """Decides where a download's files go inside the book folder.
 
@@ -648,7 +665,8 @@ def plan_import_files(content_path, title, rename=True, expected_min=0, toleranc
     if os.path.isfile(content_path):
         base = os.path.dirname(content_path)
         name = os.path.basename(content_path)
-        audio_rels = [name] if os.path.splitext(name)[1].lower() in AUDIO_EXTENSIONS else []
+        ok = os.path.splitext(name)[1].lower() in AUDIO_EXTENSIONS and _safe_to_copy(content_path, AUDIO_EXTENSIONS)
+        audio_rels = [name] if ok else []
         image_rels = []
     else:
         base = content_path
@@ -658,9 +676,9 @@ def plan_import_files(content_path, title, rename=True, expected_min=0, toleranc
             for f in files:
                 rel = os.path.relpath(os.path.join(root, f), base)
                 ext = os.path.splitext(f)[1].lower()
-                if ext in AUDIO_EXTENSIONS:
+                if ext in AUDIO_EXTENSIONS and _safe_to_copy(os.path.join(root, f), AUDIO_EXTENSIONS):
                     audio_rels.append(rel)
-                elif ext in IMAGE_EXTENSIONS:
+                elif ext in IMAGE_EXTENSIONS and _safe_to_copy(os.path.join(root, f), IMAGE_EXTENSIONS):
                     image_rels.append(rel)
 
     if only is not None:
