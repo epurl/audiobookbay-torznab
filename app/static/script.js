@@ -3431,13 +3431,16 @@ function drawWatchedLists() {
     const box = document.getElementById('watchedLists');
     box.innerHTML = watchedLists.length ? watchedLists.map(l => {
         const shelf = new URLSearchParams(l.url.split('?')[1] || '').get('shelf') || '';
+        const what = l.kind === 'list'
+            ? `<a href="${esc(safeUrl(l.url))}" target="_blank" rel="noopener noreferrer">Listopia list</a> · its top ${esc(l.top || 100)}`
+            : `Shelf ${esc(shelf)}`;
         const unmatched = (l.unmatched || []).length ? `<details><summary>Not found on Audible (${l.unmatched.length})</summary><ul>
             ${l.unmatched.map(u => `<li>${esc(u.title)} <span class="muted">· ${esc(u.author)}</span>
                 <a href="#/search/${encodeURIComponent(`${u.title} ${u.author}`)}" class="link-btn">Search</a></li>`).join('')}</ul></details>` : '';
         return `<div class="indexer-row watched-list" data-id="${esc(l.id)}">
             <label class="check-label" title="Check this list"><input type="checkbox" class="wl-enabled" ${l.enabled ? 'checked' : ''}></label>
             <div class="indexer-info"><b>${esc(l.name)}</b>
-                <div class="muted">Shelf ${esc(shelf)} · adds books as ${esc(l.monitor)}</div>
+                <div class="muted">${what} · adds books as ${esc(l.monitor)}</div>
                 <div class="${(l.last_result || {}).error ? 'result-error' : 'muted'}">${esc(watchedResultText(l))}</div>${unmatched}</div>
             <select class="form-select wl-monitor" title="How new books are added">
                 <option value="Monitored"${l.monitor === 'Monitored' ? ' selected' : ''}>Monitored</option>
@@ -3541,22 +3544,206 @@ async function showAbbUsage() {
 
 function setupWatchedLists() {
     document.getElementById('absSeriesOrderBtn').addEventListener('click', runAbsSeriesOrder);
-    document.getElementById('wlAddBtn').addEventListener('click', async (e) => {
-        const btn = e.currentTarget;
+    document.getElementById('wlAddBtn').addEventListener('click', () => {
         const status = document.getElementById('wlStatus');
-        const url = document.getElementById('wlUrl').value.trim();
-        if (!url) { setActionStatus(status, 'Paste a Goodreads link first', 'error'); return; }
-        btn.disabled = true;
-        setActionStatus(status, 'Reading the list…');
-        const { ok, data } = await postJSON('/api/lists/watched', {
-            url, shelf: document.getElementById('wlShelf').value.trim(), name: document.getElementById('wlName').value.trim(),
-            monitor: document.getElementById('wlMonitor').value, add_existing: document.getElementById('wlExisting').checked,
+        // One link per line (or separated by spaces): each is reviewed, then watched, in turn
+        const urls = [...new Set(document.getElementById('wlUrl').value.split(/\s+/).map(u => u.trim()).filter(Boolean))];
+        if (!urls.length) { setActionStatus(status, 'Paste a Goodreads link first', 'error'); return; }
+        setActionStatus(status, '');
+        startWatchReviews(urls);
+    });
+    setupWatchReview();
+}
+
+// -----------------
+// Reviewing a Goodreads list before watching it: its books and their Audible matches, like
+// an import. Several links are reviewed one after another.
+// -----------------
+const watchModal = document.getElementById('watchModal');
+let watchQueue = [];          // Links still to review
+let watchOptions = {};        // Shelf, name and top from the form (shelf and name for one link only)
+let watchReview = null;       // The review as the server has it
+let watchChoices = {};        // index -> another match chosen with Change
+let watchUnticked = new Set();
+let watchTimer = null;
+let watchDone = { lists: 0, books: 0, failed: [] };
+
+function startWatchReviews(urls) {
+    const single = urls.length === 1;
+    watchQueue = urls.slice();
+    watchOptions = {
+        shelf: single ? document.getElementById('wlShelf').value.trim() : '',
+        name: single ? document.getElementById('wlName').value.trim() : '',
+        top: parseInt(document.getElementById('wlTop').value, 10) || 100,
+        later: document.getElementById('wlMonitor').value,
+    };
+    watchDone = { lists: 0, books: 0, failed: [] };
+    nextWatchReview();
+}
+
+async function nextWatchReview() {
+    clearTimeout(watchTimer);
+    const url = watchQueue.shift();
+    if (!url) return finishWatchReviews();
+    const total = watchDone.lists + watchDone.failed.length + watchQueue.length + 1;
+    const position = total > 1 ? ` (list ${total - watchQueue.length} of ${total})` : '';
+    watchReview = null; watchChoices = {}; watchUnticked = new Set();
+    document.getElementById('watchLink').textContent = url + position;
+    document.getElementById('watchName').value = watchOptions.name;
+    document.getElementById('watchName').placeholder = '';
+    document.getElementById('watchRows').innerHTML = '';
+    document.getElementById('watchTableBox').hidden = true;
+    document.getElementById('watchLater').value = watchOptions.later;
+    document.getElementById('watchGo').disabled = true;
+    setActionStatus(document.getElementById('watchStatus'), 'Reading the list…');
+    showModal(watchModal);
+    const { ok, data } = await postJSON('/api/lists/preview', { url, shelf: watchOptions.shelf, top: watchOptions.top });
+    if (!ok) {
+        watchDone.failed.push({ url, reason: data.detail || "Couldn't read that list" });
+        setActionStatus(document.getElementById('watchStatus'), data.detail || "Couldn't read that list", 'error');
+        document.getElementById('watchSkip').textContent = watchQueue.length ? 'Next List' : 'Close';
+        return;
+    }
+    document.getElementById('watchSkip').textContent = 'Cancel';
+    pollWatchReview();
+}
+
+async function pollWatchReview() {
+    clearTimeout(watchTimer);
+    const st = await fetch('/api/lists/preview').then(r => r.json()).catch(() => null);
+    if (!st || !watchModal.classList.contains('show')) return;
+    watchReview = st;
+    if (st.title) document.getElementById('watchName').placeholder = st.title;
+    drawWatchReview();
+    if (st.running) watchTimer = setTimeout(pollWatchReview, 1500);
+}
+
+function watchMatchOf(r) {
+    return watchChoices[r.index] || r.match;
+}
+
+function watchCanAdd(r) {
+    return !r.in_library && Boolean(watchMatchOf(r));
+}
+
+function watchChosen() {
+    return (watchReview ? watchReview.results : []).filter(r => watchCanAdd(r) && !watchUnticked.has(r.index));
+}
+
+function drawWatchReview() {
+    const st = watchReview;
+    const status = document.getElementById('watchStatus');
+    if (st.error) {
+        setActionStatus(status, st.error, 'error');
+        document.getElementById('watchSkip').textContent = watchQueue.length ? 'Next List' : 'Close';
+        return;
+    }
+    document.getElementById('watchTableBox').hidden = !st.results.length;
+    document.getElementById('watchRows').innerHTML = st.results.map(r => {
+        const m = watchMatchOf(r);
+        const changed = Boolean(watchChoices[r.index]);
+        const change = r.in_library ? '' : `<button class="link-btn watch-choose" data-index="${r.index}">${m ? 'Change' : 'Choose…'}</button>`;
+        const details = m ? [m.ga_url && !m.asin ? 'GraphicAudio' : '', m.authors, m.narrators ? 'read by ' + shortNames(m.narrators) : '',
+            seriesLabel(m), formatRuntime(m.runtime_min), releaseDate(m.release_date, 4)].filter(Boolean).join(' · ') : '';
+        const audible = m
+            ? `<div class="list-match">${m.imageUrl ? `<img src="${esc(safeUrl(m.imageUrl, PLACEHOLDER_COVER))}" alt="" loading="lazy" data-fallback>` : ''}
+                <span><b>${esc(m.title)}${abridgedIcon(m)}</b><span class="muted">${esc(details)}${changed ? ' · chosen by you' : ''}</span> ${change}</span></div>`
+            : `<span class="muted">Not found on Audible</span> ${change}`;
+        const state = r.in_library ? `<span class="library-status ${esc(statusClass(r.in_library))} inline-status">${esc(r.in_library)}</span>`
+            : m ? '<span class="muted">New</span>' : '<span class="muted" title="Looked up again every week while the list is watched">Not added</span>';
+        return `<tr>
+            <td class="col-check">${watchCanAdd(r) ? `<input type="checkbox" class="watch-check" data-index="${r.index}" ${watchUnticked.has(r.index) ? '' : 'checked'}>` : ''}</td>
+            <td><b>${esc(r.list_title)}</b><div class="muted">${esc([r.list_author, r.series ? `${r.series}${r.sequence ? ' #' + r.sequence : ''}` : ''].filter(Boolean).join(' · '))}</div></td>
+            <td>${audible}</td>
+            <td class="nowrap">${state}</td>
+        </tr>`;
+    }).join('');
+    document.querySelectorAll('.watch-check').forEach(box => box.addEventListener('change', () => {
+        const i = Number(box.dataset.index);
+        box.checked ? watchUnticked.delete(i) : watchUnticked.add(i);
+        updateWatchGo();
+    }));
+    document.querySelectorAll('.watch-choose').forEach(btn => btn.addEventListener('click', () => {
+        const r = st.results.find(x => x.index === Number(btn.dataset.index));
+        openMatchChooser(`${r.list_title} · ${r.list_author}`, { title: r.list_title, authors: r.list_author }, false, choice => {
+            watchChoices[r.index] = choice;
+            watchUnticked.delete(r.index);
+            drawWatchReview();
         });
+    }));
+    const found = st.results.filter(r => r.match).length;
+    const owned = st.results.filter(r => r.in_library).length;
+    setActionStatus(status, st.running
+        ? (st.total ? `Looking up books on Audible… ${st.done} of ${st.total}` : 'Reading the list…')
+        : `${st.total} on the list · ${found} found on Audible` + (owned ? ` · ${owned} already in your library` : ''), st.running ? '' : 'ok');
+    updateWatchGo();
+}
+
+function updateWatchGo() {
+    const n = watchChosen().length;
+    const btn = document.getElementById('watchGo');
+    btn.disabled = !watchReview || watchReview.running || Boolean(watchReview.error);
+    btn.textContent = n ? `Watch & Add ${n} Book${n === 1 ? '' : 's'}` : 'Watch';
+    const all = document.getElementById('watchAll');
+    const addable = (watchReview ? watchReview.results : []).filter(watchCanAdd).length;
+    all.checked = addable > 0 && n === addable;
+    all.indeterminate = n > 0 && n < addable;
+}
+
+async function commitWatchReview() {
+    const btn = document.getElementById('watchGo');
+    const later = document.getElementById('watchLater').value;
+    btn.disabled = true;
+    const { ok, data } = await postJSON('/api/lists/preview/commit', {
+        preview_id: watchReview.id,
+        name: document.getElementById('watchName').value.trim(),
+        monitor: later === 'off' ? 'Monitored' : later,
+        enabled: later !== 'off',
+        add_as: document.getElementById('watchAddAs').value,
+        choices: watchChosen().map(r => ({ index: r.index, asin: watchChoices[r.index] ? watchChoices[r.index].asin : '' })),
+    });
+    if (!ok) {
         btn.disabled = false;
-        if (!ok) { setActionStatus(status, data.detail || 'Could not watch that list', 'error'); return; }
-        setActionStatus(status, 'Watching it; the first check is running', 'ok');
-        ['wlUrl', 'wlShelf', 'wlName'].forEach(id => { document.getElementById(id).value = ''; });
-        loadWatchedLists();
+        setActionStatus(document.getElementById('watchStatus'), data.detail || "Couldn't watch the list", 'error');
+        return;
+    }
+    watchDone.lists += 1;
+    watchDone.books += data.added;
+    nextWatchReview();
+}
+
+async function skipWatchReview() {
+    clearTimeout(watchTimer);
+    if (watchReview && watchReview.id) await fetch('/api/lists/preview', { method: 'DELETE' }).catch(() => null);
+    nextWatchReview();
+}
+
+async function finishWatchReviews() {
+    hideModal(watchModal);
+    await Promise.all([loadWatchedLists(), fetchLibrary()]);
+    renderLibrary();
+    const status = document.getElementById('wlStatus');
+    const box = document.getElementById('wlUrl');
+    box.value = watchDone.failed.map(f => f.url).join('\n');  // What's left still needs fixing
+    if (watchDone.lists) ['wlShelf', 'wlName'].forEach(id => { document.getElementById(id).value = ''; });
+    const parts = [watchDone.lists ? `Watching ${watchDone.lists} new list${watchDone.lists === 1 ? '' : 's'}` : '',
+        watchDone.books ? `${watchDone.books} book${watchDone.books === 1 ? '' : 's'} added` : ''].filter(Boolean);
+    const failed = watchDone.failed.map(f => `${f.url}: ${f.reason}`).join(' · ');
+    setActionStatus(status, [parts.join(', '), failed && `couldn't add: ${failed}`].filter(Boolean).join('; '),
+        watchDone.failed.length ? 'error' : 'ok');
+}
+
+function setupWatchReview() {
+    document.getElementById('watchGo').addEventListener('click', commitWatchReview);
+    document.getElementById('watchSkip').addEventListener('click', skipWatchReview);
+    document.getElementById('closeWatchModal').addEventListener('click', async () => {
+        watchQueue = [];  // Closing stops the remaining links too
+        await skipWatchReview();
+    });
+    document.getElementById('watchAll').addEventListener('change', e => {
+        (watchReview ? watchReview.results : []).filter(watchCanAdd)
+            .forEach(r => e.target.checked ? watchUnticked.delete(r.index) : watchUnticked.add(r.index));
+        drawWatchReview();
     });
 }
 

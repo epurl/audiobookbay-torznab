@@ -353,11 +353,54 @@ async def api_watch_list(request: Request):
     """Starts watching a Goodreads shelf: {url, shelf, name, monitor, add_existing}."""
     data = await request.json()
     try:
-        await reading_list.add_watch(data.get("url") or "", data.get("shelf") or "", data.get("name") or "",
-                                     data.get("monitor") or "Monitored", bool(data.get("add_existing", True)))
+        try:
+            top = int(data.get("top") or 100)
+        except (TypeError, ValueError):
+            top = 100
+        await reading_list.add_watch(str(data.get("url") or ""), str(data.get("shelf") or ""), str(data.get("name") or ""),
+                                     data.get("monitor") or "Monitored", bool(data.get("add_existing", True)), top)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return _watched_json()
+
+@app.post("/api/lists/preview")
+async def api_list_preview(request: Request):
+    """Reads a Goodreads shelf or Listopia list and looks its books up on Audible, for
+    review before watching it: {url, shelf, top}."""
+    data = await request.json()
+    try:
+        top = int(data.get("top") or 100)
+    except (TypeError, ValueError):
+        top = 100
+    try:
+        return reading_list.start_preview(str(data.get("url") or ""), str(data.get("shelf") or ""), top)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/lists/preview")
+async def api_list_preview_status():
+    return reading_list.preview_public()
+
+@app.delete("/api/lists/preview")
+async def api_list_preview_cancel():
+    reading_list.cancel_preview()
+    return {"success": True}
+
+@app.post("/api/lists/preview/commit")
+async def api_list_preview_commit(request: Request):
+    """Watches the reviewed list and adds the chosen books: {preview_id, name, monitor,
+    enabled, add_as, choices: [{index, asin}]}."""
+    data = await request.json()
+    choices = data.get("choices") if isinstance(data.get("choices"), list) else []
+    try:
+        entry, added = await reading_list.commit_preview(
+            str(data.get("preview_id") or ""), str(data.get("name") or ""), data.get("monitor") or "Monitored",
+            data.get("enabled", True) is not False, data.get("add_as") or "Monitored", choices)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {**_watched_json(), "added": len(added), "list_id": entry["id"]}
 
 @app.patch("/api/lists/watched/{list_id}")
 async def api_update_watched_list(list_id: str, request: Request):

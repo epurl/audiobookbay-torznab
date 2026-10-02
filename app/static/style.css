@@ -741,6 +741,48 @@ body {
     font-size: 0.9rem;
 }
 
+/* Reviewing a Goodreads list before watching it */
+.watch-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.watch-head label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    min-width: min(320px, 100%);
+}
+
+#watchLink {
+    word-break: break-all;
+    font-size: 0.85rem;
+}
+
+.watch-footer {
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+/* Progress and results on a line of their own, above the choices */
+#watchStatus {
+    flex-basis: 100%;
+    order: -1;
+}
+
+.watch-footer label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
 #manualMatchModal {
     z-index: 1100;  /* Opens over the import dialog */
 }
@@ -2944,6 +2986,18 @@ label.edition-check {
     gap: 4px;
     font-size: 0.85rem;
     color: var(--text-muted);
+}
+
+/* A field that takes the form's whole width (e.g. several links, one per line) */
+.indexer-form-grid .full-row {
+    grid-column: 1 / -1;
+}
+
+.indexer-form-grid textarea.form-input {
+    resize: vertical;
+    min-height: 4.5em;
+    font-family: inherit;
+    line-height: 1.4;
 }
 
 .release-source {

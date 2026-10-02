@@ -276,6 +276,18 @@ def _title_rank(want, title):
 _NUMBERED_SUBTITLE = re.compile(r"(?:\bvol(?:ume)?\.?|\bbook|\bissue|#)\s*\d", re.IGNORECASE)
 
 
+def preferred_language():
+    """The language matches should be in: Settings > Language, or with that on All, the one
+    most of the library is in (English for an empty library)."""
+    from collections import Counter
+    from app import db  # (db doesn't import this module)
+    setting = (db.get_settings().get("language") or "All").strip()
+    if setting.lower() != "all":
+        return setting
+    counts = Counter((b.get("language") or "").strip().capitalize() for b in db.get_library() if b.get("language"))
+    return counts.most_common(1)[0][0] if counts else "English"
+
+
 async def auto_match(book):
     """Finds the Audible edition of a library book, or None when it isn't clear-cut.
     The title and first author must match, in the book's edition (narrated unless it's
@@ -313,6 +325,11 @@ async def auto_match(book):
         found.append((rank, candidate))
     if not found:
         return None
+    # In your language when Audible has it so (a translation listed first, or released
+    # earlier, would otherwise win)
+    language = preferred_language()
+    in_language = [(rank, c) for rank, c in found if (c.get("language") or "").lower() == language.lower()]
+    found = in_language or found
     best_rank = min(rank for rank, _ in found)
     found = [c for rank, c in found if rank == best_rank]
     if book.get("sequence"):

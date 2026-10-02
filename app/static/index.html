@@ -711,19 +711,19 @@
                     <!-- Lists -->
                     <section class="settings-section" data-section="lists" hidden>
                         <h3>Watched Goodreads Lists</h3>
-                        <p class="settings-hint">Bayarr checks these shelves every 6 hours (and when you click Check Now). New books on them are looked up on Audible and added to your library; only clear matches (title and author), so a few may need adding by hand from Search. A book you remove from the library isn't added back. The Goodreads profile must be public, unless you use the shelf's RSS link (it includes a key).</p>
+                        <p class="settings-hint">Watch as many as you like: your shelves (Want to Read, any shelf of yours or a friend's) and Listopia lists (goodreads.com/list/show/...). Bayarr checks them every 6 hours (and when you click Check Now). New books on them are looked up on Audible and added to your library; only clear matches (title and author), so a few may need adding by hand from Search. A book you remove from the library isn't added back. A shelf's profile must be public, unless you use the shelf's RSS link (it includes a key).</p>
                         <div id="watchedLists" class="indexer-list no-dirty"></div>
                         <div class="indexer-form no-dirty" id="watchForm">
                             <div class="indexer-form-grid">
-                                <label>Goodreads Link<input type="text" id="wlUrl" class="form-input" placeholder="goodreads.com/review/list/12345678-name?shelf=to-read"></label>
+                                <label class="full-row">Goodreads Links (one per line)<textarea id="wlUrl" class="form-input" rows="3" spellcheck="false" placeholder="goodreads.com/review/list/12345678-name?shelf=to-read&#10;goodreads.com/list/show/12345.Some_List"></textarea></label>
                                 <label>Shelf<input type="text" id="wlShelf" class="form-input" placeholder="From the link, else to-read"></label>
                                 <label>Name<input type="text" id="wlName" class="form-input" placeholder="From Goodreads"></label>
                                 <label>Add Books As<select id="wlMonitor" class="form-select"><option value="Monitored">Monitored (downloaded)</option><option value="Unmonitored">Unmonitored</option></select></label>
+                                <label>Listopia Lists: the Top<select id="wlTop" class="form-select"><option value="50">50 books</option><option value="100" selected>100 books</option><option value="250">250 books</option><option value="500">500 books</option></select></label>
                             </div>
-                            <label class="checkbox-label"><input type="checkbox" id="wlExisting" checked> Also add the books already on it</label>
-                            <p class="settings-hint">Paste the address of a shelf (open your Want to Read list on Goodreads and copy it), your profile, the shelf's RSS link, or your Goodreads user number.</p>
+                            <p class="settings-hint">Paste one or more addresses: a shelf (open your Want to Read list on Goodreads and copy it), your profile, a shelf's RSS link, your Goodreads user number, or a Listopia list. Each list is read and its books looked up on Audible first, so you can choose which to add and how, before it's watched. Shelf and Name apply when you add one link; a Listopia list is watched for its top books.</p>
                             <div class="inline-actions">
-                                <button type="button" class="primary-btn" id="wlAddBtn">Watch List</button>
+                                <button type="button" class="primary-btn" id="wlAddBtn">Watch</button>
                                 <span class="action-status" id="wlStatus"></span>
                             </div>
                         </div>
@@ -947,6 +947,46 @@
             <div class="modal-footer">
                 <span class="action-status" id="authorModalStatus"></span>
                 <button class="primary-btn" id="authorFollowBtn">Follow</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="watchModal" class="modal">
+        <div class="modal-content import-content">
+            <div class="modal-header">
+                <h2>Watch a Goodreads List</h2>
+                <button type="button" class="close-btn" id="closeWatchModal" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-pad">
+                <p class="modal-lead">Each book on the list is looked up on Audible (clear matches only: the title and author must match). Choose the ones to add now; <b>Change</b> picks another match. The list is then watched, and books added to it later are added as you choose below.</p>
+                <div class="watch-head">
+                    <label>Name<input type="text" id="watchName" class="form-input" autocomplete="off"></label>
+                    <span class="muted" id="watchLink"></span>
+                </div>
+                <div class="table-container import-table" id="watchTableBox" hidden>
+                    <table class="data-table">
+                        <thead><tr><th class="col-check"><input type="checkbox" id="watchAll" aria-label="Select all"></th><th>On the list</th><th>On Audible</th><th>Status</th></tr></thead>
+                        <tbody id="watchRows"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer watch-footer">
+                <span id="watchStatus" class="action-status"></span>
+                <label>Add the chosen books as
+                    <select id="watchAddAs" class="form-select">
+                        <option value="Monitored">Monitored (download)</option>
+                        <option value="Unmonitored">Unmonitored (just track)</option>
+                    </select>
+                </label>
+                <label>Books added to the list later
+                    <select id="watchLater" class="form-select">
+                        <option value="Monitored">Add as Monitored</option>
+                        <option value="Unmonitored">Add as Unmonitored</option>
+                        <option value="off">Don't add (only these now)</option>
+                    </select>
+                </label>
+                <button class="secondary-btn" id="watchSkip">Cancel</button>
+                <button class="primary-btn" id="watchGo" disabled>Watch</button>
             </div>
         </div>
     </div>

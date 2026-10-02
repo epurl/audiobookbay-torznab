@@ -144,17 +144,25 @@ def public(entry):
     return {k: v for k, v in entry.items() if k != "known"} | {"checking": entry["id"] in _checking}
 
 
-async def add_watch(url, shelf="", name="", monitor="Monitored", add_existing=True):
-    """Starts watching a shelf. Reads it once to check the link; without add_existing, the
-    books already on it are skipped and only ones added later come in."""
+async def add_watch(url, shelf="", name="", monitor="Monitored", add_existing=True, top=100):
+    """Starts watching a shelf or a Listopia list (its top `top` books). Reads it once to
+    check the link; without add_existing, the books already on it are skipped and only ones
+    added later come in. Any number of lists can be watched."""
     import uuid
     from app import goodreads
-    feed = goodreads.feed_url(url, shelf)
+    kind, feed = goodreads.parse_link(url, shelf)
     if any(entry["url"] == feed for entry in watched()):
         raise ValueError("That list is already being watched.")
-    data = await goodreads.fetch(feed, max_pages=1 if add_existing else goodreads.MAX_PAGES)
+    top = top if top in goodreads.LIST_TOPS else 100
+    if kind == "list":
+        data = await goodreads.fetch_list(feed, top)
+    else:
+        data = await goodreads.fetch(feed, max_pages=1 if add_existing else goodreads.MAX_PAGES)
+    if any(entry["url"] == feed for entry in watched()):  # Added meanwhile (e.g. pasted twice)
+        raise ValueError("That list is already being watched.")
     entry = {
-        "id": uuid.uuid4().hex, "url": feed, "source": url.strip(),
+        "id": uuid.uuid4().hex, "url": feed, "source": url.strip(), "kind": kind,
+        **({"top": top} if kind == "list" else {}),
         "name": name.strip() or data["title"] or "Goodreads list",
         "monitor": "Unmonitored" if monitor == "Unmonitored" else "Monitored", "enabled": True,
         "added": datetime.datetime.now().isoformat(timespec="seconds"),
@@ -186,14 +194,16 @@ def start_check(list_id):
 
 async def check_list(list_id):
     """Reads the list and adds the books that are new on it."""
-    from app import goodreads
+    from app import goodreads, scraper
     from app.monitor import schedule_search
     entry = next((e for e in watched() if e["id"] == list_id), None)
     if not entry:
         return
+    # Searches for the books it adds are automatic work: paced, within the daily allowance
+    scraper.PURPOSE.set("background")
     now = datetime.datetime.now().isoformat(timespec="seconds")
     try:
-        data = await goodreads.fetch(entry["url"])
+        data = await goodreads.fetch_watched(entry)
     except ValueError as e:
         logger.warning(f"Watched list {entry['name']}: {e}")
         _update(list_id, last_check=now, last_result={"error": str(e)})
@@ -219,7 +229,8 @@ async def check_list(list_id):
         db.add_history("list", added, f"Added from {entry['name']}")
         result["added"] += 1
 
-    for item in reversed(new):  # Oldest first, so the library gets them in the order you added them
+    # A shelf oldest first (the order you added them), a Listopia list from the top
+    for item in (new if entry.get("kind") == "list" else reversed(new)):
         title, series, sequence = _clean_title(item["title"])
         try:
             match = await audible.auto_match({"title": title, "authors": item["author"], "series": series, "sequence": sequence})
@@ -270,3 +281,142 @@ async def check_all():
                 logger.error(f"Watched list {entry.get('name')} failed: {e}", exc_info=True)
             finally:
                 _checking.discard(entry["id"])
+
+
+# --- Reviewing a list before watching it ----------------------------------------------
+# Adding a list (Settings > Lists) first reads it and looks every book up on Audible; you
+# then choose which matches to add and how, like an import. The books on it now count as
+# seen, so later checks only bring in what's added to it afterwards.
+
+preview = {"id": "", "running": False, "url": "", "feed": "", "kind": "", "top": 100, "title": "",
+           "total": 0, "done": 0, "items": [], "results": [], "error": ""}
+_MATCH_SHOWN = ("title", "subtitle", "authors", "narrators", "imageUrl", "release_date", "asin", "series", "sequence",
+                "runtime_min", "edition", "ga_url", "language")
+
+
+def preview_public():
+    """The review for the browser (matches without their long descriptions)."""
+    results = [{**r, "match": {k: r["match"].get(k) for k in _MATCH_SHOWN} if r["match"] else None}
+               for r in preview["results"]]
+    return {k: v for k, v in preview.items() if k not in ("items", "results")} | {"results": results}
+
+
+def start_preview(url, shelf="", top=100):
+    """Reads a shelf or Listopia list and looks its books up on Audible, in the background."""
+    import uuid
+    from app import goodreads
+    if preview["running"]:
+        raise RuntimeError("Another list is being looked up; wait for it or cancel it.")
+    kind, feed = goodreads.parse_link(url, shelf)  # Raises ValueError with the reason
+    if any(entry["url"] == feed for entry in watched()):
+        raise ValueError("That list is already being watched.")
+    top = top if top in goodreads.LIST_TOPS else 100
+    pid = uuid.uuid4().hex
+    preview.update(id=pid, running=True, url=url.strip(), feed=feed, kind=kind, top=top, title="", total=0, done=0,
+                   items=[], results=[], error="")
+
+    async def run():
+        try:
+            data = await (goodreads.fetch_list(feed, top) if kind == "list" else goodreads.fetch(feed))
+            if preview["id"] != pid:
+                return
+            preview.update(title=data["title"], items=data["items"], total=len(data["items"]))
+            index = LibraryIndex(db.get_library())
+            for i, item in enumerate(data["items"]):
+                if preview["id"] != pid:
+                    return  # Cancelled, or another list started
+                title, series, sequence = _clean_title(item["title"])
+                try:
+                    match = await audible.auto_match({"title": title, "authors": item["author"], "series": series,
+                                                      "sequence": sequence})
+                except Exception as e:
+                    logger.warning(f"List review: couldn't look up {title}: {e}")
+                    match = None
+                owned = index.find(match) if match else None
+                preview["results"].append({"index": i, "book_id": item["book_id"], "list_title": title,
+                                           "list_author": item["author"], "series": series, "sequence": sequence,
+                                           "image": item.get("image", ""), "match": match,
+                                           "in_library": (owned or {}).get("status", ""), "library_id": (owned or {}).get("id", "")})
+                preview["done"] += 1
+                await asyncio.sleep(0.2)  # Gentle on Audible's API
+        except ValueError as e:
+            if preview["id"] == pid:
+                preview["error"] = str(e)
+        except Exception as e:
+            logger.error(f"List review failed: {e}", exc_info=True)
+            if preview["id"] == pid:
+                preview["error"] = "Couldn't read the list."
+        finally:
+            if preview["id"] == pid:
+                preview["running"] = False
+
+    task = asyncio.create_task(run())
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
+    return preview_public()
+
+
+def cancel_preview():
+    preview.update(id="", running=False, items=[], results=[], error="")
+
+
+async def commit_preview(preview_id, name="", monitor="Monitored", enabled=True, add_as="Monitored", choices=()):
+    """Watches the reviewed list and adds the chosen books: [{"index", "asin"}] (the asin a
+    different match you chose, an Audible ASIN or a GraphicAudio page; else the one found).
+    Returns (the watched list, the books added)."""
+    import uuid
+    from app import manual_import, scraper
+    from app.monitor import downloads_enabled, schedule_searches
+    if not preview_id or preview_id != preview["id"] or not preview["feed"]:
+        raise ValueError("Look the list up again; it changed.")
+    if preview["running"]:
+        raise ValueError("Wait until every book has been looked up.")
+    if any(entry["url"] == preview["feed"] for entry in watched()):
+        raise ValueError("That list is already being watched.")
+    now = datetime.datetime.now().isoformat(timespec="seconds")
+    chosen = {}
+    for c in choices or []:
+        try:
+            chosen[int(c.get("index"))] = str(c.get("asin") or "")
+        except (TypeError, ValueError, AttributeError):
+            continue
+    added, already, unmatched = [], 0, []
+    for r in preview["results"]:
+        if r["index"] not in chosen:
+            if not r["match"]:  # Looked up again weekly: Audible may have it later
+                unmatched.append({"book_id": r["book_id"], "title": r["list_title"], "author": r["list_author"],
+                                  "tried": now, "series": r["series"], "sequence": r["sequence"]})
+            continue
+        want = chosen[r["index"]]
+        found = r["match"]
+        if want and not (found and want in (found.get("asin"), found.get("ga_url"))):
+            found = await manual_import.audible_book(want)  # A different match you chose
+        if not found:
+            continue
+        if LibraryIndex(db.get_library()).find(found):
+            already += 1
+            continue
+        book = db.add_to_library({**found, "description": found.get("description", "")})
+        if add_as == "Unmonitored" and book.get("status") in ("Monitored", "Unreleased"):
+            db.update_library_status(book["id"], "Unmonitored")
+            book["status"] = "Unmonitored"
+        added.append(book)
+    entry = {
+        "id": uuid.uuid4().hex, "url": preview["feed"], "source": preview["url"], "kind": preview["kind"],
+        **({"top": preview["top"]} if preview["kind"] == "list" else {}),
+        "name": name.strip() or preview["title"] or "Goodreads list",
+        "monitor": "Unmonitored" if monitor == "Unmonitored" else "Monitored", "enabled": bool(enabled),
+        "added": now, "known": sorted({i["book_id"] for i in preview["items"]}),
+        "last_check": now, "unmatched": unmatched[:UNMATCHED_KEPT],
+        "last_result": {"on_list": len(preview["items"]), "new": len(preview["items"]), "added": len(added),
+                        "already": already, "not_found": len(unmatched), "found_later": 0},
+    }
+    db.set_setting("watched_lists", watched() + [entry])
+    if added:
+        db.add_history("list", None, f"Added {len(added)} book{'s' if len(added) != 1 else ''} from {entry['name']}")
+    cancel_preview()
+    monitored = [b for b in added if b.get("status") == "Monitored"]
+    if monitored and downloads_enabled(db.get_settings()):
+        scraper.PURPOSE.set("background")  # Paced, within the daily allowance
+        schedule_searches(monitored)
+    return entry, added
