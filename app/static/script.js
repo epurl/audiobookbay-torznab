@@ -639,13 +639,17 @@ async function addToLibrary(e, bookData) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(bookData)
         });
-        if (!res.ok) throw new Error(`Add failed (${res.status})`);
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(typeof data.detail === 'string' ? data.detail : `Add failed (${res.status})`);
+        }
         const data = await res.json();
         await fetchLibrary(); // Refresh library
         e.target.textContent = data.status || "Monitored";
         e.target.classList.add('monitored-btn');
     } catch (err) {
         console.error(err);
+        toast(`Could not add "${bookData.title}": ${err.message}`, 'error');
         e.target.textContent = prevText;
         e.target.disabled = false;
     }
