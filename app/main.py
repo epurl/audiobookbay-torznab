@@ -17,7 +17,7 @@ from app import usenet
 from app.monitor import (auto_download_book, classify_editions, downloads_enabled, grab, grab_usenet,
                          match_job, run_monitor_loop,
                          schedule_search, schedule_searches, start_match_job, sync_series)
-from app.qbittorrent import get_torrents, test_connection
+from app.qbittorrent import get_torrents, normalize_host, test_connection
 from app.scraper import fetch_detail_info, search_audiobooks
 from app.torznab import build_caps, build_rss
 
@@ -833,9 +833,9 @@ async def api_qbt_test(request: Request):
     """Checks the qBittorrent login. A blank password uses the saved one."""
     data = await request.json()
     settings = db.get_settings()
-    host = (data.get("host") or settings.get("qbt_host") or "").strip()
-    if not host.startswith(("http://", "https://")):
-        raise HTTPException(status_code=400, detail="Enter the Web UI URL, starting with http:// or https://")
+    host = normalize_host((data.get("host") or settings.get("qbt_host") or "").strip())  # "host:port" gets http://
+    if not host:
+        raise HTTPException(status_code=400, detail="Enter the Web UI URL, e.g. http://192.168.1.10:8080")
     try:
         version = await test_connection(host, data.get("user") or settings.get("qbt_user"),
                                         data.get("password") or settings.get("qbt_pass"))
@@ -873,9 +873,9 @@ async def api_abs_libraries(request: Request):
     """Tests the connection and lists book libraries. A blank token uses the saved one."""
     data = await request.json()
     settings = db.get_settings()
-    url = (data.get("url") or settings.get("abs_url") or "").strip()
+    url = normalize_host((data.get("url") or settings.get("abs_url") or "").strip())
     token = data.get("token") or settings.get("abs_token")
-    if not url.startswith(("http://", "https://")) or not token:
+    if not url or not token:
         raise HTTPException(status_code=400, detail="Enter the Audiobookshelf URL and API token.")
     try:
         return {"libraries": await audiobookshelf.list_libraries(url, token)}
