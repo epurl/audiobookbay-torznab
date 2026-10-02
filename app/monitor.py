@@ -550,11 +550,10 @@ async def import_completed_downloads(settings):
         return
 
     logger.debug("Polling qBittorrent for completed audiobooks...")
-    completed = await get_completed_torrents(
-        settings.get("qbt_host"),
-        settings.get("qbt_user"),
-        settings.get("qbt_pass")
-    )
+    waiting = [b["download_hash"] for b in library if b.get("status") in ("Downloading", "Downloaded")
+               and b.get("download_hash") and not usenet.is_usenet_id(b["download_hash"])]
+    completed = await get_completed_torrents(settings.get("qbt_host"), settings.get("qbt_user"),
+                                             settings.get("qbt_pass"), waiting)
 
     for torrent, book in [(t, b) for t in completed or [] for b in _books_for_torrent(library, t)]:
         if (db.get_book(book["id"]) or {}).get("status") not in ("Downloading", "Downloaded"):
