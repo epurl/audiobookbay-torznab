@@ -283,8 +283,22 @@ def apply_audible_match(book_id, audible_book):
     if fields.get("description"):
         fields["description"] = _clean_description(fields["description"])
     book = get_book(book_id) or {}
-    # Keep every series from both sides; the main one is what Audible matching chose
-    entries = merge_series_lists(series_entries(audible_book), series_entries(book))
+    # Matched to Audible or to a GraphicAudio release: what identified the other goes
+    if audible_book.get("asin"):
+        fields.update(ga_url="", runtime_approx=False)
+    elif audible_book.get("ga_url"):
+        fields.update(asin="")
+    # Keep every series from both sides; the main one is what Audible matching chose. A
+    # different book than before (a wrong match corrected) drops the Audible series the
+    # previous match brought in, unless the new one is in them too
+    kept = series_entries(book)
+    old_id, new_id = book.get("asin") or book.get("ga_url"), audible_book.get("asin") or audible_book.get("ga_url")
+    if old_id and new_id and old_id != new_id:
+        new_entries = series_entries(audible_book)
+        listed = {e["asin"] for e in new_entries if e.get("asin")}
+        names = {series_key(e["name"]) for e in new_entries}
+        kept = [e for e in kept if not e.get("asin") or e["asin"] in listed or series_key(e["name"]) in names]
+    entries = merge_series_lists(series_entries(audible_book), kept)
     fields["series_list"] = entries
     if fields.get("edition"):
         fields["edition_check"] = False  # Audible's edition for the chosen match
