@@ -1,6 +1,6 @@
 """Library statistics for System > Stats."""
 import datetime
-from collections import Counter, defaultdict
+from collections import Counter
 
 from app import db, editions
 from app.library import primary_author, series_entries

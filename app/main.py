@@ -14,7 +14,7 @@ from app import (audible, audiobookshelf, auth, authors, book_search, convert, d
                  manual_import, organize, reading_list, release_calendar, scraper, seeding, series_index, splitter,
                  stats)
 from app import usenet
-from app.monitor import (auto_download_book, classify_editions, downloads_enabled, find_missing_books, grab, grab_usenet,
+from app.monitor import (auto_download_book, classify_editions, downloads_enabled, grab, grab_usenet,
                          match_job, run_monitor_loop,
                          schedule_search, schedule_searches, start_match_job, sync_series)
 from app.qbittorrent import get_torrents, test_connection
@@ -779,8 +779,8 @@ async def api_add_series(request: Request):
     # Today's books count as known, so if this first sync fails, later ones still only add
     # new releases rather than everything that wasn't chosen
     series = db.add_series(asin, title, data.get("author", ""),
-                           known_asins=[b["asin"] for b in catalog.get("books", []) + catalog.get("alternates", [])
-                                        if b.get("asin")])
+                           known_asins=[b.get("asin") or b.get("ga_url") for b in catalog.get("books", []) + catalog.get("alternates", [])
+                                        if b.get("asin") or b.get("ga_url")])
     added = await sync_series(series, db.get_settings(), selected=set(data.get("add_asins") or []))
     schedule_searches([b for b in added if b["status"] == "Monitored"])
     return {"success": True, "series": db.get_series(series["id"]), "added": len(added)}

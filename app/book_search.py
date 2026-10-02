@@ -89,6 +89,7 @@ async def find_releases(book, settings, mode="auto"):
             return
         res = dict(res)  # cached pages stay as the site sent them
         res.setdefault("source", "AudiobookBay")
+        res.setdefault("protocol", "torrent")
         res.update(evaluate(book, res, settings))
         res["query"] = query
         found[key] = res
@@ -96,9 +97,12 @@ async def find_releases(book, settings, mode="auto"):
     queries = build_queries(book)
     # Torznab indexers (e.g. Prowlarr): their own search, with the two most specific queries
     # Each indexer needs its kind of download client: Newznab ones a Usenet client
+    # Automatic searches skip torrent sources without qBittorrent (Manual Search still shows
+    # them: a magnet link can be copied by hand)
     from app import usenet
+    torrents_ok = bool(settings.get("qbt_enabled")) or mode == "manual"
     sources = [i for i in indexers.get_all() if i.get("enabled", True)
-               and (indexers.protocol(i) == "torrent" or usenet.client(settings))]
+               and (torrents_ok if indexers.protocol(i) == "torrent" else bool(usenet.client(settings)))]
     if sources:
         for query, _ in queries[:2]:
             batches = await asyncio.gather(*(indexers.search(i, query) for i in sources), return_exceptions=True)
@@ -112,7 +116,7 @@ async def find_releases(book, settings, mode="auto"):
             if strong():
                 break
 
-    abb = settings.get("abb_enabled", True)
+    abb = settings.get("abb_enabled", True) and torrents_ok
     for query, max_pages in (queries if abb else []):
         if pages_used >= limits["pages"] or scraper.is_paused():
             break

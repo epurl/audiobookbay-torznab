@@ -1,4 +1,5 @@
 """Audible catalog API: book search, product lookups and series listings."""
+import asyncio
 import logging
 import re
 
@@ -15,10 +16,18 @@ _CHUNK = 50  # ASINs per lookup
 
 
 async def _get(url, params):
-    async with httpx.AsyncClient() as client:
-        res = await client.get(url, params=params, timeout=20.0)
-        res.raise_for_status()
-        return res.json()
+    """Audible's API, retried twice when it fails for a moment (a time-out, 429 or 5xx)."""
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient() as client:
+                res = await client.get(url, params=params, timeout=20.0)
+            res.raise_for_status()
+            return res.json()
+        except (httpx.TransportError, httpx.HTTPStatusError) as e:
+            transient = isinstance(e, httpx.TransportError) or e.response.status_code == 429 or e.response.status_code >= 500
+            if not transient or attempt == 2:
+                raise
+            await asyncio.sleep(1 + attempt * 2)
 
 
 async def search(title="", author="", num_results=None):

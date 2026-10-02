@@ -457,8 +457,16 @@ def find_match(library, book):
         return None
     # Each part of a book sold in parts is its own release
     part = book.get("part") or part_number(title)
+    narrators = author_keys(book.get("narrators")) - {""}
+
+    def other_recording(e):
+        """Two Audible products with different narrators: e.g. a new narration of the same
+        book (regional duplicates of one recording share the narrator, and stay one book)."""
+        theirs = author_keys(e.get("narrators")) - {""}
+        return bool(asin and e.get("asin") and e["asin"] != asin and narrators and theirs and not narrators & theirs)
+
     same = [e for e in library if author_keys(e.get("authors")) & authors and edition_of(e) == edition
-            and part_number(e.get("title")) == part]
+            and part_number(e.get("title")) == part and not other_recording(e)]
     # The exact title first, then a title that's this one with or without its subtitle
     return next((e for e in same if title_key(e.get("title")) == title_key(title)), None) or \
         next((e for e in same if titles_match(e.get("title"), title)), None)

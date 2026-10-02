@@ -53,7 +53,6 @@ def build_metadata(book):
     series = _series_text(book)
     release = book.get("release_date") or ""
     title, _, subtitle = (book.get("title") or "").partition(": ")
-    edition = book.get("edition")
     return {
         "tags": [],
         "chapters": [],

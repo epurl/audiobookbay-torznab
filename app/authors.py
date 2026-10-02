@@ -5,7 +5,7 @@ import logging
 import re
 import uuid
 
-from app import audible, db, editions
+from app import audible, db
 from app.library import normalize, title_key
 from app.series_index import LibraryIndex, wanted_editions
 

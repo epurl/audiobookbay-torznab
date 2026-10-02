@@ -2,6 +2,7 @@ import json
 import os
 import re
 import shutil
+import base64
 import datetime
 import html
 import threading
@@ -550,8 +551,18 @@ def set_auth_credentials(username, password_hash):
 
 
 def extract_infohash(magnet):
+    """A magnet's info hash as lowercase hex, which is how qBittorrent reports it. Some
+    magnets give it in base32 (32 characters) instead of hex (40)."""
     match = re.search(r"btih:([0-9a-zA-Z]+)", magnet or "")
-    return match.group(1).lower() if match else None
+    if not match:
+        return None
+    value = match.group(1)
+    if len(value) == 32 and re.fullmatch(r"[A-Za-z2-7]+", value):
+        try:
+            return base64.b32decode(value.upper()).hex()
+        except ValueError:
+            pass
+    return value.lower()
 
 
 # --- Backups -----------------------------------------------------------------

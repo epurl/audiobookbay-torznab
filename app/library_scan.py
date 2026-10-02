@@ -154,5 +154,5 @@ async def run(settings):
     unmatched = [i for i in summary["added_ids"] if not (db.get_book(i) or {}).get("asin")]
     if unmatched:
         from app.monitor import start_match_job
-        start_match_job(unmatched)  # Clear matches only; the rest stay as named
+        start_match_job(unmatched, queue=True)  # Clear matches only; the rest stay as named
     return summary

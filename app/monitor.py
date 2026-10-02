@@ -4,7 +4,7 @@ import datetime
 import os
 import shutil
 from . import archives, audible, audiobookshelf, book_search, convert, db, editions, indexers, release_match, scraper, usenet
-from .library import (audio_files, build_folder_name, describe_files, find_match, plan_import_files,
+from .library import (audio_files, build_folder_name, describe_files, plan_import_files,
                       read_abs_metadata, series_entries, series_key, titles_match, total_duration_min)
 from .qbittorrent import delete_torrents, get_completed_torrents, get_torrents, send_to_qbittorrent, send_torrent_file
 
@@ -184,18 +184,19 @@ async def sync_series(series, settings, selected=None):
     for book in every_edition:
         if index.find(book):
             continue
+        release_id = book.get("asin") or book.get("ga_url") or ""  # GraphicAudio releases have no ASIN
         if selected is not None:
-            wanted = book.get("asin") in selected
+            wanted = bool(release_id) and release_id in selected
         else:
             # Series monitored before known_asins existed: treat today's list as known
-            wanted = (known is not None and book.get("asin") not in known and not _known_part(book, every_edition, known)
-                      and editions.edition_of(book) in editions_wanted)
+            wanted = (known is not None and bool(release_id) and release_id not in known
+                      and not _known_part(book, every_edition, known) and editions.edition_of(book) in editions_wanted)
         if not wanted:
             continue
         from app import graphicaudio
         entry = db.add_to_library({**(await graphicaudio.with_details(book)), "description": ""})
         added.append(entry)
-    all_asins = {b.get("asin") for b in every_edition if b.get("asin")}
+    all_asins = {b.get("asin") or b.get("ga_url") for b in every_edition if b.get("asin") or b.get("ga_url")}
     author = series_author([{"catalog": b, "book": None} for b in books]) or series.get("author", "")
     db.update_series(series["id"], title=title, author=author,
                      known_asins=sorted(set(known or []) | all_asins),
@@ -283,7 +284,9 @@ async def auto_download_book(book, settings):
         logger.info(f"No results found for {title}")
         return False
 
-    best_match = next((r for r in results if release_match.is_acceptable(r)), None)
+    # Only releases a download client can take: torrents need qBittorrent, Usenet NZBGet/SABnzbd
+    usable = lambda r: usenet.client(settings) if r.get("protocol") == "usenet" else settings.get("qbt_enabled")
+    best_match = next((r for r in results if release_match.is_acceptable(r) and usable(r)), None)
     if not best_match:
         closest = "; ".join(book_search.describe(r) for r in results[:3])
         logger.info(f"No suitable match found for {title}. Closest: {closest}")
@@ -509,8 +512,9 @@ async def import_completed_downloads(settings):
 
         content_path = _map_content_path(torrent, settings.get("downloads_folder"))
         if not os.path.exists(content_path):
-            logger.warning(f"Mapped path does not exist: {content_path}")
+            _not_found(book, content_path, "Settings > Download Client > Downloads Folder")
             continue
+        _found_again(book)
 
         # Downloads that are archives are unpacked into a folder of their own, imported from
         # there, and the folder removed afterwards; the archive itself keeps seeding
@@ -531,6 +535,26 @@ async def import_completed_downloads(settings):
 
 
 UNPACK_FOLDER = ".bayarr-unpack"  # In the Root Folder; library scans skip folders starting with "."
+
+NOT_FOUND_GRACE = 10 * 60  # A finished download may still be being moved into place
+_not_found_since = {}       # book id -> when its finished download was first not found
+
+
+def _not_found(book, path, setting):
+    """A finished download isn't where the client says (usually a path mapping): after a
+    grace period the book is held for review with the path, rather than retried silently."""
+    first = _not_found_since.setdefault(book["id"], datetime.datetime.now())
+    waited = (datetime.datetime.now() - first).total_seconds()
+    if waited < NOT_FOUND_GRACE:
+        logger.info(f"Finished download of {book.get('title')} not found yet at {path}")
+        return
+    _not_found_since.pop(book["id"], None)
+    _hold_for_review(book, f"The download finished, but Bayarr can't find it at {path}. If the download client "
+                           f"sees its files at another path, set {setting}, then set the book back to Downloaded.")
+
+
+def _found_again(book):
+    _not_found_since.pop(book["id"], None)
 
 
 def _map_usenet_path(path, settings):
@@ -577,8 +601,9 @@ async def check_usenet_downloads(settings):
                 continue
             content = _map_usenet_path(state.get("path"), settings)
             if not content or not os.path.exists(content):
-                logger.warning(f"Finished Usenet download not found: {content}")
+                _not_found(book, content, "Settings > Download Client > Usenet > Completed Downloads Folder")
                 continue
+            _found_again(book)
             staging = os.path.join(root_folder, UNPACK_FOLDER, book["id"])
             try:
                 imported = await _import_download(book, content, staging, settings, root_folder)
@@ -588,12 +613,25 @@ async def check_usenet_downloads(settings):
                 continue
             # Imported (copied): the download isn't needed any more
             db.update_book(book["id"], download_hash="")
-            if settings.get("usenet_remove_completed", True) and not _inside_library(content, root_folder):
+            if settings.get("usenet_remove_completed", True) and _safe_to_remove(content, settings, root_folder):
                 await asyncio.to_thread(_remove_download, content)
             await usenet.forget(settings, book["download_hash"])
             error = await audiobookshelf.scan_library(settings)
             if error:
                 db.add_history("failed", book, f"Audiobookshelf scan failed: {error}")
+
+
+def _safe_to_remove(content, settings, root_folder):
+    """A finished Usenet job's own folder or file, not the library, the completed-downloads
+    folder itself, or a top-level folder (e.g. if the client reported its category folder)."""
+    norm = lambda p: os.path.normcase(os.path.abspath(p or ""))
+    target = norm(content)
+    if _inside_library(content, root_folder):
+        return False
+    if settings.get("usenet_downloads_folder") and target == norm(settings["usenet_downloads_folder"]):
+        return False
+    parts = [p for p in os.path.splitdrive(target)[1].replace("\\", "/").split("/") if p]
+    return len(parts) >= 3
 
 
 def _inside_library(path, root_folder):
@@ -626,7 +664,7 @@ async def _import_download(book, content_path, staging, settings, root_folder):
     if not audio:
         packed = archives.find_archives(content_path)
         if not packed:
-            logger.warning(f"No audio files found in {content_path}; leaving {title} as Downloaded")
+            _hold_for_review(book, f"There are no audio files in the download ({content_path}).")
             return False
         logger.info(f"Unpacking {len(packed)} archive{'s' if len(packed) != 1 else ''} for {title}")
         await asyncio.to_thread(shutil.rmtree, staging, True)
@@ -667,6 +705,17 @@ async def _place_book(book, audio, cover, settings, root_folder, unpacked=False,
     """Copies a book's planned files into its folder and marks it Imported."""
     title = book.get("title", "").strip()
     dest_dir = os.path.join(root_folder, build_folder_name(settings.get("naming_format"), book))
+    # Another book already has that folder (same author and title, no series to tell them
+    # apart): this one gets its own, rather than sharing the other's files
+    norm = lambda p: os.path.normcase(os.path.normpath(p or ""))
+    taken = {norm(b.get("path")) for b in db.get_library() if b.get("path") and b["id"] != book["id"]}
+    if norm(dest_dir) in taken:
+        tag = book.get("asin") or (book.get("narrators") or "").split(",")[0].strip() or book["id"][:6]
+        dest_dir = f"{dest_dir} ({tag})"
+        n = 2
+        while norm(dest_dir) in taken:
+            dest_dir = f"{dest_dir.rsplit(' (', 1)[0]} ({tag} {n})"
+            n += 1
     logger.info(f"Importing {title} into {dest_dir}")
     try:
         # Large copies run in a thread so the web UI stays responsive. Unpacked files are
@@ -792,10 +841,15 @@ def _copy_files(plan, dest_dir, move=False):
 match_job = {"running": False, "total": 0, "done": 0, "matched": 0, "unsure": 0, "failed": 0}
 
 
-def start_match_job(book_ids):
+_match_waiting = []  # Books to match after the running job (e.g. found by a library scan)
+
+
+def start_match_job(book_ids, queue=False):
     """Matches books to Audible one at a time in the background. Returns False if a job is
-    already running."""
+    already running (with queue, the books are matched right after it instead)."""
     if match_job["running"]:
+        if queue:
+            _match_waiting.extend(i for i in book_ids if i not in _match_waiting)
         return False
     match_job.update(running=True, total=len(book_ids), done=0, matched=0, unsure=0, failed=0)
 
@@ -819,5 +873,9 @@ def start_match_job(book_ids):
                                             f" ({match_job['unsure']} not clear-cut, {match_job['failed']} errors)")
         finally:
             match_job["running"] = False
+            if _match_waiting:
+                waiting = list(_match_waiting)
+                _match_waiting.clear()
+                start_match_job(waiting)
     _run_in_background(run())
     return True

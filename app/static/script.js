@@ -1782,7 +1782,7 @@ function openMonitorDialog(missingRows) {
     const list = document.getElementById('seriesPickList');
     list.innerHTML = missingRows.length ? missingRows.map(r => `
         <label class="pick-row">
-            <input type="checkbox" value="${esc(r.asin)}" ${r.other ? '' : 'checked'}>
+            <input type="checkbox" value="${esc(r.asin || r.ga_url || '')}" ${r.other ? '' : 'checked'}>
             <span class="muted pick-seq">${esc(r.sequence ? '#' + r.sequence : '')}</span>
             <span class="pick-title">${esc(r.title)}${abridgedIcon(r)}${r.other ? ` <span class="muted">(you have the ${esc((EDITION_LABELS[r.other.edition] || '').toLowerCase())} edition)</span>` : ''}</span>
             <span class="muted">${esc(releaseDate(r.release_date, 4))}</span>

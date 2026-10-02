@@ -11,7 +11,7 @@ def build_caps() -> str:
     logger.debug("Building torznab capabilities XML")
     root = etree.Element("caps")
     
-    server = etree.SubElement(root, "server", version="1.0", title="Audiobookbay Indexer", strapline="Audiobooks")
+    etree.SubElement(root, "server", version="1.0", title="Audiobookbay Indexer", strapline="Audiobooks")
     
     searching = etree.SubElement(root, "searching")
     etree.SubElement(searching, "search", available="yes", supportedParams="q")
