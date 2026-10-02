@@ -98,7 +98,10 @@ def _challenge():
 
 
 async def auth_middleware(request: Request, call_next):
-    path = request.url.path.rstrip("/") or "/"
+    # The path the router dispatches on. Not request.url.path: that's rebuilt from the Host
+    # header, which a client can craft (e.g. "host/api?x=") to make any path look like an
+    # open Torznab path (Starlette GHSA-86qp-5c8j-p5mr)
+    path = request.scope.get("path", "").rstrip("/") or "/"
 
     if path in TORZNAB_PATHS:
         return await call_next(request)
