@@ -332,7 +332,9 @@ async def grab(book, magnet, settings, release=None, torrent=None):
 
     logger.info(f"Sent {title} to qBittorrent")
     release_name = (release or {}).get("raw_title") or (release or {}).get("title", "")
-    db.update_book(book["id"], status="Downloading", download_hash=download_hash, release_key=download_hash,
+    # A .torrent release is recognised by its page in later searches, a magnet by its hash
+    key = (release or {}).get("release_key") if not db.extract_infohash((release or {}).get("magnet_url")) else ""
+    db.update_book(book["id"], status="Downloading", download_hash=download_hash, release_key=key or download_hash,
                    release_title=release_name, review_reason="", skip_verify=False)
     details = ", ".join(x for x in (release_name, (release or {}).get("format"), (release or {}).get("size_str"),
                                     (release or {}).get("source")) if x and x != "Unknown")
@@ -451,7 +453,7 @@ async def check_active_downloads(settings):
         logger.warning(f"Giving up on {book['title']}: stalled for {stall_hours}h at {progress}%")
         if settings.get("remove_stalled", True):
             await delete_torrents(*creds, [book["download_hash"]], delete_files=True)
-        blocklist = list(dict.fromkeys((book.get("blocklist") or []) + [book.get("release_key") or book["download_hash"]]))
+        blocklist = list(dict.fromkeys((book.get("blocklist") or []) + indexers.blocklist_keys(book)))
         db.update_book(book["id"], status="Monitored", download_hash="", stalled_since="", blocklist=blocklist)
         db.add_history("stalled", book, f"No progress for {stall_hours} hours (stuck at {progress}%, "
                                         f"state {torrent.get('state')}); rejected, searching for another release")
@@ -605,7 +607,7 @@ async def check_usenet_downloads(settings):
             db.add_history("failed", book, "The download was removed from the Usenet client; the book is Monitored again")
         elif state.get("state") == "failed":
             logger.warning(f"Usenet download of {title} failed: {state.get('message')}")
-            blocklist = list(dict.fromkeys((book.get("blocklist") or []) + [book.get("release_key") or book["download_hash"]]))
+            blocklist = list(dict.fromkeys((book.get("blocklist") or []) + indexers.blocklist_keys(book)))
             db.update_book(book["id"], status="Monitored", download_hash="", blocklist=blocklist)
             db.add_history("failed", book, f"{state.get('message') or 'The download failed'}; rejected, searching for another release")
             await usenet.forget(settings, book["download_hash"])

@@ -79,12 +79,31 @@ def protocol(indexer):
 
 
 def release_key(result):
-    """What identifies a release (for rejecting it): a torrent's info hash, or for Usenet
-    its NZB link."""
+    """What identifies a release (for rejecting it): a torrent's info hash, for a torrent
+    only offered as a .torrent file its page (the hash isn't known until it's fetched), or
+    for Usenet its NZB link."""
     if result.get("protocol") == "usenet":
         ident = result.get("download_url") or result.get("link") or result.get("raw_title") or ""
         return "nzb:" + hashlib.sha1(ident.encode("utf-8", "replace")).hexdigest()[:20]
-    return db.extract_infohash(result.get("magnet_url")) or ""
+    infohash = db.extract_infohash(result.get("magnet_url"))
+    if infohash:
+        return infohash
+    ident = result.get("link") or result.get("download_url") or ""
+    return "url:" + hashlib.sha1(ident.encode("utf-8", "replace")).hexdigest()[:20] if ident else ""
+
+
+def blocklist_keys(book):
+    """What to add to a book's blocklist when its download is rejected: the release's key
+    and the download's hash (a .torrent release is known by both)."""
+    return [k for k in (book.get("release_key"), book.get("download_hash")) if k]
+
+
+def _number(value):
+    """A size or count from a feed ("123", "123.0"); 0 when it isn't a number."""
+    try:
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _item(item, indexer):
@@ -95,7 +114,8 @@ def _item(item, indexer):
     title = (item.findtext("title") or "").strip()
     enclosure = item.find("enclosure")
     download = (enclosure.get("url") if enclosure is not None else "") or item.findtext("link") or ""
-    size = int(item.findtext("size") or (enclosure.get("length") if enclosure is not None else 0) or attrs.get("size") or 0)
+    size = (_number(item.findtext("size")) or _number(enclosure.get("length") if enclosure is not None else 0)
+            or _number(attrs.get("size")))
     magnet = "" if usenet else attrs.get("magneturl") or (download if download.startswith("magnet:") else "")
     if not usenet and not magnet and attrs.get("infohash"):
         magnet = f"magnet:?xt=urn:btih:{attrs['infohash']}&dn={urllib.parse.quote(title)}"

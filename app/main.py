@@ -576,7 +576,7 @@ async def api_reject_download(book_id: str):
     book = _get_book_or_404(book_id)
     if not book.get("download_hash"):
         raise HTTPException(status_code=400, detail="This book has no download to reject.")
-    blocklist = list(dict.fromkeys((book.get("blocklist") or []) + [book.get("release_key") or book["download_hash"]]))
+    blocklist = list(dict.fromkeys((book.get("blocklist") or []) + indexers.blocklist_keys(book)))
     db.update_book(book_id, status="Monitored", blocklist=blocklist, download_hash="", review_reason="", skip_verify=False)
     if usenet.is_usenet_id(book["download_hash"]):
         await usenet.forget(db.get_settings(), book["download_hash"])
