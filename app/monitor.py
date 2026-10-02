@@ -6,7 +6,8 @@ import shutil
 from . import archives, audible, audiobookshelf, book_search, convert, db, editions, indexers, release_match, scraper, usenet
 from .library import (audio_files, build_folder_name, describe_files, plan_import_files,
                       read_abs_metadata, series_entries, series_key, titles_match, total_duration_min)
-from .qbittorrent import delete_torrents, get_completed_torrents, get_torrents, send_to_qbittorrent, send_torrent_file
+from .qbittorrent import (delete_torrents, get_completed_torrents, get_torrents, send_to_qbittorrent, send_torrent_file,
+                          test_connection)
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +243,16 @@ async def check_library():
     from app import reading_list  # Watched Goodreads lists (Settings > Lists)
     await reading_list.check_all()
 
+    # qBittorrent down (and no Usenet client): searching would only fail to send every
+    # release found, adding to History for each book
+    searching = downloads_enabled(settings)
+    if searching and settings.get("qbt_enabled") and not usenet.client(settings):
+        try:
+            await test_connection(settings.get("qbt_host"), settings.get("qbt_user"), settings.get("qbt_pass"))
+        except Exception as e:
+            logger.warning(f"Not searching this round: {e}")
+            searching = False
+
     for book in db.get_library():
         title = book.get("title")
         status = book.get("status")
@@ -261,7 +272,7 @@ async def check_library():
 
         # 2. Search for Monitored books
         if status == "Monitored":
-            if not downloads_enabled(settings):
+            if not searching:
                 continue
             if scraper.is_paused():
                 continue  # AudiobookBay isn't responding; try again next round
