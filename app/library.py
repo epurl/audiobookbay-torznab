@@ -534,6 +534,41 @@ def _variant_rank(variant, size):
     return rank, -size
 
 
+# A part of a book sold in parts, in a file or folder name: "Part 2", "Pt. 2", "(2 of 3)"
+_NAMED_PART = re.compile(r"(?<![a-z])(?:part|pt)\.?[\s_-]*0*(\d{1,2})(?!\d)|[\(\[]\s*0*(\d{1,2})\s+of\s+\d{1,2}\s*[\)\]]",
+                         re.IGNORECASE)
+
+
+def _named_part(rel):
+    """The part a file says it is (its name, else its folder's), or None."""
+    *folders, name = rel.replace("\\", "/").split("/")
+    for piece in [os.path.splitext(name)[0]] + folders[::-1]:
+        m = _NAMED_PART.search(piece)
+        if m:
+            return int(m.group(1) or m.group(2))
+    return None
+
+
+def pick_part(base, audio_rels, title, expected_min=0, tolerance=10):
+    """For a book sold in parts ("Book Title (Part 1 of 2)"), its own part's files from a
+    download holding several parts. Only when every file says which part it is, they are
+    all parts of this book, and the chosen files run as long as the part should: track
+    files merely numbered "Part 01".."Part 25" are left alone."""
+    want, count = part_number(title), part_count(title)
+    if not want or not count or not expected_min or len(audio_rels) < 2:
+        return audio_rels
+    parts = {rel: _named_part(rel) for rel in audio_rels}
+    numbers = set(parts.values())
+    if None in numbers or len(numbers) < 2 or max(numbers) > count or want not in numbers:
+        return audio_rels
+    chosen = [rel for rel, p in parts.items() if p == want]
+    durations = [file_duration_min(os.path.join(base, rel)) for rel in chosen]
+    if any(not d for d in durations) or abs(sum(durations) - expected_min) / expected_min * 100 > tolerance:
+        return audio_rels
+    logger.info(f"The download holds parts {', '.join(map(str, sorted(numbers)))}; importing part {want}")
+    return chosen
+
+
 def pick_one_copy(base, audio_rels, expected_min=0, tolerance=10):
     """Some releases hold the same recording more than once, in different encodings
     ("Book_AAC-LC.m4b" and "Book_xHE-AAC.m4b"). Keeps one copy: files named alike apart
@@ -559,8 +594,11 @@ def pick_one_copy(base, audio_rels, expected_min=0, tolerance=10):
             logger.info(f"The download has the same audio in {len(by_variant)} encodings; importing {', '.join(kept)}")
             return kept
 
-    # Each file is the whole book on its own: copies, not parts
-    if expected_min:
+    # Each file is the whole book on its own: copies, not parts. Files numbered alike
+    # ("Part 1", "Part 2") are parts however long each is (a book sold in parts)
+    stems = [_encoding_variant(os.path.basename(rel))[0] for rel in audio_rels]
+    numbered_alike = len(set(stems)) > 1 and len({re.sub(r"\d+", "#", n) for n in stems}) == 1
+    if expected_min and not numbered_alike:
         durations = [file_duration_min(os.path.join(base, rel)) for rel in audio_rels]
         if all(d and abs(d - expected_min) / expected_min * 100 <= tolerance for d in durations):
             best = min(audio_rels, key=lambda rel: _variant_rank(_encoding_variant(rel)[1], size(rel)))
@@ -620,6 +658,7 @@ def plan_import_files(content_path, title, rename=True, expected_min=0, toleranc
     if only is not None:
         wanted = {os.path.normpath(r) for r in only}
         audio_rels = [r for r in audio_rels if os.path.normpath(r) in wanted]
+    audio_rels = pick_part(base, audio_rels, title, expected_min, tolerance)
     audio_rels = pick_one_copy(base, audio_rels, expected_min, tolerance)
     audio_rels.sort(key=_natural_key)
     stem = safe_filename((title or "").split(":")[0]) or "Audiobook"
