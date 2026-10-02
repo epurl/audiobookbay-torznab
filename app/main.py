@@ -83,6 +83,7 @@ async def torznab_api(request: Request, t: str = "", q: str = "", author: str = 
         
     # Handle Search Queries
     if t in ("search", "book"):
+        offset, limit = max(0, offset), max(1, min(limit, 100))  # From the client: keep them sane
         logger.info(f"Received search request - query: '{q}', author: '{author}', title: '{title}', offset: {offset}, limit: {limit}")
         # Combine parameters into a generic search for audiobookbay
         query_parts = []
