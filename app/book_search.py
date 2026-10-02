@@ -35,8 +35,12 @@ def _plain_title(title):
 
 def build_queries(book):
     """[(query, pages)] from most to least specific."""
-    title = (book.get("title") or "").split(":")[0].strip()
-    full_title = (book.get("title") or "").strip()
+    # Without bracketed tags ("(Part 1 of 2)", "(Dramatized Adaptation)"): the site's search
+    # wants every word, and releases rarely spell those the same way
+    whole = re.sub(r"\s{2,}", " ", re.sub(r"\s*[\(\[][^\)\]]*[\)\]]", " ", book.get("title") or "")).strip() \
+        or (book.get("title") or "").strip()
+    title = whole.split(":")[0].strip()
+    full_title = whole
     author = primary_author(book.get("authors")) or ""
     surname = _surname(author)
     series = (book.get("series") or "").strip()

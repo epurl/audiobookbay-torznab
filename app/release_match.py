@@ -8,6 +8,7 @@ import unicodedata
 
 from app import editions
 from app.db import extract_infohash
+from app.library import _PART_OF, part_count, part_number
 from app.scraper import split_release_title
 
 # A release must have no problems and at least this score to be grabbed automatically
@@ -120,6 +121,29 @@ def release_numbers(body, series_names=()):
     return {n for n in numbers if n}, ranges
 
 
+# "Part 2", "Pt. 2 of 3", "Parts 1-3", "Parts 1 & 2", "(2 of 3)": parts of a book sold in parts
+_RELEASE_PART = re.compile(
+    r"\b(?:part|pt)s?\.?\s*0*(\d{1,2})(?:\s*(?:-|\u2013|&|and|to|thru)\s*(?:part\s*)?0*(\d{1,2}))?(?:\s*(?:of|/)\s*0*(\d{1,2}))?"
+    r"|[\(\[]\s*0*(\d{1,2})\s*(?:of|/)\s*0*(\d{1,2})\s*[\)\]]", re.IGNORECASE)
+
+
+def release_parts(body):
+    """(the parts a release says it holds, how many parts it says there are): ({2}, 3) for
+    "Part 2 of 3", ({1, 2, 3}, None) for "Parts 1-3", (set(), None) when it doesn't say."""
+    parts, total = set(), None
+    for m in _RELEASE_PART.finditer(body or ""):
+        if m.group(1):
+            a = int(m.group(1))
+            b = int(m.group(2)) if m.group(2) else a
+            if 0 < a <= b <= 50:
+                parts |= set(range(a, b + 1))
+            total = total or (int(m.group(3)) if m.group(3) else None)
+        elif 0 < int(m.group(4)) <= int(m.group(5)) <= 50:
+            parts.add(int(m.group(4)))
+            total = total or int(m.group(5))
+    return parts, total
+
+
 def _book_series_names(book):
     names = [book.get("series") or ""]
     names += [e.get("name", "") for e in book.get("series_list") or []]
@@ -145,11 +169,20 @@ def evaluate(book, result, settings, blocklist=None):
         body, rel_author = rest, first
     if result.get("authors"):
         rel_author = ", ".join(result["authors"])
+    # A book sold in parts ("Book Title (Part 1 of 3)") is matched on its title, and the
+    # part separately
+    title = book.get("title") or ""
+    book_part = book.get("part") or part_number(title)
+    book_parts = book.get("part_count") or part_count(title)
+    rel_parts, rel_total = release_parts(body)
+    # Bracketed tags ("(Part 1 of 3)", "(Dramatized Adaptation)") aren't needed in a release's name
+    title = re.sub(r"\s{2,}", " ", re.sub(r"\s*[\(\[][^\)\]]*[\)\]]", " ", _PART_OF.sub(" ", title))).strip() or title
+    if rel_parts:
+        body = re.sub(r"\s{2,}", " ", _RELEASE_PART.sub(" ", body)).strip()
     body_words = tokens(body)
     body_set = set(body_words)
     body_norm = " ".join(body_words)
 
-    title = book.get("title") or ""
     main_title = title.split(":")[0]
     main_words = tokens(main_title)
     main_content = _content(main_words)
@@ -228,6 +261,22 @@ def evaluate(book, result, settings, blocklist=None):
             problems.append(f"Different book in the series (#{', #'.join(sorted(numbers, key=float))})")
     elif series_words and series_words & body_set and author_state in ("full", "surname"):
         score += 3
+
+    # --- Parts ---
+    if book_part:
+        want = f"Part {book_part}" + (f" of {book_parts}" if book_parts else "")
+        if rel_parts == {book_part}:
+            score += 5
+            reasons.append(want)
+        elif rel_parts and book_part in rel_parts:
+            problems.append(f"Holds parts {min(rel_parts)}-{max(rel_parts)}; you want {want}")
+        elif rel_parts:
+            problems.append(f"Different part (Part {', '.join(map(str, sorted(rel_parts)))}); you want {want}")
+        else:
+            problems.append(f"Doesn't say which part (you want {want}): probably the whole book")
+    elif len(rel_parts) == 1 and (rel_total or 0) > 1:
+        # One part of a book you want whole
+        problems.append(f"Only part {next(iter(rel_parts))} of {rel_total} of the book")
 
     # --- Box sets and collections ---
     title_bundle_words = BUNDLE_WORDS & title_all

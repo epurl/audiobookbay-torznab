@@ -458,7 +458,13 @@ async def fetch_detail(detail_url: str, title: str = "") -> Optional[Dict]:
         except Exception as e:
             logger.error(f"Error fetching detail page {detail_url}: {e}", exc_info=True)
             return None
-        cached = _detail_cache.put(detail_url, parse_detail(html))
+        cached = parse_detail(html)
+        # A page without a magnet is usually a Cloudflare check or a hiccup: not kept, so
+        # the next try fetches it again rather than failing for hours
+        if cached.get("magnet"):
+            _detail_cache.put(detail_url, cached)
+        elif "challenge-platform" in html or "cf-browser-verification" in html:
+            logger.warning(f"AudiobookBay returned a Cloudflare check for {detail_url}; a fresh cookie may help")
     detail = dict(cached)
     if title and detail.get("magnet") and "&dn=" not in detail["magnet"]:
         detail["magnet"] = detail["magnet"].replace("&tr=", f"&dn={urllib.parse.quote(title)}&tr=", 1) \
