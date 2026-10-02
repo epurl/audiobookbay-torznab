@@ -758,6 +758,9 @@ async def _import_download(book, content_path, staging, settings, root_folder):
     if others:
         note += f" (one book of a pack of {len(others) + 1})"
     if not await _place_book(book, audio, cover, settings, root_folder, unpacked, note):
+        # Held rather than retried every minute (e.g. a full disk), which would fill History
+        _hold_for_review(book, "Copying the files into the library failed (History has the error). "
+                               "Once that's fixed, use Import Anyway.")
         return False
     # The pack's other books: imported too when they're in the library but not on disk yet
     for group in others:
