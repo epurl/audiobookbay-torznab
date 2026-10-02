@@ -395,6 +395,21 @@
                         </div>
                         <div class="settings-group">
                             <label class="checkbox-label">
+                                <input type="checkbox" id="setIgnoreExtras">
+                                Ignore Extras
+                            </label>
+                            <p class="settings-hint">A series' novellas, short stories, collections, companion books and excerpts are ignored: monitored series and followed authors don't add them, and series don't count them. They're told apart by Audible's numbering (extras sit between the main books, like 2.5, or have no number), their titles, lengths and descriptions. Each is marked on its series page; untick its Ignore box to get it. Unclear ones, such as a full-length prequel, are marked with a question mark and left alone.</p>
+                            <div class="extras-waiting no-dirty" id="extrasWaiting" hidden>
+                                <p id="extrasWaitingText"></p>
+                                <details><summary>Show them</summary><ul id="extrasWaitingList"></ul></details>
+                                <div class="inline-actions">
+                                    <button type="button" class="secondary-btn" id="extrasWaitingBtn">Ignore Them</button>
+                                    <span class="action-status" id="extrasWaitingStatus"></span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="settings-group">
+                            <label class="checkbox-label">
                                 <input type="checkbox" id="setAutoMatch">
                                 Prefer Matching Narrator
                             </label>
@@ -725,7 +740,7 @@
                         <div class="settings-heading">
                             <h3>Exclusions</h3>
                         </div>
-                        <p class="settings-hint">Ignored books: never added automatically, by a list, a monitored series or a followed author. Ignore a book from its series page; remove it here to allow it again.</p>
+                        <p class="settings-hint">Books you ignored: never added automatically, by a list, a monitored series or a followed author. Ignore a book from its series page; remove it here to allow it again. Extras ignored automatically (Settings &gt; General &gt; Ignore Extras) aren't listed; untick one on its series page to get it.</p>
                         <div class="table-container">
                             <table class="data-table exclusions-table">
                                 <thead><tr><th>Book</th><th>Author</th><th>Series</th><th class="col-when">Ignored</th><th class="col-actions"></th></tr></thead>

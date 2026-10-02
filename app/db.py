@@ -63,6 +63,7 @@ DEFAULT_SETTINGS = {
     "auto_convert_m4b": False,                # Queue imported downloads that aren't a single M4B
     "delete_originals_after_convert": False,  # Delete the .original files once a conversion checks out
     "edition_preference": "narrated",  # narrated (unabridged) | abridged | both: what series monitoring adds
+    "ignore_extras": True,  # Series' novellas, short stories, collections... are ignored (app/extras.py)
     # AudiobookBay (the cookie falls back to the ABB_COOKIE environment variable)
     "abb_enabled": True,
     "abb_url": "",
@@ -92,7 +93,7 @@ EDITABLE_SETTINGS = {
     "qbt_host", "qbt_user", "root_folder", "downloads_folder", "naming_format",
     "rename_files", "auto_add_folders", "stall_hours", "remove_stalled", "seed_cleanup", "seed_ratio", "seed_days", "seed_delete_files",
     "usenet_client", "usenet_host", "usenet_user", "usenet_category", "usenet_downloads_folder", "usenet_remove_completed",
-    "verify_runtime", "runtime_tolerance", "write_metadata", "edition_preference",
+    "verify_runtime", "runtime_tolerance", "write_metadata", "edition_preference", "ignore_extras",
     "auto_convert_m4b", "delete_originals_after_convert",
     "pref_narrators", "avoid_narrators", "preferred_words", "blocked_words", "blocked_uploaders",
     "min_bitrate", "max_size_gb", "abb_enabled", "abb_url", "abb_user_agent", "abb_verify_tls", "torznab_api_key",
@@ -139,6 +140,7 @@ def _load_db():
         db.setdefault("series", [])
         db.setdefault("history", [])
         db.setdefault("ignored", [])
+        db.setdefault("allowed", [])
         changed = False
         for book in db.setdefault("library", []):
             # Books used to be keyed by title; give older entries a stable id
@@ -451,6 +453,25 @@ def ignore(book, status_before=""):
     return entry
 
 
+def allowed_ids():
+    """Extras you want after all: not ignored automatically (Settings > General > Ignore Extras)."""
+    return set(_load_db().get("allowed", []))
+
+
+def allow(book, allowed=True):
+    """Lets an extra be added like a main book (allowed=False: ignored automatically again)."""
+    ids = release_ids(book)
+    if not ids:
+        return
+    with _lock:
+        db = _load_db()
+        before = set(db["allowed"])
+        after = before | ids if allowed else before - ids
+        if after != before:
+            db["allowed"] = sorted(after)
+            _save_db(db)
+
+
 def unignore(book):
     """Stops ignoring a release. Returns the entries removed."""
     ids = release_ids(book)
@@ -481,10 +502,11 @@ def get_series(series_id):
 
 CATALOG_MAX_AGE_DAYS = 7
 # Raised when the way series lists are built changes, so saved ones are fetched again
-CATALOG_VERSION = 8
+CATALOG_VERSION = 9
 _CATALOG_BOOK_FIELDS = ("title", "authors", "narrators", "imageUrl", "release_date", "asin", "series", "series_asin",
                         "sequence", "series_list", "runtime_min", "publisher", "language", "catalog_sequence",
-                        "edition", "edition_reason", "part_asins", "part", "part_count", "placeholder", "ga_url")
+                        "edition", "edition_reason", "part_asins", "part", "part_count", "placeholder", "ga_url",
+                        "subtitle", "content_type", "summary_hint")  # The last three tell extras apart
 
 
 CATALOG_FILE = os.path.join(CONFIG_DIR, "series_catalog.json")
@@ -719,6 +741,7 @@ def restore(data):
                          "auth_password_hash": current.get("auth_password_hash", "")},
             "series": data.get("series") if isinstance(data.get("series"), list) else [],
             "history": data.get("history") if isinstance(data.get("history"), list) else [],
+            "allowed": [i for i in (data.get("allowed") if isinstance(data.get("allowed"), list) else []) if isinstance(i, str) and i],
             "ignored": [{**e, "ids": [i for i in e["ids"] if isinstance(i, str) and i]}
                         for e in (data.get("ignored") if isinstance(data.get("ignored"), list) else [])
                         if isinstance(e, dict) and isinstance(e.get("ids"), list)],

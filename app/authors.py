@@ -7,7 +7,7 @@ import uuid
 
 from app import audible, db
 from app.library import normalize, part_number, title_key
-from app.series_index import LibraryIndex, wanted_editions
+from app.series_index import LibraryIndex, auto_ignored, catalog_verdicts, ensure_catalog, skip_rules, wanted_editions
 
 logger = logging.getLogger(__name__)
 
@@ -72,12 +72,16 @@ async def detail(name):
     index = LibraryIndex(db.get_library())
     wanted = wanted_editions()
     today = datetime.date.today().isoformat()
-    ignored = db.ignored_ids()
+    rules = skip_rules()
+    judged = {}
     rows = []
     for b in books:
         owned = index.find(b)
+        # An extra (novella, collection...) by its series' list, if that's been loaded
+        extra = _verdict_in(db.get_catalog(b["series_asin"]), b, judged) if b.get("series_asin") else None
         rows.append({**b, "book_id": (owned or {}).get("id", ""), "status": (owned or {}).get("status", ""),
-                     "upcoming": (b.get("release_date") or "") > today, "ignored": db.is_ignored(b, ignored)})
+                     "upcoming": (b.get("release_date") or "") > today, "extra": extra,
+                     "ignored": db.is_ignored(b, rules["ignored"]) or auto_ignored(b, extra, rules)})
     entry = get(name=name)
     # The library's own spelling of the name, if any
     spelled = next((a.strip() for b in db.get_library() for a in (b.get("authors") or "").split(",")
@@ -92,6 +96,34 @@ async def detail(name):
         "upcoming": sum(1 for r in rows if r["upcoming"]),
         "candidates": [r for r in rows if not r["book_id"] and r["edition"] in wanted],
     }
+
+
+def _verdict_in(catalog, book, judged):
+    """Whether a book is an extra in its series (app/extras.py), from the series' list.
+    judged: each list's verdicts so far, so a series is judged once."""
+    if not catalog:
+        return None
+    entry = next((cb for cb in (catalog.get("books") or []) + (catalog.get("alternates") or [])
+                  if cb.get("asin") and cb.get("asin") == book.get("asin")), None)
+    if entry is None:
+        return None
+    if id(catalog) not in judged:
+        judged[id(catalog)] = catalog_verdicts(catalog)
+    return judged[id(catalog)].get(id(entry))
+
+
+async def _series_verdict(book, catalogs, judged):
+    """The same, fetching the series' list when it isn't cached (catalogs: what's fetched so far)."""
+    asin = book.get("series_asin")
+    if not asin:
+        return None
+    if asin not in catalogs:
+        try:
+            catalogs[asin] = await ensure_catalog(asin)
+        except Exception as e:
+            logger.warning(f"Couldn't load series {book.get('series')} to check {book.get('title')}: {e}")
+            catalogs[asin] = None
+    return _verdict_in(catalogs[asin], book, judged)
 
 
 async def follow(name, add_asins=()):
@@ -124,11 +156,15 @@ async def sync(entry, settings):
     index = LibraryIndex(db.get_library())
     known = set(entry.get("known_asins") or [])
     wanted = wanted_editions(settings.get("edition_preference"))
-    ignored = db.ignored_ids()
+    rules = skip_rules()
+    catalogs, judged = {}, {}
     added = []
     for b in books:
         if (b.get("asin") and b["asin"] not in known and b["edition"] in wanted and not index.find(b)
-                and not db.is_ignored(b, ignored)):
+                and not db.is_ignored(b, rules["ignored"])):
+            # Not its series' extras (novellas, collections...) when they're ignored
+            if rules["auto"] and auto_ignored(b, await _series_verdict(b, catalogs, judged), rules):
+                continue
             added.append(db.add_to_library({**b, "description": ""}))
     update(entry["id"], known_asins=sorted(known | {b["asin"] for b in books if b.get("asin")}),
            last_sync=datetime.datetime.now().isoformat(timespec="seconds"))

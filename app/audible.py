@@ -5,7 +5,7 @@ import re
 
 import httpx
 
-from app import editions
+from app import editions, extras
 from app.library import format_sequence, main_series_fields, normalize, primary_author, series_key
 
 logger = logging.getLogger(__name__)
@@ -169,6 +169,23 @@ def part_of(title):
     return (int(m.group(1)), int(m.group(2))) if m else (None, None)
 
 
+def series_number(seq):
+    """A book's number in a series as Audible gives it: "3", "2.5"; "1, Dramatized Adaptation,
+    Part 2" (GraphicAudio's editions) is 1. "1, Sub-series Name" is that other series'
+    number, so none here (""). None for a box set or an omnibus ("1-3", "1, 3")."""
+    text = str(seq or "").strip()
+    if re.fullmatch(r"[\d.\s]+([-–,&]\s*[\d.\s]+)+", text):
+        return None
+    m = re.match(r"^(\d+(?:\.\d+)?)(?:\s*,\s*|\s+)(?=[A-Za-z])(.*)$", text)
+    if m:
+        edition = re.fullmatch(r"(\s*,?\s*(dramati[sz]ed|dramati[sz]ation|adaptation|full[\s-]cast|graphic\s?audio|"
+                               r"(un)?abridged|edition|part\s+\d+))+\s*", m.group(2), re.IGNORECASE)
+        return format_sequence(m.group(1)) if edition else ""
+    if re.search(r"\d\s*[-–,]\s*\d", text):
+        return None
+    return format_sequence(text)
+
+
 async def get_series_books(series_asin, language="All"):
     """Every release in a series: (title, books, alternates). books has the narrated
     editions (or a book's other edition when it has no narration); alternates are the
@@ -179,7 +196,7 @@ async def get_series_books(series_asin, language="All"):
     series = data.get("product") or {}
     children = [r for r in series.get("relationships") or []
                 if r.get("relationship_to_product") == "child" and r.get("relationship_type") == "series"]
-    sequences = {r["asin"]: r.get("sequence", "") for r in children}
+    sequences = {r["asin"]: series_number(r.get("sequence", "")) for r in children}
     products = await get_products(sequences)
 
     def add(found, book):
@@ -196,13 +213,16 @@ async def get_series_books(series_asin, language="All"):
     parted = {}  # (number, edition, title, part) -> book
     for product in products:
         seq = sequences.get(product.get("asin"), "")
-        if re.search(r"[-,]", seq):
+        if seq is None:
             continue  # "1-3" box sets
         if language.lower() != "all" and product.get("language") and product["language"].lower() != language.lower():
             continue
         book = product_to_book(product)
         # This book's number within the series being listed (it may be in several)
-        book["catalog_sequence"] = format_sequence(seq)
+        book["catalog_sequence"] = seq
+        # What tells extras from main books (app/extras.py)
+        book["content_type"] = product.get("content_type") or ""
+        book["summary_hint"] = extras.summary_hint(product.get("publisher_summary"))
         if not any(e["asin"] == series_asin for e in book["series_list"]):
             book["series_list"].append({"name": series.get("title", ""), "asin": series_asin, "sequence": format_sequence(seq)})
         base, part = _split_part(book["title"])

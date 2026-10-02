@@ -198,15 +198,17 @@ async def sync_series(series, settings, selected=None):
     series recorded on them. Books are only added when chosen (selected, when the series is
     first monitored) or new: ones Audible didn't list before, in the editions the edition
     setting asks for. Returns the added books."""
-    from app.series_index import LibraryIndex, ensure_catalog, plain_title, series_author, wanted_editions
+    from app.series_index import (LibraryIndex, auto_ignored, catalog_verdicts, ensure_catalog, plain_title,
+                                  series_author, skip_rules, wanted_editions)
     catalog = await ensure_catalog(series["asin"], force=True)
+    verdicts = catalog_verdicts(catalog)  # Its extras: novellas, collections... (app/extras.py)
     books = catalog.get("books", [])
     every_edition = books + catalog.get("alternates", [])
     editions_wanted = wanted_editions(settings.get("edition_preference"))
     title = plain_title(series.get("title") or catalog.get("title", ""))
     index = LibraryIndex(db.get_library())
     known = series.get("known_asins")
-    ignored = db.ignored_ids()
+    rules = skip_rules()
     added = []
     for book in every_edition:
         if index.find(book):
@@ -216,10 +218,10 @@ async def sync_series(series, settings, selected=None):
             wanted = bool(release_id) and release_id in selected
         else:
             # Series monitored before known_asins existed: treat today's list as known. Books
-            # you ignored on the series page aren't added
+            # you ignored on the series page aren't added, nor are extras (Settings > General)
             wanted = (known is not None and bool(release_id) and release_id not in known
                       and not _known_part(book, every_edition, known) and editions.edition_of(book) in editions_wanted
-                      and not db.is_ignored(book, ignored))
+                      and not db.is_ignored(book, rules["ignored"]) and not auto_ignored(book, verdicts.get(id(book)), rules))
         if not wanted:
             continue
         from app import graphicaudio

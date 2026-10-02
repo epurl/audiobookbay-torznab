@@ -8,7 +8,7 @@ import datetime
 import logging
 from collections import Counter, defaultdict
 
-from app import audible, db
+from app import audible, db, extras
 from app.editions import ABRIDGED, DRAMATIZED, NARRATED, edition_of
 from app.library import normalize, part_number, primary_author, series_entries, series_key, title_keys
 
@@ -144,23 +144,52 @@ def _catalog_entries(group):
     return [(cb, alt) for cb, alt in entries if _is_drama(cb) == bool(group.get("dramatized"))]
 
 
+def catalog_verdicts(catalog):
+    """Which of a series' releases are extras (novellas, collections...; app/extras.py):
+    {id of the release's entry: verdict}. Each side of the series (dramatizations, the rest)
+    is judged against its own main books."""
+    entries = list((catalog or {}).get("books") or []) + list((catalog or {}).get("alternates") or [])
+    verdicts = {}
+    for drama in (False, True):
+        side = [cb for cb in entries if _is_drama(cb) == drama]
+        for cb, verdict in zip(side, extras.classify_all(side, (catalog or {}).get("title", ""))):
+            verdicts[id(cb)] = verdict
+    return verdicts
+
+
+def skip_rules():
+    """What's left out of a series, automatically or by you: the ignored releases, the
+    extras you want after all, and whether extras are ignored (Settings > General)."""
+    return {"ignored": db.ignored_ids(), "allowed": db.allowed_ids(),
+            "auto": bool(db.get_settings().get("ignore_extras", True))}
+
+
+def auto_ignored(release, verdict, rules):
+    """An extra not in the library that's ignored without you saying so."""
+    return bool(rules["auto"] and (verdict or {}).get("verdict") == "extra"
+                and not db.release_ids(release) & (rules["allowed"] | rules["ignored"]))
+
+
 def _all_rows(group, index):
     """(rows, other editions): every release in the series, from Audible's list merged with
     the library's books, and the books' abridged editions. The dramatized side of a series
-    lists only dramatizations; the narrated side everything else."""
+    lists only dramatizations; the narrated side everything else. Each row from Audible's
+    list carries its verdict (extra, maybe or main)."""
     drama = bool(group.get("dramatized"))
+    verdicts = catalog_verdicts(group["catalog"]) if group["catalog"] else {}
     rows, alternates, used = [], [], set()
     for cb, alt in _catalog_entries(group):
         owned = index.find(cb)
         if owned:
             used.add(owned["id"])
-        row = {"book": owned, "catalog": cb, "sequence": cb.get("catalog_sequence") or cb.get("sequence", "")}
+        row = {"book": owned, "catalog": cb, "sequence": cb.get("catalog_sequence") or cb.get("sequence", ""),
+               "extra": verdicts.get(id(cb))}
         (alternates if alt and not drama else rows).append(row)
     for b, seq in group["books"]:
         if b["id"] not in used:
             used.add(b["id"])
             # A library book Audible doesn't list: an abridged edition goes with the other editions
-            row = {"book": b, "catalog": None, "sequence": seq}
+            row = {"book": b, "catalog": None, "sequence": seq, "extra": None}
             (alternates if group["catalog"] and not drama and edition_of(b) != NARRATED else rows).append(row)
     order = lambda r: _seq_sort(r["sequence"], (r["book"] or r["catalog"]).get("release_date"),
                                 _part(r["catalog"] or r["book"]))
@@ -217,19 +246,27 @@ def _upcoming(row, today=None):
     return db.is_unreleased((row["book"] or row["catalog"] or {}).get("release_date"), today)
 
 
-def _ignored(row, ignored):
-    """Ignored from the series page (and not on disk): left out of the series' count. By
-    the library book's ids or Audible's (a library book may not have its ASIN)."""
-    return bool(ignored) and not _owned(row) and bool((db.release_ids(row["book"]) | db.release_ids(row["catalog"])) & ignored)
+def _auto_ignored(row, rules):
+    """An extra that isn't in the library, ignored because extras are."""
+    return not row["book"] and not _owned(row) and auto_ignored(row["catalog"], row.get("extra"), rules)
 
 
-def summarize(group, index, ignored=frozenset()):
+def _ignored(row, rules):
+    """Ignored (and not on disk): left out of the series' count. By you, by the library
+    book's ids or Audible's (a library book may not have its ASIN), or as an extra."""
+    if _owned(row):
+        return False
+    return bool((db.release_ids(row["book"]) | db.release_ids(row["catalog"])) & rules["ignored"]) or _auto_ignored(row, rules)
+
+
+def summarize(group, index, rules=None):
+    rules = rules or skip_rules()
     rows = _rows(group, index)
     statuses = [_held(r)["status"] for r in rows if _held(r)]
     tracked = group["tracked"]
     today = datetime.date.today()
-    skipped = [r for r in rows if _ignored(r, ignored)]
-    upcoming = [r for r in rows if not _ignored(r, ignored) and _upcoming(r, today)]
+    skipped = [r for r in rows if _ignored(r, rules)]
+    upcoming = [r for r in rows if not _ignored(r, rules) and _upcoming(r, today)]
     # Like Sonarr's episode count: released books you haven't ignored, and what you have
     left_out = {id(r) for r in skipped + upcoming}
     counted = [r for r in rows if id(r) not in left_out]
@@ -261,8 +298,8 @@ def summarize(group, index, ignored=frozenset()):
 def index():
     groups = build_groups()
     lib_index = LibraryIndex(db.get_library())
-    ignored = db.ignored_ids()
-    return [summarize(g, lib_index, ignored) for g in groups.values()]
+    rules = skip_rules()
+    return [summarize(g, lib_index, rules) for g in groups.values()]
 
 
 async def resolve_asin(group):
@@ -384,11 +421,12 @@ async def detail(key):
         # Audible only has dramatizations of this series
         group = _drama_variant(group)
         rows, alternates = _all_rows(group, lib_index)
-    ignored = db.ignored_ids()
-    summary = summarize(group, lib_index, ignored)
+    rules = skip_rules()
+    summary = summarize(group, lib_index, rules)
     today = datetime.date.today()
-    summary["rows"] = [_row_json(r, ignored, today) for r in rows]
-    summary["alternates"] = [_row_json(r, ignored, today) for r in alternates]
+    summary["rows"] = [_row_json(r, rules, today) for r in rows]
+    summary["alternates"] = [_row_json(r, rules, today) for r in alternates]
+    summary["ignore_extras"] = rules["auto"]
     # The series' two sides: narrated (with abridged) and dramatized
     main_key = group["key"][:-len(DRAMA_SUFFIX)] if group.get("dramatized") else group["key"]
     main_side = {**group, "key": main_key, "dramatized": False}
@@ -409,12 +447,14 @@ async def detail(key):
     return summary
 
 
-def _row_json(r, ignored=frozenset(), today=None):
+def _row_json(r, rules, today=None):
     book, catalog = r["book"], r["catalog"]
     shown = book or catalog
     other = r.get("other")
     return {
-        "ignored": _ignored(r, ignored),
+        "ignored": _ignored(r, rules),
+        "auto_ignored": _auto_ignored(r, rules),  # As an extra, not by you
+        "extra": r.get("extra"),  # {"verdict": "extra" or "maybe", "label", "reason"}; None: a main book
         "upcoming": _upcoming(r, today),
         "sequence": r["sequence"],
         "book_id": (book or {}).get("id", ""),
@@ -434,6 +474,26 @@ def _row_json(r, ignored=frozenset(), today=None):
         # Another edition of this book that you have
         "other": {"book_id": other["id"], "status": other.get("status", ""), "edition": edition_of(other)} if other else None,
     }
+
+
+def waiting_extras():
+    """Library books that are extras (by their series' lists) still waiting to be
+    downloaded (Monitored or Unreleased): added before extras were ignored, or by a series
+    or author sync. [{book, label, reason, series}]."""
+    rules = skip_rules()
+    found = {}
+    lib_index = LibraryIndex(db.get_library())
+    for group in build_groups().values():
+        if not group["catalog"]:
+            continue
+        rows, alternates = _all_rows(group, lib_index)
+        for row in rows + alternates:
+            book, verdict = row["book"], row.get("extra")
+            if (book and (verdict or {}).get("verdict") == "extra" and book.get("status") in ("Monitored", "Unreleased")
+                    and not (db.release_ids(book) | db.release_ids(row["catalog"])) & (rules["allowed"] | rules["ignored"])):
+                found.setdefault(book["id"], {"book": book, "label": verdict["label"], "reason": verdict["reason"],
+                                              "series": plain_title(group["title"]), "release": row["catalog"]})
+    return list(found.values())
 
 
 def wanted_editions(preference=None):

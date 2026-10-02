@@ -316,7 +316,10 @@ function activateView(viewId) {
     if (viewId === 'libraryView') renderLibrary();
     if (viewId === 'seriesView') renderSeries();
     if (viewId === 'calendarView') renderCalendar();
-    if (viewId === 'settingsView') pollSettingsQueue();
+    if (viewId === 'settingsView') {
+        pollSettingsQueue();
+        if (!document.querySelector('.settings-section[data-section="general"]').hidden) loadWaitingExtras();
+    }
     if (viewId === 'authorsView') renderFollowedAuthors();
     if (viewId === 'importView') openManualImport();
     if (viewId === 'activityView') {
@@ -406,6 +409,7 @@ async function fetchSettings() {
         showUsenetFields();
         document.getElementById('setFormatPref').value = appSettings.format_preference || "prefer_m4b";
         document.getElementById('setEditionPref').value = appSettings.edition_preference === 'dramatized' ? 'abridged' : (appSettings.edition_preference || "narrated");
+        document.getElementById('setIgnoreExtras').checked = appSettings.ignore_extras ?? true;
         document.getElementById('setAuthUser').value = appSettings.auth_username || "";
         if (appSettings.auth_from_env) {
             document.getElementById('setAuthUser').disabled = true;
@@ -438,6 +442,7 @@ function setupSettings() {
             language: document.getElementById('setLanguage').value,
             format_preference: document.getElementById('setFormatPref').value,
             edition_preference: document.getElementById('setEditionPref').value,
+            ignore_extras: document.getElementById('setIgnoreExtras').checked,
             auto_match_narrator: document.getElementById('setAutoMatch').checked,
             qbt_enabled: document.getElementById('setQbtEnabled').checked,
             qbt_host: document.getElementById('setQbtHost').value,
@@ -523,6 +528,19 @@ function setupSettings() {
     });
 
     document.getElementById('setUsenetClient').addEventListener('change', showUsenetFields);
+    document.getElementById('setIgnoreExtras').addEventListener('change', loadWaitingExtras);
+    document.getElementById('extrasWaitingBtn').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        const status = document.getElementById('extrasWaitingStatus');
+        btn.disabled = true;
+        const { ok, data } = await postJSON('/api/extras/ignore_waiting');
+        btn.disabled = false;
+        if (!ok) return setActionStatus(status, data.detail || 'Could not ignore them', 'error');
+        setActionStatus(status, '');
+        toast(`Ignored ${data.ignored} extra${data.ignored === 1 ? '' : 's'}: set to Unmonitored (Settings > Lists > Exclusions to undo one)`, 'ok');
+        await fetchLibrary();
+        loadWaitingExtras();
+    });
     document.getElementById('usenetTestBtn').addEventListener('click', async (e) => {
         const btn = e.currentTarget;
         const status = document.getElementById('usenetStatus');
@@ -622,9 +640,25 @@ function pollSettingsQueue() {
     settingsQueueTimer = setTimeout(pollSettingsQueue, 3000);
 }
 
+// Settings > General > Ignore Extras: extras in the library still waiting to be downloaded
+// (added before extras were ignored), to ignore in one go
+async function loadWaitingExtras() {
+    const box = document.getElementById('extrasWaiting');
+    const data = await fetch('/api/extras/waiting').then(r => r.json()).catch(() => null);
+    const books = (data && data.books) || [];
+    box.hidden = !books.length || !document.getElementById('setIgnoreExtras').checked;
+    if (!books.length) return;
+    document.getElementById('extrasWaitingText').textContent =
+        `${books.length} extra${books.length === 1 ? ' is' : 's are'} in your library, waiting to be downloaded (added before extras were ignored).`;
+    document.getElementById('extrasWaitingList').innerHTML = books.map(b =>
+        `<li>${bookLink(b.id, b.title)} <span class="muted">· ${esc(b.series)} · ${esc(b.label)} · ${esc(b.status)}</span></li>`).join('');
+    document.getElementById('extrasWaitingBtn').textContent = `Ignore ${books.length === 1 ? 'It' : `All ${books.length}`}`;
+}
+
 function showSettingsSection(name) {
     document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t.dataset.section === name));
     document.querySelectorAll('.settings-section').forEach(sec => { sec.hidden = sec.dataset.section !== name; });
+    if (name === 'general') loadWaitingExtras();
     if (name === 'media') pollSettingsQueue();
     if (name === 'lists') {
         loadWatchedLists();
@@ -1728,6 +1762,13 @@ function canIgnore(r) {
     return IGNORABLE_STATUSES.includes(r.status || '') && Boolean(r.asin || r.ga_url);
 }
 
+// "Novella", "#2.5"...: why a release looks like an extra (a question mark when it's unclear)
+function extraTag(r) {
+    if (!r.extra) return '';
+    const maybe = r.extra.verdict === 'maybe';
+    return ` <span class="extra-tag${maybe ? ' maybe' : ''}" title="${esc(maybe ? `Maybe not a main book: ${r.extra.reason}` : `Not a main book: ${r.extra.reason}`)}">${esc(r.extra.label)}${maybe ? '?' : ''}</span>`;
+}
+
 function seriesRowHtml(r, src, i) {
     const other = r.other
         ? ` <span class="muted" title="You have the ${esc(EDITION_LABELS[r.other.edition] || '')} edition">· ${esc(EDITION_LABELS[r.other.edition] || '')}: ${esc(r.other.status)}</span>` : '';
@@ -1737,7 +1778,9 @@ function seriesRowHtml(r, src, i) {
             aria-label="Ignore ${esc(r.title)}" title="${r.ignored ? 'Ignored: untick to add and download it as usual' : 'Ignore: never add or download this book automatically'}">` : '';
     let status;
     if (r.ignored) {
-        status = '<span class="library-status status-ignored inline-status" title="Not added or downloaded automatically (Settings > Lists > Exclusions)">Ignored</span>';
+        const why = r.auto_ignored ? `An extra, ignored automatically (Settings > General > Ignore Extras): ${r.extra.reason}`
+            : 'Not added or downloaded automatically (Settings > Lists > Exclusions)';
+        status = `<span class="library-status status-ignored inline-status" title="${esc(why)}">Ignored</span>`;
     } else if (r.book_id) {
         const shown = shownStatus(r);
         status = `<span class="library-status ${esc(statusClass(shown))} inline-status">${esc(shown)}</span>`;
@@ -1747,7 +1790,7 @@ function seriesRowHtml(r, src, i) {
     const rowClass = [r.book_id ? 'clickable' : 'not-owned', r.ignored ? 'ignored-row' : ''].filter(Boolean).join(' ');
     return `<tr class="${rowClass}" data-src="${src}" data-index="${i}">
         <td class="muted">${esc(r.sequence)}</td>
-        <td>${bookLink(r.book_id, r.title)}${abridgedIcon(r)}${r.ga_url ? ` <a class="muted" href="${esc(safeUrl(r.ga_url))}" target="_blank" rel="noopener noreferrer" title="Only on GraphicAudio's store">· GraphicAudio</a>` : ''}${r.placeholder ? ' <span class="muted" title="Audible lists it in the series but does not sell it; it can still be found elsewhere">· not on Audible</span>' : ''}</td>
+        <td>${bookLink(r.book_id, r.title)}${abridgedIcon(r)}${extraTag(r)}${r.ga_url ? ` <a class="muted" href="${esc(safeUrl(r.ga_url))}" target="_blank" rel="noopener noreferrer" title="Only on GraphicAudio's store">· GraphicAudio</a>` : ''}${r.placeholder ? ' <span class="muted" title="Audible lists it in the series but does not sell it; it can still be found elsewhere">· not on Audible</span>' : ''}</td>
         <td class="muted" title="${esc(r.narrators || '')}">${esc(shortNames(r.narrators))}</td>
         <td class="muted nowrap">${esc(releaseDate(r.release_date))}</td>
         <td class="muted nowrap">${esc(formatRuntime(r.runtime_min))}</td>
@@ -1828,7 +1871,8 @@ function renderSeriesDetail() {
             // Audible's ids for it too: a book in the library may not have its ASIN
             const release = { book_id: row.book_id, asin: row.asin, ga_url: row.ga_url, part_asins: (row.catalog || {}).part_asins || [],
                 title: row.title, authors: row.authors, series: sr.title, sequence: row.sequence };
-            const res = await postJSON('/api/ignored', { ...release, ignored });
+            // An extra ignored automatically: unticked, it's wanted after all
+            const res = await postJSON('/api/ignored', { ...release, ignored, allow: !ignored && row.auto_ignored });
             if (!res.ok) {
                 check.checked = !ignored;
                 check.disabled = false;
@@ -1877,7 +1921,7 @@ function openMonitorDialog(missingRows) {
         <label class="pick-row">
             <input type="checkbox" value="${esc(r.asin || r.ga_url || '')}" ${r.other || r.ignored ? '' : 'checked'}>
             <span class="muted pick-seq">${esc(r.sequence ? '#' + r.sequence : '')}</span>
-            <span class="pick-title">${esc(r.title)}${abridgedIcon(r)}${r.other ? ` <span class="muted">(you have the ${esc((EDITION_LABELS[r.other.edition] || '').toLowerCase())} edition)</span>` : ''}${r.ignored ? ' <span class="muted">(ignored)</span>' : ''}</span>
+            <span class="pick-title">${esc(r.title)}${abridgedIcon(r)}${extraTag(r)}${r.other ? ` <span class="muted">(you have the ${esc((EDITION_LABELS[r.other.edition] || '').toLowerCase())} edition)</span>` : ''}${r.ignored ? ' <span class="muted">(ignored)</span>' : ''}</span>
             <span class="muted">${esc(releaseDate(r.release_date, 4))}</span>
         </label>`).join('') : '<p class="muted">You already have every book in this series (in the editions your settings ask for).</p>';
     list.querySelectorAll('input').forEach(cb => cb.addEventListener('change', updateMonitorButton));
@@ -4250,7 +4294,7 @@ function openFollowDialog() {
         <label class="pick-row">
             <input type="checkbox" value="${esc(b.asin)}" ${b.upcoming && !b.ignored ? 'checked' : ''}>
             <span class="muted pick-seq">${esc(releaseDate(b.release_date, 4))}</span>
-            <span class="pick-title">${esc(b.title)}${b.series ? ` <span class="muted">(${esc(seriesLabel(b))})</span>` : ''}${b.upcoming ? ' <span class="edition-badge edition-upcoming">Upcoming</span>' : ''}${b.ignored ? ' <span class="muted">(ignored)</span>' : ''}</span>
+            <span class="pick-title">${esc(b.title)}${b.series ? ` <span class="muted">(${esc(seriesLabel(b))})</span>` : ''}${extraTag(b)}${b.upcoming ? ' <span class="edition-badge edition-upcoming">Upcoming</span>' : ''}${b.ignored ? ' <span class="muted">(ignored)</span>' : ''}</span>
         </label>`).join('') : '<p class="muted">You already have every book by this author (in the editions your settings ask for).</p>';
     list.querySelectorAll('input').forEach(cb => cb.addEventListener('change', updateFollowButton));
     updateFollowButton();

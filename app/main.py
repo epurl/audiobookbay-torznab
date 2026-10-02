@@ -968,6 +968,8 @@ async def api_set_ignored(request: Request):
                                                     "set this one to Unmonitored instead.")
     if data.get("ignored", True) is False:
         removed = db.unignore(info)
+        if data.get("allow"):  # An extra ignored automatically: wanted after all
+            db.allow(info)
         if book and book.get("status") == "Unmonitored" and any(e.get("status_before") in ("Monitored", "Unreleased")
                                                                 for e in removed):
             status = db.initial_status(book.get("release_date"))
@@ -980,8 +982,34 @@ async def api_set_ignored(request: Request):
             before = book["status"]
             db.update_library_status(book["id"], "Unmonitored")
         named = {k: book.get(k) for k in ("title", "authors", "series", "sequence")} if book and not info.get("title") else {}
+        db.allow(info, False)
         db.ignore({**info, **named}, before)
     return _ignored_json()
+
+# --- Extras: novellas, collections... (Settings > General > Ignore Extras) ---
+
+def _waiting_json():
+    found = series_index.waiting_extras()
+    books = [{"id": f["book"]["id"], "title": f["book"].get("title", ""), "status": f["book"].get("status", ""),
+              "series": f["series"], "label": f["label"], "reason": f["reason"]} for f in found]
+    return {"books": sorted(books, key=lambda b: (b["series"].lower(), b["title"].lower()))}
+
+@app.get("/api/extras/waiting")
+async def api_waiting_extras():
+    """Extras in the library still waiting to be downloaded (added before extras were ignored)."""
+    return await asyncio.to_thread(_waiting_json)
+
+@app.post("/api/extras/ignore_waiting")
+async def api_ignore_waiting_extras():
+    """Ignores those extras: they're set to Unmonitored (and back when no longer ignored)."""
+    found = await asyncio.to_thread(series_index.waiting_extras)
+    for f in found:
+        book, release = f["book"], f["release"] or {}
+        info = {**book, "asin": book.get("asin") or release.get("asin", ""), "ga_url": book.get("ga_url") or release.get("ga_url", ""),
+                "part_asins": [p for p in release.get("part_asins") or [] if isinstance(p, str)]}
+        db.update_library_status(book["id"], "Unmonitored")
+        db.ignore(info, book.get("status", ""))
+    return {"ignored": len(found), **_waiting_json()}
 
 # --- Series ---
 
