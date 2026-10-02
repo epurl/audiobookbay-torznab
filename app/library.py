@@ -574,8 +574,19 @@ def _natural_key(path):
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", path.replace("\\", "/"))]
 
 
+NAME_BYTES = 200  # Under the 255 bytes most filesystems allow, leaving room for " - Part 01.mp3"
+
+
+def fit_name(text, limit=NAME_BYTES):
+    """A file or folder name cut to fit the filesystem (at a character boundary)."""
+    raw = (text or "").encode("utf-8")
+    if len(raw) <= limit:
+        return text or ""
+    return raw[:limit].decode("utf-8", "ignore").rstrip(" .-_,")
+
+
 def safe_filename(text):
-    return re.sub(r'[\\/:*?"<>|]', "", text or "").strip(" .")
+    return fit_name(re.sub(r'[\\/:*?"<>|]', "", text or "").strip(" .")).strip(" .")
 
 
 def plan_import_files(content_path, title, rename=True, expected_min=0, tolerance=10, only=None):
@@ -653,5 +664,5 @@ def build_folder_name(template, book):
         name = name.replace(token, value)
     segments = [re.sub(r"\s+", " ", s).strip() for s in name.split(" - ")]
     name = " - ".join(s for s in segments if s)
-    name = re.sub(r'[\\/:*?"<>|]', "", name).strip(" .")
-    return name or re.sub(r'[\\/:*?"<>|]', "", book.get("title") or "Unknown")
+    name = fit_name(re.sub(r'[\\/:*?"<>|]', "", name).strip(" ."))
+    return name or fit_name(re.sub(r'[\\/:*?"<>|]', "", book.get("title") or "Unknown"))
