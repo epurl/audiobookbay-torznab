@@ -123,7 +123,7 @@ def normalize(text):
     return re.sub(r"[^a-z0-9]+", "", text)
 
 
-# Edition words in titles ("Storm Front Dramatized", "Book - Graphic Audio")
+# Edition words in titles ("Book Title Dramatized", "Book - Graphic Audio")
 _EDITION_WORDS = re.compile(r"\b(dramati[sz]ed|adaptation|graphic\s?audio|full[\s-]?cast|(un)?abridged)\b", re.IGNORECASE)
 
 
@@ -134,8 +134,8 @@ _EDITION_TAG = re.compile(r"\s*[\(\[][^\)\]]*(?:dramati[sz]|adaptation|full[\s-]
 
 def title_keys(title):
     """(whole title, {whole title, the part before a colon, the part after it}), without
-    bracketed tags or edition words: "Storm Front (Dramatized Adaptation): Series, Book 1"
-    -> ("stormfrontseriesbook1", {"stormfrontseriesbook1", "stormfront", "seriesbook1"})."""
+    bracketed tags or edition words: "Book Title (Dramatized Adaptation): Series, Book 1"
+    -> ("booktitleseriesbook1", {"booktitleseriesbook1", "booktitle", "seriesbook1"})."""
     plain = re.sub(r"\s*[\(\[][^\)\]]*[\)\]]", "", title or "")
     plain = _EDITION_WORDS.sub("", plain).strip(" -") or (title or "")
     main, _, rest = plain.partition(":")
@@ -150,8 +150,8 @@ def title_key(title):
 
 def titles_match(a, b):
     """The same book's title: equal, or one is the other's main title or subtitle part
-    ("Storm Front" / "Storm Front: The Dresden Files, Book 1", "The Final Empire" /
-    "Mistborn: The Final Empire"), but not two books of a series ("Series: One" /
+    ("Book Title" / "Book Title: Ember Saga, Book 1", "First Light" /
+    "Ember Saga: First Light"), but not two books of a series ("Series: One" /
     "Series: Two")."""
     full_a, keys_a = title_keys(a)
     full_b, keys_b = title_keys(b)

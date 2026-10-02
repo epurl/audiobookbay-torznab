@@ -26,7 +26,7 @@ def _col(row, *names):
 
 
 def _clean_title(title):
-    """ "The Way of Kings (The Stormlight Archive, #1)" -> ("The Way of Kings", "The Stormlight Archive", "1")"""
+    """ "Book Title (Ember Saga, #1)" -> ("Book Title", "Ember Saga", "1")"""
     m = re.search(r"\s*\(([^()]*?),?\s*#\s*([\d.]+)\)\s*$", title or "")
     if m:
         return title[:m.start()].strip(), m.group(1).strip(), m.group(2)

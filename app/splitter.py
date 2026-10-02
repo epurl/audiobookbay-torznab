@@ -17,7 +17,7 @@ from app.library import (DISC_FOLDER_RE, _natural_key, audio_files, build_folder
 
 logger = logging.getLogger(__name__)
 
-# "Book 2 Golden Son Part 1 of 2 ...", "Bk.03 - Title", "Volume 1 Title"
+# "Book 2 Second Dawn Part 1 of 2 ...", "Bk.03 - Title", "Volume 1 Title"
 _BOOK_NUMBER = re.compile(r"(?:^|[\s._\-\[(])(?:book|bk|vol(?:ume)?)[\s._-]*0*(\d{1,3}(?:\.\d)?)(?=$|[\s._\-\])])",
                           re.IGNORECASE)
 # Where the title stops: "Part 1 of 2", "(1 of 3)", "CD 2", "Disc 1"

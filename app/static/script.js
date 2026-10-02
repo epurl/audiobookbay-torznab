@@ -85,8 +85,8 @@ function editionBadge(book) {
 }
 
 // Title matching, like the server's: without bracketed tags or edition words, the same
-// book's title is equal, or is the other's main title or subtitle part ("Storm Front" /
-// "Storm Front: Dresden Files, Book 1"), but "Series: One" and "Series: Two" differ
+// book's title is equal, or is the other's main title or subtitle part ("Book Title" /
+// "Book Title: Ember Saga, Book 1"), but "Series: One" and "Series: Two" differ
 function titleKeys(title) {
     const plain = String(title || '').replace(/\s*[([][^)\]]*[)\]]/g, '')
         .replace(/\b(dramati[sz]ed|adaptation|graphic\s?audio|full[\s-]?cast|(un)?abridged)\b/gi, '')
@@ -2330,8 +2330,8 @@ function drawSearchResults() {
     }
 }
 
-// "The Stormlight Archive [Dramatized Adaptation]", "Stormlight Archive" and "Red Rising Saga" /
-// "Red Rising" name the same series
+// "The Ember Saga [Dramatized Adaptation]", "Ember Saga" and "Ember Chronicles Saga" /
+// "Ember Chronicles" name the same series
 function looseSeriesKey(name) {
     return normKey(String(name || '').replace(/\s*[([][^)\]]*[)\]]/g, '').replace(/^the\s+/i, '').replace(/\s+(saga|series)$/i, ''));
 }
@@ -3028,7 +3028,7 @@ async function openSplitDialog(bookId) {
         return;
     }
     if (data.groups.length < 2) {
-        lead.textContent = 'Bayarr couldn\'t find separate books in this folder. It looks for a book number in the file or folder names, like "Book 2 Golden Son Part 1 of 2.m4b" or a "Book 2 - Title" folder.';
+        lead.textContent = 'Bayarr couldn\'t find separate books in this folder. It looks for a book number in the file or folder names, like "Book 2 Second Dawn Part 1 of 2.m4b" or a "Book 2 - Title" folder.';
         return;
     }
     splitProposal = data;

@@ -28,7 +28,7 @@ _cache = {}  # url -> (time, final url, text)
 _lock = asyncio.Lock()
 _last = 0.0
 
-# "The Stormlight Archive 1: The Way of Kings 1 of 5", "The Stormlight Archive: Dawnshard"
+# "Ember Saga 1: Book Title 1 of 5", "Ember Saga: Side Story"
 _NAME = re.compile(r"^(?P<series>.+?)(?:\s+(?P<num>\d+(?:\.\d+)?))?:\s*(?P<title>.+?)(?:\s+(?P<part>\d+)\s+of\s+(?P<of>\d+))?$")
 GA_PREFIX = "https://www.graphicaudio.net/"
 
@@ -68,7 +68,7 @@ async def _get(url):
 
 
 def parse_name(name):
-    """ "The Stormlight Archive 1: The Way of Kings 1 of 5" -> {"series", "sequence", "title",
+    """ "Ember Saga 1: Book Title 1 of 5" -> {"series", "sequence", "title",
     "part", "part_count"}; None for sets and bundles."""
     name = re.sub(r"\s+", " ", html.unescape(name or "")).strip()
     if not name or _SETS.search(name):
@@ -272,7 +272,7 @@ async def find_release(guess):
     part = part_number(title)
     core = re.sub(r"\s*[\(\[].*$", "", title).split(":")[0].strip()
     author = (guess.get("authors") or "").split(",")[0].strip()
-    # The store's search is loose ("Light Bringer" finds another author's "Lightbringer"), so
+    # The store's search is loose ("Ember Light" finds another author's "Emberlight"), so
     # the series and the author (whose page lists all their releases) come before the title
     queries = list(dict.fromkeys(q for q in (guess.get("series"), author, core) if q))
     for query in queries:
