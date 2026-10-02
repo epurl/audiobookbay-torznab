@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import struct
 
 from app.editions import classify_local, edition_of
 
@@ -491,6 +492,44 @@ def find_import_match(library, book):
     return find_match([e for e in library if not elsewhere(e)], book)
 
 
+def _mp4_sample_seconds(path):
+    """An MP4's audio length counted from its sample table, or None."""
+    from mutagen.mp4 import Atoms
+
+    try:
+        with open(path, "rb") as f:
+            atoms = Atoms(f)
+            for trak in atoms[b"moov"].findall(b"trak"):
+                ok, hdlr = trak[b"mdia", b"hdlr"].read(f)
+                if not ok or hdlr[8:12] != b"soun":
+                    continue
+                ok, mdhd = trak[b"mdia", b"mdhd"].read(f)
+                ok_stts, stts = trak[b"mdia", b"minf", b"stbl", b"stts"].read(f)
+                if not ok or not ok_stts:
+                    return None
+                unit = struct.unpack(">I", mdhd[20:24] if mdhd[0] == 1 else mdhd[12:16])[0]
+                count = struct.unpack(">I", stts[4:8])[0]
+                samples = sum(n * delta for n, delta in struct.iter_unpack(">II", stts[8:8 + 8 * count]))
+                return samples / unit if unit and samples else None
+    except Exception:
+        return None
+    return None
+
+
+def audio_length(path, audio):
+    """Play time in seconds of a file mutagen has read, or 0. Some encoders write an M4B's
+    length in 32 bits, which wraps after about 27 hours at 44.1 kHz (a 31-hour book reads
+    as 4); the sample table's count doesn't wrap."""
+    from mutagen.mp4 import MP4
+
+    length = getattr(getattr(audio, "info", None), "length", 0) or 0
+    if isinstance(audio, MP4):
+        counted = _mp4_sample_seconds(path)
+        if counted and counted > length + 60:
+            return counted
+    return length
+
+
 def total_duration_min(paths):
     """Total play time of audio files in minutes, or None if any file can't be read."""
     import mutagen  # Only needed for download checks
@@ -501,10 +540,11 @@ def total_duration_min(paths):
             audio = mutagen.File(path)
         except Exception:
             audio = None
-        if audio is None or not getattr(audio.info, "length", 0):
+        length = audio_length(path, audio) if audio is not None else 0
+        if not length:
             logger.warning(f"Could not read the duration of {path}")
             return None
-        total += audio.info.length
+        total += length
     return round(total / 60)
 
 
@@ -516,7 +556,7 @@ def file_duration_min(path):
         audio = mutagen.File(path)
     except Exception:
         return None
-    length = getattr(getattr(audio, "info", None), "length", 0)
+    length = audio_length(path, audio) if audio is not None else 0
     return length / 60 if length else None
 
 

@@ -13,7 +13,7 @@ import tempfile
 from collections import defaultdict
 
 from app import db, editions, splitter
-from app.library import audio_files, normalize, part_number, primary_author, title_key
+from app.library import audio_files, audio_length, normalize, part_number, primary_author, title_key
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +176,7 @@ def _deep_one(book):
     for path, size in files:
         try:
             audio = mutagen.File(path)
-            length = getattr(getattr(audio, "info", None), "length", 0) if audio else 0
+            length = audio_length(path, audio) if audio is not None else 0  # A file without tags is falsy
             keys = [str(k) for k in (audio.tags.keys() if audio is not None and audio.tags else [])]
             embedded_cover = embedded_cover or any(k == "covr" or k.startswith("APIC") or k == "METADATA_BLOCK_PICTURE" for k in keys)
         except Exception:
