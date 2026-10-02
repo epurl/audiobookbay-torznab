@@ -21,6 +21,7 @@ from app.monitor import (auto_download_book, classify_editions, downloads_enable
                          schedule_search, schedule_searches, start_match_job, sync_series)
 from app.qbittorrent import get_torrents, normalize_host, test_connection
 from app.scraper import fetch_detail_info, search_audiobooks
+from app.series_index import LibraryIndex
 from app.torznab import build_caps, build_rss
 
 # Configure logging
@@ -201,6 +202,7 @@ async def api_add_library(request: Request):
     from app import graphicaudio
     data = await graphicaudio.with_details(data)
     book = db.add_to_library(data)
+    db.unignore(data)  # Added by you: no longer ignored
     # Like the *arr apps, search as soon as a released book is added
     if book.get("status") == "Monitored":
         schedule_search(book)
@@ -214,11 +216,14 @@ def _get_book_or_404(book_id: str):
 
 @app.patch("/api/library/{book_id}")
 async def api_edit_book(book_id: str, request: Request):
-    _get_book_or_404(book_id)
+    book = _get_book_or_404(book_id)
     data = await request.json()
     fields = {k: v for k, v in data.items() if k in db.EDITABLE_BOOK_FIELDS}
     if "status" in fields and fields["status"] not in db.STATUSES:
         raise HTTPException(status_code=400, detail=f"Unknown status: {fields['status']}")
+    # Monitoring a book that isn't out yet: it waits as Unreleased (there's nothing to find before then)
+    if fields.get("status") == "Monitored" and db.is_unreleased(fields.get("release_date", book.get("release_date"))):
+        fields["status"] = "Unreleased"
     if "title" in fields and not str(fields["title"]).strip():
         raise HTTPException(status_code=400, detail="Title cannot be empty")
     if "sequence" in fields:
@@ -237,6 +242,8 @@ async def api_edit_book(book_id: str, request: Request):
         else:
             fields["edition_check"] = False  # Confirmed as it is
     db.update_book(book_id, **fields)
+    if fields.get("status") in ("Monitored", "Unreleased"):
+        db.unignore(db.get_book(book_id))  # Monitored by you: no longer ignored
     return {"success": True, "book": db.get_book(book_id)}
 
 @app.get("/api/library/{book_id}/match_candidates")
@@ -373,9 +380,28 @@ async def api_list_preview(request: Request):
     except (TypeError, ValueError):
         top = 100
     try:
-        return reading_list.start_preview(str(data.get("url") or ""), str(data.get("shelf") or ""), top)
-    except RuntimeError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        return reading_list.start_preview(str(data.get("url") or ""), str(data.get("shelf") or ""), top,
+                                          str(data.get("kind") or ""))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/lists/test")
+async def api_list_test(request: Request):
+    """Reads a list's first page to check its link: {url, shelf, top, kind}, or {list_id}
+    for a watched list."""
+    data = await request.json()
+    entry = next((e for e in reading_list.watched() if e["id"] == data.get("list_id")), None) if data.get("list_id") else None
+    if data.get("list_id") and not entry:
+        raise HTTPException(status_code=404, detail="That list isn't watched.")
+    try:
+        top = int((entry or data).get("top") or 100)
+    except (TypeError, ValueError):
+        top = 100
+    try:
+        if entry:
+            return await reading_list.test_link(entry["url"], "", top, entry.get("kind") or "")
+        return await reading_list.test_link(str(data.get("url") or ""), str(data.get("shelf") or ""), top,
+                                            str(data.get("kind") or ""))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -415,7 +441,25 @@ async def api_update_watched_list(list_id: str, request: Request):
         fields["monitor"] = data["monitor"]
     if str(data.get("name") or "").strip():
         fields["name"] = str(data["name"]).strip()
+    entry = next(e for e in reading_list.watched() if e["id"] == list_id)
+    if entry.get("kind") == "list" and "top" in data:
+        from app import goodreads
+        try:
+            top = int(data["top"])
+        except (TypeError, ValueError):
+            top = 0
+        if top not in goodreads.LIST_TOPS:
+            raise HTTPException(status_code=400, detail="Choose how many of the list's top books to watch.")
+        fields["top"] = top
     reading_list._update(list_id, **fields)
+    return _watched_json()
+
+@app.post("/api/lists/check_all")
+async def api_check_all_lists():
+    """Checks every enabled list now, in the background."""
+    for entry in reading_list.watched():
+        if entry.get("enabled", True):
+            reading_list.start_check(entry["id"])
     return _watched_json()
 
 @app.delete("/api/lists/watched/{list_id}")
@@ -656,9 +700,17 @@ async def api_bulk(request: Request):
         status = data.get("status")
         if status not in db.STATUSES:
             raise HTTPException(status_code=400, detail=f"Unknown status: {status}")
-        db.update_books({i: {"status": status} for i in ids})
-        if status == "Monitored":
-            schedule_searches([db.get_book(i) for i in ids])
+        books = {b["id"]: b for b in db.get_library()}
+        # Monitoring books that aren't out yet: they wait as Unreleased
+        changes = {i: {"status": db.initial_status(books[i].get("release_date")) if status == "Monitored" else status}
+                   for i in ids}
+        db.update_books(changes)
+        if status in ("Monitored", "Unreleased"):
+            ignored = db.ignored_ids()
+            for i in ids:
+                if db.is_ignored(books[i], ignored):
+                    db.unignore(books[i])  # Monitored by you: no longer ignored
+        schedule_searches([db.get_book(i) for i in ids if changes[i]["status"] == "Monitored"])
         return {"success": True, "count": len(ids)}
     if action == "remove":
         for i in ids:
@@ -864,8 +916,72 @@ async def api_abs_series_order_status():
     return dict(audiobookshelf.order_job)
 
 @app.get("/api/history")
-async def api_history(limit: int = 200):
-    return {"history": db.get_history(max(1, min(limit, db.HISTORY_LIMIT)))}
+async def api_history(limit: int = 200, offset: int = 0):
+    """The newest events first, a page at a time: limit of them after skipping offset."""
+    return {"history": db.get_history(max(1, min(limit, db.HISTORY_LIMIT)), max(0, offset)),
+            "total": db.history_count()}
+
+# --- Ignored books (series pages; Settings > Lists > Exclusions) ---
+
+def _ignored_json():
+    return {"ignored": sorted(db.get_ignored(), key=lambda e: e.get("when") or "", reverse=True)}
+
+def _release_from(data):
+    """(the library book, the release) a request names: an entry of the Exclusions list
+    ({ids}), or Audible's listing of the book ({asin} or {ga_url}, title, authors, series,
+    sequence, part_asins) and, for one in the library, its {book_id}. A library book may
+    lack the ASIN Audible's series list knows it by."""
+    text = lambda value, size=500: str(value or "")[:size]
+    if isinstance(data.get("ids"), list):
+        ids = [text(i) for i in data["ids"][:50] if isinstance(i, str) and i]
+        links = [i for i in ids if i.startswith("http")]
+        asins = [i for i in ids if not i.startswith("http")]
+        stored = next((e for e in db.get_ignored() if set(e.get("ids") or []) & set(ids)), {})
+        info = {"asin": asins[0] if asins else "", "ga_url": links[0] if links else "", "part_asins": asins,
+                "title": stored.get("title", ""), "authors": stored.get("authors", "")}
+    else:
+        parts = data.get("part_asins")
+        info = {**{k: text(data.get(k)) for k in ("asin", "ga_url", "title", "authors", "series", "sequence",
+                                                    "catalog_sequence")},
+                "part_asins": [text(p, 40) for p in parts[:50] if isinstance(p, str)] if isinstance(parts, list) else []}
+    book = db.get_book(str(data.get("book_id"))) if data.get("book_id") else None
+    if book:
+        named = {k: book.get(k) for k in ("title", "authors", "series", "sequence") if book.get(k)}
+        return book, {**info, **named, "asin": book.get("asin") or info["asin"], "ga_url": book.get("ga_url") or info["ga_url"],
+                      "part_asins": info["part_asins"] + [p for p in book.get("part_asins") or [] if isinstance(p, str)]}
+    return (LibraryIndex(db.get_library()).find(info) if db.release_ids(info) or info.get("title") else None), info
+
+@app.get("/api/ignored")
+async def api_ignored():
+    return _ignored_json()
+
+@app.post("/api/ignored")
+async def api_set_ignored(request: Request):
+    """Ignores a book, or stops ignoring it with {"ignored": false} (the book: see
+    _release_from). An ignored book isn't added by a monitored series, a followed author or
+    a watched list; one in the library waiting to be downloaded is set to Unmonitored, and
+    monitored again when it's no longer ignored."""
+    data = await request.json()
+    book, info = _release_from(data)
+    if not db.release_ids(info):
+        raise HTTPException(status_code=400, detail="Only books found on Audible or GraphicAudio can be ignored; "
+                                                    "set this one to Unmonitored instead.")
+    if data.get("ignored", True) is False:
+        removed = db.unignore(info)
+        if book and book.get("status") == "Unmonitored" and any(e.get("status_before") in ("Monitored", "Unreleased")
+                                                                for e in removed):
+            status = db.initial_status(book.get("release_date"))
+            db.update_library_status(book["id"], status)
+            if status == "Monitored":
+                schedule_search(db.get_book(book["id"]))
+    else:
+        before = ""
+        if book and book.get("status") in ("Monitored", "Unreleased"):
+            before = book["status"]
+            db.update_library_status(book["id"], "Unmonitored")
+        named = {k: book.get(k) for k in ("title", "authors", "series", "sequence")} if book and not info.get("title") else {}
+        db.ignore({**info, **named}, before)
+    return _ignored_json()
 
 # --- Series ---
 

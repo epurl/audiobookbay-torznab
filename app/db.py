@@ -138,6 +138,7 @@ def _load_db():
             settings.setdefault(k, v)
         db.setdefault("series", [])
         db.setdefault("history", [])
+        db.setdefault("ignored", [])
         changed = False
         for book in db.setdefault("library", []):
             # Books used to be keyed by title; give older entries a stable id
@@ -176,17 +177,19 @@ def _save_db(data):
             raise
 
 
+def is_unreleased(release_date, today=None):
+    """True for a release date still to come (Audible dates books without one 2200-01-01).
+    Dates that aren't YYYY-MM-DD (a year from a folder's metadata) don't count."""
+    try:
+        return datetime.datetime.strptime(str(release_date or "")[:10], "%Y-%m-%d").date() > (today or datetime.date.today())
+    except ValueError:
+        return False
+
+
 def initial_status(release_date):
-    """Books with a future release date start as Unreleased, everything else as Monitored."""
-    if release_date:
-        try:
-            # Audible dates are usually YYYY-MM-DD
-            dt = datetime.datetime.strptime(release_date, "%Y-%m-%d").date()
-            if dt > datetime.date.today():
-                return "Unreleased"
-        except ValueError:
-            pass
-    return "Monitored"
+    """Books with a future release date start as Unreleased, everything else as Monitored.
+    Also the status for monitoring a book again: an unreleased book isn't searched for."""
+    return "Unreleased" if is_unreleased(release_date) else "Monitored"
 
 
 def get_library():
@@ -396,8 +399,70 @@ def add_history(event, book=None, message=""):
         _save_db(db)
 
 
-def get_history(limit=200):
-    return list(reversed(_load_db()["history"][-limit:]))
+def get_history(limit=200, offset=0):
+    """The newest events first: `limit` of them, skipping the `offset` newest."""
+    history = _load_db()["history"]
+    end = max(0, len(history) - max(0, offset))
+    return list(reversed(history[max(0, end - limit):end]))
+
+
+def history_count():
+    return len(_load_db()["history"])
+
+
+# --- Ignored books -------------------------------------------------------------
+# Books never added automatically, by a monitored series, a followed author or a watched
+# list, even when one of them lists the book. Ignored from a series page (or a list review);
+# kept by the ids the release is known by, so it's recognised wherever it turns up.
+
+def release_ids(book):
+    """The ids a release is known by: its ASIN (any part's, for a book sold in parts) and
+    its GraphicAudio page."""
+    book = book or {}
+    ids = [book.get("asin"), book.get("ga_url")] + list(book.get("part_asins") or [])
+    return {i for i in ids if isinstance(i, str) and i}
+
+
+def get_ignored():
+    return _load_db().get("ignored", [])
+
+
+def ignored_ids():
+    return {i for e in get_ignored() for i in e.get("ids") or []}
+
+
+def is_ignored(book, ids=None):
+    return bool(release_ids(book) & (ignored_ids() if ids is None else ids))
+
+
+def ignore(book, status_before=""):
+    """Ignores a release; status_before is the library status it had (put back when it's
+    no longer ignored). None when the book has no id to recognise it by."""
+    ids = release_ids(book)
+    if not ids:
+        return None
+    entry = {"ids": sorted(ids), "title": book.get("title") or "", "authors": book.get("authors") or "",
+             "series": book.get("series") or "", "sequence": str(book.get("sequence") or book.get("catalog_sequence") or ""),
+             "status_before": status_before, "when": datetime.datetime.now().isoformat(timespec="seconds")}
+    with _lock:
+        db = _load_db()
+        db["ignored"] = [e for e in db["ignored"] if not set(e.get("ids") or []) & ids] + [entry]
+        _save_db(db)
+    return entry
+
+
+def unignore(book):
+    """Stops ignoring a release. Returns the entries removed."""
+    ids = release_ids(book)
+    if not ids:
+        return []
+    with _lock:
+        db = _load_db()
+        removed = [e for e in db["ignored"] if set(e.get("ids") or []) & ids]
+        if removed:
+            db["ignored"] = [e for e in db["ignored"] if e not in removed]
+            _save_db(db)
+    return removed
 
 
 # --- Series ----------------------------------------------------------------
@@ -654,6 +719,9 @@ def restore(data):
                          "auth_password_hash": current.get("auth_password_hash", "")},
             "series": data.get("series") if isinstance(data.get("series"), list) else [],
             "history": data.get("history") if isinstance(data.get("history"), list) else [],
+            "ignored": [{**e, "ids": [i for i in e["ids"] if isinstance(i, str) and i]}
+                        for e in (data.get("ignored") if isinstance(data.get("ignored"), list) else [])
+                        if isinstance(e, dict) and isinstance(e.get("ids"), list)],
         }
         _save_db(restored)
     return len(restored["library"])

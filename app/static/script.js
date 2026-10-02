@@ -220,6 +220,7 @@ document.addEventListener('keydown', (e) => {
     if (!top) return;
     if (top.id === 'confirmModal') closeConfirm(false);
     else if (top.id === 'downloadModal') closeModal();
+    else if (top.id === 'listEditModal') closeListEdit();
     else hideModal(top);
 });
 
@@ -244,7 +245,7 @@ async function initApp() {
     setupSystem();
     setupIndexers();
     setupAuthors();
-    setupHistoryLimit();
+    setupPagers();
     setupManualImport();
     setupWatchedLists();
     window.addEventListener('hashchange', route);
@@ -625,9 +626,12 @@ function showSettingsSection(name) {
     document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t.dataset.section === name));
     document.querySelectorAll('.settings-section').forEach(sec => { sec.hidden = sec.dataset.section !== name; });
     if (name === 'media') pollSettingsQueue();
-    if (name === 'lists') loadWatchedLists();
-    // Security and Backup have their own buttons
-    document.getElementById('settingsSaveBar').hidden = ['security', 'backup'].includes(name);
+    if (name === 'lists') {
+        loadWatchedLists();
+        loadExclusions();
+    }
+    // Security, Backup and Lists have their own buttons
+    document.getElementById('settingsSaveBar').hidden = ['security', 'backup', 'lists'].includes(name);
 }
 
 function markSettingsDirty() {
@@ -671,6 +675,19 @@ async function addToLibrary(e, bookData) {
 }
 
 const STATUS_ORDER = ['Missing', 'Downloading', 'Downloaded', 'Monitored', 'Unreleased', 'Unmonitored', 'Imported'];
+
+// A release date still to come (Audible dates books without one 2200-01-01)
+function isUnreleased(date) {
+    const day = String(date || '').slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(day) && day > isoDate(new Date());
+}
+
+// A Monitored book that isn't out yet is waiting, not wanted: shown and counted as Unreleased
+// (the server moves it there on its next library check)
+function shownStatus(book) {
+    const status = book.status || 'Monitored';
+    return status === 'Monitored' && isUnreleased(book.release_date) ? 'Unreleased' : status;
+}
 
 let librarySeriesNames = {};  // Audible series id -> the name its books are sorted under
 
@@ -717,7 +734,7 @@ function renderLibrary() {
     container.innerHTML = '';
 
     const counts = {};
-    appLibrary.forEach(b => { counts[b.status] = (counts[b.status] || 0) + 1; });
+    appLibrary.forEach(b => { const st = shownStatus(b); counts[st] = (counts[st] || 0) + 1; });
     const parts = STATUS_ORDER.filter(st => counts[st]).map(st => `${counts[st]} ${st.toLowerCase()}`);
     stats.textContent = `${appLibrary.length} books${parts.length ? ' · ' + parts.join(' · ') : ''}`;
 
@@ -742,7 +759,7 @@ function renderLibrary() {
             if (b.asin || b.ga_url) return false;  // GraphicAudio releases aren't on Audible
         } else if (status === '__checkedition') {
             if (!b.edition_check) return false;
-        } else if (status && b.status !== status) return false;
+        } else if (status && shownStatus(b) !== status) return false;
         if (edition && editionOf(b) !== edition) return false;
         if (!text) return true;
         return [b.title, b.authors, b.series, b.narrators].join(' ').toLowerCase().includes(text);
@@ -788,7 +805,7 @@ function renderLibrary() {
         }
         const card = document.createElement('div');
         card.className = 'book-card';
-        const bookStatus = book.status || 'Monitored';
+        const bookStatus = shownStatus(book);
         const series = seriesLabel(book);
 
         card.classList.toggle('selected', selectedIds.has(book.id));
@@ -1519,13 +1536,18 @@ try { seriesViewMode = localStorage.getItem('bayarr.seriesView') || 'posters'; }
 let seriesLookupTimer = null;
 let seriesLookupStartedThisVisit = false;
 
+// Books on disk out of the released books you haven't ignored (like Sonarr's episode count):
+// upcoming and ignored books aren't counted, so a series with everything that's out is full
 function seriesProgress(sr) {
     const total = sr.total ?? sr.in_library;
-    const pct = total ? Math.round(sr.owned / total * 100) : 0;
+    const pct = total ? Math.min(100, Math.round(sr.owned / total * 100)) : 0;
     const complete = sr.total != null && sr.owned >= sr.total && sr.total > 0;
-    const kind = complete ? 'complete' : sr.monitored ? 'monitored' : 'unmonitored';
+    // Everything that's out, but more to come: full, in the series' colour rather than green
+    const kind = complete && !sr.upcoming ? 'complete' : sr.monitored ? 'monitored' : 'unmonitored';
     const label = sr.total == null ? `${sr.owned} / …` : `${sr.owned} / ${sr.total}`;
-    return `<div class="series-bar ${kind}" title="${sr.owned} on disk${sr.total != null ? ` of ${sr.total} books` : ''}">
+    const left = [sr.upcoming ? `${sr.upcoming} upcoming` : '', sr.ignored ? `${sr.ignored} ignored` : ''].filter(Boolean).join(', ');
+    const title = `${sr.owned} on disk${sr.total != null ? ` of ${sr.total} released book${sr.total === 1 ? '' : 's'}` : ''}${left ? ` (not counted: ${left})` : ''}`;
+    return `<div class="series-bar ${kind}" title="${esc(title)}">
         <div class="series-bar-fill" style="width: ${pct}%"></div><span>${esc(label)}</span></div>`;
 }
 
@@ -1699,19 +1721,38 @@ async function refreshSeriesDetail() {
     window.scrollTo(0, scroll.window);
 }
 
+// Books that can be ignored: ones not on disk or on their way, known on Audible or GraphicAudio
+const IGNORABLE_STATUSES = ['', 'Monitored', 'Unreleased', 'Unmonitored'];
+
+function canIgnore(r) {
+    return IGNORABLE_STATUSES.includes(r.status || '') && Boolean(r.asin || r.ga_url);
+}
+
 function seriesRowHtml(r, src, i) {
     const other = r.other
         ? ` <span class="muted" title="You have the ${esc(EDITION_LABELS[r.other.edition] || '')} edition">· ${esc(EDITION_LABELS[r.other.edition] || '')}: ${esc(r.other.status)}</span>` : '';
-    const status = r.book_id
-        ? `<span class="library-status ${esc(statusClass(r.status))} inline-status">${esc(r.status)}</span>`
-        : `<span class="muted">Not in library</span> <button class="link-btn add-row" data-src="${src}" data-index="${i}">Add</button>${other}`;
-    return `<tr class="${r.book_id ? 'clickable' : 'not-owned'}" data-src="${src}" data-index="${i}">
+    // Ticked: never added or downloaded automatically, even though the series is monitored
+    const ignore = canIgnore(r) || r.ignored
+        ? `<input type="checkbox" class="ignore-toggle" data-src="${src}" data-index="${i}" ${r.ignored ? 'checked' : ''}
+            aria-label="Ignore ${esc(r.title)}" title="${r.ignored ? 'Ignored: untick to add and download it as usual' : 'Ignore: never add or download this book automatically'}">` : '';
+    let status;
+    if (r.ignored) {
+        status = '<span class="library-status status-ignored inline-status" title="Not added or downloaded automatically (Settings > Lists > Exclusions)">Ignored</span>';
+    } else if (r.book_id) {
+        const shown = shownStatus(r);
+        status = `<span class="library-status ${esc(statusClass(shown))} inline-status">${esc(shown)}</span>`;
+    } else {
+        status = `<span class="muted">${r.upcoming ? 'Upcoming' : 'Not in library'}</span> <button class="link-btn add-row" data-src="${src}" data-index="${i}">Add</button>${other}`;
+    }
+    const rowClass = [r.book_id ? 'clickable' : 'not-owned', r.ignored ? 'ignored-row' : ''].filter(Boolean).join(' ');
+    return `<tr class="${rowClass}" data-src="${src}" data-index="${i}">
         <td class="muted">${esc(r.sequence)}</td>
         <td>${bookLink(r.book_id, r.title)}${abridgedIcon(r)}${r.ga_url ? ` <a class="muted" href="${esc(safeUrl(r.ga_url))}" target="_blank" rel="noopener noreferrer" title="Only on GraphicAudio's store">· GraphicAudio</a>` : ''}${r.placeholder ? ' <span class="muted" title="Audible lists it in the series but does not sell it; it can still be found elsewhere">· not on Audible</span>' : ''}</td>
         <td class="muted" title="${esc(r.narrators || '')}">${esc(shortNames(r.narrators))}</td>
         <td class="muted nowrap">${esc(releaseDate(r.release_date))}</td>
         <td class="muted nowrap">${esc(formatRuntime(r.runtime_min))}</td>
         <td class="nowrap">${status}</td>
+        <td class="col-ignore">${ignore}</td>
     </tr>`;
 }
 
@@ -1742,6 +1783,8 @@ function renderSeriesDetail() {
                     <span class="stat"><b>${sr.owned}</b> on disk</span>
                     ${sr.wanted ? `<span class="stat"><b>${sr.wanted}</b> wanted</span>` : ''}
                     ${sr.missing != null ? `<span class="stat"><b>${sr.missing}</b> not in library</span>` : ''}
+                    ${sr.upcoming ? `<span class="stat" title="Not out yet: counted once released"><b>${sr.upcoming}</b> upcoming</span>` : ''}
+                    ${sr.ignored ? `<span class="stat" title="Not added or downloaded automatically, and not counted"><b>${sr.ignored}</b> ignored</span>` : ''}
                     ${tracked ? `<span class="stat">${tracked.monitored ? 'Monitored' : 'Paused'}${tracked.last_sync ? ' · synced ' + esc(new Date(tracked.last_sync).toLocaleDateString()) : ''}</span>` : ''}
                 </div>
                 <div class="series-hero-actions">${actions}</div>
@@ -1751,12 +1794,12 @@ function renderSeriesDetail() {
             `<button class="edition-tab${ed.active ? ' active' : ''}" role="tab" aria-selected="${ed.active}" data-key="${esc(ed.key)}">${esc(ed.label)}</button>`).join('')}</div>` : ''}
         ${sr.unresolved ? '<p class="lookup-banner">Couldn\'t find this series on Audible, so only the books in your library are shown. Match one of its books on Audible, then open this page again.</p>' : ''}
         <div class="table-container series-books-table"><table class="data-table">
-            <thead><tr><th class="col-num">#</th><th>Title</th><th>Narrator</th><th class="col-date">Released</th><th class="col-len">Length</th><th class="col-status">Status</th></tr></thead>
+            <thead><tr><th class="col-num">#</th><th>Title</th><th>Narrator</th><th class="col-date">Released</th><th class="col-len">Length</th><th class="col-status">Status</th><th class="col-ignore" title="Ticked books are never added or downloaded automatically, even though the series is monitored">Ignore</th></tr></thead>
             <tbody>${sr.rows.map((r, i) => seriesRowHtml(r, 'rows', i)).join('')}</tbody></table></div>
         ${(sr.alternates || []).length ? `<details class="other-editions"${(sr.alternates || []).some(a => a.book_id) ? ' open' : ''}>
             <summary>Abridged editions (${sr.alternates.length})</summary>
             <div class="table-container series-books-table"><table class="data-table">
-                <thead><tr><th class="col-num">#</th><th>Title</th><th>Narrator</th><th class="col-date">Released</th><th class="col-len">Length</th><th class="col-status">Status</th></tr></thead>
+                <thead><tr><th class="col-num">#</th><th>Title</th><th>Narrator</th><th class="col-date">Released</th><th class="col-len">Length</th><th class="col-status">Status</th><th class="col-ignore" title="Ticked books are never added or downloaded automatically">Ignore</th></tr></thead>
                 <tbody>${sr.alternates.map((r, i) => seriesRowHtml(r, 'alternates', i)).join('')}</tbody></table></div>
         </details>` : ''}`;
 
@@ -1776,6 +1819,27 @@ function renderSeriesDetail() {
         toast(`Added "${row.title}" (${res.data.status})${res.data.status === 'Monitored' && downloadsEnabled() ? '; searching now' : ''}`, 'ok');
         refreshSeriesDetail();
     }));
+    box.querySelectorAll('.ignore-toggle').forEach(check => {
+        check.addEventListener('click', e => e.stopPropagation());  // Not the row's details
+        check.addEventListener('change', async () => {
+            const row = rowOf(check);
+            const ignored = check.checked;
+            check.disabled = true;
+            // Audible's ids for it too: a book in the library may not have its ASIN
+            const release = { book_id: row.book_id, asin: row.asin, ga_url: row.ga_url, part_asins: (row.catalog || {}).part_asins || [],
+                title: row.title, authors: row.authors, series: sr.title, sequence: row.sequence };
+            const res = await postJSON('/api/ignored', { ...release, ignored });
+            if (!res.ok) {
+                check.checked = !ignored;
+                check.disabled = false;
+                toast(res.data.detail || 'That didn\'t work', 'error');
+                return;
+            }
+            toast(ignored ? `Ignoring "${row.title}": it won't be added or downloaded automatically`
+                : `"${row.title}" is no longer ignored`, 'ok');
+            refreshSeriesDetail();
+        });
+    });
 
     const monitorOpen = document.getElementById('seriesMonitorOpen');
     if (monitorOpen) monitorOpen.addEventListener('click', () => openMonitorDialog(sr.monitor_candidates || missing));
@@ -1811,9 +1875,9 @@ function openMonitorDialog(missingRows) {
     const list = document.getElementById('seriesPickList');
     list.innerHTML = missingRows.length ? missingRows.map(r => `
         <label class="pick-row">
-            <input type="checkbox" value="${esc(r.asin || r.ga_url || '')}" ${r.other ? '' : 'checked'}>
+            <input type="checkbox" value="${esc(r.asin || r.ga_url || '')}" ${r.other || r.ignored ? '' : 'checked'}>
             <span class="muted pick-seq">${esc(r.sequence ? '#' + r.sequence : '')}</span>
-            <span class="pick-title">${esc(r.title)}${abridgedIcon(r)}${r.other ? ` <span class="muted">(you have the ${esc((EDITION_LABELS[r.other.edition] || '').toLowerCase())} edition)</span>` : ''}</span>
+            <span class="pick-title">${esc(r.title)}${abridgedIcon(r)}${r.other ? ` <span class="muted">(you have the ${esc((EDITION_LABELS[r.other.edition] || '').toLowerCase())} edition)</span>` : ''}${r.ignored ? ' <span class="muted">(ignored)</span>' : ''}</span>
             <span class="muted">${esc(releaseDate(r.release_date, 4))}</span>
         </label>`).join('') : '<p class="muted">You already have every book in this series (in the editions your settings ask for).</p>';
     list.querySelectorAll('input').forEach(cb => cb.addEventListener('change', updateMonitorButton));
@@ -2144,18 +2208,73 @@ async function runManualImport() {
     drawManualImport();
 }
 
-function historyLimit() {
-    let value = '50';
-    try { value = localStorage.getItem('bayarr.historyLimit') || value; } catch (e) { /* storage unavailable */ }
-    return ['10', '20', '50', '100', 'all'].includes(value) ? value : '50';
+// -----------------
+// Pages for long lists (Activity, Exclusions): how many to show at once, remembered per
+// list, and Previous / Next when there are more
+// -----------------
+const PAGE_SIZES = ['10', '20', '50', '100', 'all'];
+const pagerPages = {};  // list -> the page shown (from 0)
+const PAGER_REDRAW = {
+    queue: () => drawQueue(),
+    seeding: () => drawSeeding(),
+    conversions: () => drawActivityConversions(),
+    history: () => renderHistory(),
+    exclusions: () => drawExclusions(),
+};
+
+function pageSize(key) {
+    let value = '';
+    try {
+        value = localStorage.getItem(`bayarr.pageSize.${key}`) || (key === 'history' ? localStorage.getItem('bayarr.historyLimit') : '') || '';
+    } catch (e) { /* storage unavailable */ }
+    return PAGE_SIZES.includes(value) ? value : (key === 'history' ? '50' : '20');
 }
 
-function setupHistoryLimit() {
-    const select = document.getElementById('historyLimit');
-    select.value = historyLimit();
-    select.addEventListener('change', () => {
-        try { localStorage.setItem('bayarr.historyLimit', select.value); } catch (e) { /* storage unavailable */ }
-        renderActivity();
+function pageLength(key) {
+    return pageSize(key) === 'all' ? Infinity : Number(pageSize(key));
+}
+
+// The page of items shown: {shown, start}. A page past the end (the list got shorter)
+// becomes the last one.
+function pageOf(key, items) {
+    const size = pageLength(key);
+    const pages = Math.max(1, Math.ceil(items.length / size));
+    pagerPages[key] = Math.min(pagerPages[key] || 0, pages - 1);
+    const start = size === Infinity ? 0 : pagerPages[key] * size;
+    return { shown: items.slice(start, start + size), start };
+}
+
+// "‹ 21–40 of 85 ›" under a list with more than one page
+function drawPager(key, total) {
+    const box = document.querySelector(`.pager[data-pager="${key}"]`);
+    if (!box) return;
+    const size = pageLength(key);
+    const pages = Math.max(1, Math.ceil(total / size));
+    const page = Math.min(pagerPages[key] || 0, pages - 1);
+    box.hidden = pages <= 1;
+    if (pages <= 1) {
+        box.innerHTML = '';
+        return;
+    }
+    box.innerHTML = `<button type="button" class="secondary-btn" data-step="-1" aria-label="Previous page"${page === 0 ? ' disabled' : ''}>&lsaquo;</button>
+        <span>${page * size + 1}–${Math.min(total, (page + 1) * size)} of ${total}</span>
+        <button type="button" class="secondary-btn" data-step="1" aria-label="Next page"${page >= pages - 1 ? ' disabled' : ''}>&rsaquo;</button>`;
+    box.querySelectorAll('[data-step]').forEach(btn => btn.addEventListener('click', () => {
+        pagerPages[key] = Math.max(0, Math.min(pages - 1, page + Number(btn.dataset.step)));
+        PAGER_REDRAW[key]();
+    }));
+}
+
+function setupPagers() {
+    document.querySelectorAll('select.page-size').forEach(select => {
+        const key = select.dataset.pager;
+        select.innerHTML = PAGE_SIZES.map(v => `<option value="${v}">${v === 'all' ? 'All' : v}</option>`).join('');
+        select.value = pageSize(key);
+        select.addEventListener('change', () => {
+            try { localStorage.setItem(`bayarr.pageSize.${key}`, select.value); } catch (e) { /* storage unavailable */ }
+            pagerPages[key] = 0;
+            PAGER_REDRAW[key]();
+        });
     });
 }
 
@@ -2167,13 +2286,20 @@ function formatSpan(seconds) {
 }
 
 // Activity: torrents of imported books, with their ratio and when they'll be removed
+let seedingData = null;
+
 async function renderSeeding() {
-    let data;
     try {
-        data = await fetch('/api/seeding').then(r => r.json());
+        seedingData = await fetch('/api/seeding').then(r => r.json());
     } catch (err) {
         return;
     }
+    drawSeeding();
+}
+
+function drawSeeding() {
+    const data = seedingData;
+    if (!data) return;
     const section = document.getElementById('seedingSection');
     section.hidden = !data.torrents.length && data.client_reachable;
     const limits = [data.ratio ? `ratio ${data.ratio}` : '', data.days ? `${data.days} day${data.days === 1 ? '' : 's'}` : ''].filter(Boolean).join(' or ');
@@ -2181,7 +2307,7 @@ async function renderSeeding() {
         : data.cleanup && limits ? `Removed at ${limits}, whichever comes first (Settings > Download Client).`
             : 'Kept seeding: turn on Remove Torrents After Seeding in Settings > Download Client to remove them automatically.';
     const rows = document.getElementById('seedingRows');
-    rows.innerHTML = data.torrents.map(t => {
+    rows.innerHTML = pageOf('seeding', data.torrents).shown.map(t => {
         const when = t.limit_reached ? 'Now' : t.remove_in != null ? `in ${formatSpan(t.remove_in)}` : '—';
         return `<tr>
             <td>${bookLink(t.book_id, t.title)}</td>
@@ -2193,6 +2319,7 @@ async function renderSeeding() {
             <td><button class="link-btn seeding-remove" data-id="${esc(t.book_id)}">Remove now</button></td>
         </tr>`;
     }).join('');
+    drawPager('seeding', data.torrents.length);
     rows.querySelectorAll('.seeding-remove').forEach(btn => btn.addEventListener('click', async () => {
         const deleteFiles = appSettings.seed_delete_files ?? true;
         if (!await confirmDialog(`Remove this torrent from qBittorrent${deleteFiles ? ' and delete its downloaded files' : ''}? The book in your library isn't affected.`,
@@ -2206,23 +2333,29 @@ async function renderSeeding() {
 async function renderActivity() {
     renderConversions();
     renderSeeding();
-    let queueData, historyData;
+    renderHistory();
     try {
-        [queueData, historyData] = await Promise.all([
-            fetch('/api/queue').then(r => r.json()),
-            fetch(`/api/history?limit=${historyLimit() === 'all' ? 1000 : historyLimit()}`).then(r => r.json()),
-        ]);
+        queueData = await fetch('/api/queue').then(r => r.json());
     } catch (err) {
         console.error('Failed to load activity', err);
         return;
     }
+    drawQueue();
+    if (queueData.queue.some(q => q.status === 'Needs Review') !== appLibrary.some(b => b.status === 'Needs Review')) {
+        await fetchLibrary();
+    }
+}
 
+let queueData = null;
+
+function drawQueue() {
+    if (!queueData) return;
     const notice = document.getElementById('queueNotice');
     notice.textContent = !downloadsEnabled() ? 'No download client is set up in Settings, so live progress is unavailable.'
         : (!queueData.client_reachable ? "Can't reach the download client; showing the last known state." : '');
 
     const qRows = document.getElementById('queueRows');
-    qRows.innerHTML = queueData.queue.map(q => {
+    qRows.innerHTML = pageOf('queue', queueData.queue).shown.map(q => {
         const pct = q.progress != null ? Math.round(q.progress * 100) : null;
         const actions = q.status === 'Needs Review' ? `
             <div class="muted" style="margin-top: 6px;">${esc(q.review_reason)}</div>
@@ -2241,20 +2374,40 @@ async function renderActivity() {
             <td>${q.seeds != null ? esc(q.seeds) : ''}</td>
         </tr>`;
     }).join('') || '<tr><td colspan="5" class="no-results">Nothing downloading.</td></tr>';
+    drawPager('queue', queueData.queue.length);
 
     qRows.querySelectorAll('[data-action]').forEach(btn => btn.addEventListener('click', () => reviewAction(btn.dataset.id, btn.dataset.action)));
+}
 
-    document.getElementById('historyRows').innerHTML = historyData.history.map(h => `
+// History is kept on the server (up to 1,000 events): fetched a page at a time
+let historyLoad = 0;
+
+async function renderHistory() {
+    const all = pageSize('history') === 'all';
+    const size = all ? 1000 : pageLength('history');
+    const page = all ? 0 : (pagerPages.history || 0);
+    const token = ++historyLoad;
+    let data;
+    try {
+        data = await fetch(`/api/history?limit=${size}&offset=${page * size}`).then(r => r.json());
+    } catch (err) {
+        return;
+    }
+    if (token !== historyLoad) return;  // A newer page was asked for meanwhile
+    const total = data.total ?? data.history.length;
+    const pages = Math.max(1, Math.ceil(total / size));
+    if (page >= pages && page > 0) {  // Past the end: the last page
+        pagerPages.history = pages - 1;
+        return renderHistory();
+    }
+    document.getElementById('historyRows').innerHTML = data.history.map(h => `
         <tr>
             <td class="muted">${esc(new Date(h.time).toLocaleString())}</td>
             <td><span class="event event-${esc(h.event)}">${esc(EVENT_LABELS[h.event] || h.event)}</span></td>
             <td>${bookLink(h.book_id, h.title)}</td>
             <td class="muted">${esc(h.message)}</td>
         </tr>`).join('') || '<tr><td colspan="4" class="no-results">Nothing has happened yet.</td></tr>';
-
-    if (queueData.queue.some(q => q.status === 'Needs Review') !== appLibrary.some(b => b.status === 'Needs Review')) {
-        await fetchLibrary();
-    }
+    drawPager('history', total);
 }
 
 // Listeners
@@ -3397,17 +3550,20 @@ function indexerFormValues() {
 }
 
 // -----------------
-// WATCHED GOODREADS LISTS (Settings > Lists)
+// LISTS (Settings > Lists): a card per watched list, like Sonarr's and Radarr's Import
+// Lists. + adds one: choose its kind, fill it in, then choose from its books.
 // -----------------
 let watchedLists = [];
 let watchedTimer = null;
+const LIST_KINDS = { shelf: 'Goodreads Shelf', list: 'Goodreads List' };
 
 async function loadWatchedLists() {
     clearTimeout(watchedTimer);
     const data = await fetch('/api/lists/watched').then(r => r.json()).catch(() => null);
     if (!data) return;
     watchedLists = data.lists;
-    drawWatchedLists();
+    drawListCards();
+    if (listEdit && listEdit.id) drawListInfo();  // The open list's last check
     // While a list is being checked, keep its result up to date
     const tab = document.querySelector('.settings-section[data-section="lists"]');
     if (watchedLists.some(l => l.checking) && !tab.hidden && !document.getElementById('settingsView').hidden) {
@@ -3423,53 +3579,95 @@ function watchedResultText(l) {
     if (r.error) return `${when}: ${r.error}`;
     const parts = [`${r.on_list} on the list`, r.added ? `${r.added} added` : 'nothing new added',
         r.already ? `${r.already} already in your library` : '', r.not_found ? `${r.not_found} not found on Audible` : '',
-        r.found_later ? `${r.found_later} found on Audible since (looked up again weekly)` : ''];
+        r.found_later ? `${r.found_later} found on Audible since (looked up again weekly)` : '',
+        r.ignored ? `${r.ignored} ignored (Exclusions)` : ''];
     return `${when}: ${parts.filter(Boolean).join(' · ')}`;
 }
 
-function drawWatchedLists() {
-    const box = document.getElementById('watchedLists');
-    box.innerHTML = watchedLists.length ? watchedLists.map(l => {
-        const shelf = new URLSearchParams(l.url.split('?')[1] || '').get('shelf') || '';
-        const what = l.kind === 'list'
-            ? `<a href="${esc(safeUrl(l.url))}" target="_blank" rel="noopener noreferrer">Listopia list</a> · its top ${esc(l.top || 100)}`
-            : `Shelf ${esc(shelf)}`;
-        const unmatched = (l.unmatched || []).length ? `<details><summary>Not found on Audible (${l.unmatched.length})</summary><ul>
-            ${l.unmatched.map(u => `<li>${esc(u.title)} <span class="muted">· ${esc(u.author)}</span>
-                <a href="#/search/${encodeURIComponent(`${u.title} ${u.author}`)}" class="link-btn">Search</a></li>`).join('')}</ul></details>` : '';
-        return `<div class="indexer-row watched-list" data-id="${esc(l.id)}">
-            <label class="check-label" title="Check this list"><input type="checkbox" class="wl-enabled" ${l.enabled ? 'checked' : ''}></label>
-            <div class="indexer-info"><b>${esc(l.name)}</b>
-                <div class="muted">${what} · adds books as ${esc(l.monitor)}</div>
-                <div class="${(l.last_result || {}).error ? 'result-error' : 'muted'}">${esc(watchedResultText(l))}</div>${unmatched}</div>
-            <select class="form-select wl-monitor" title="How new books are added">
-                <option value="Monitored"${l.monitor === 'Monitored' ? ' selected' : ''}>Monitored</option>
-                <option value="Unmonitored"${l.monitor === 'Unmonitored' ? ' selected' : ''}>Unmonitored</option>
-            </select>
-            <button type="button" class="link-btn wl-check"${l.checking ? ' disabled' : ''}>Check Now</button>
-            <button type="button" class="link-btn wl-remove">Remove</button>
+// "5 minutes ago", "3 hours ago", "2 days ago"
+function timeAgo(iso) {
+    const seconds = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (!(seconds >= 0)) return '';
+    const [n, unit] = seconds < 3600 ? [Math.max(1, Math.round(seconds / 60)), 'minute']
+        : seconds < 86400 ? [Math.round(seconds / 3600), 'hour'] : [Math.round(seconds / 86400), 'day'];
+    return `${n} ${unit}${n === 1 ? '' : 's'} ago`;
+}
+
+// A card's last line: "120 on the list · 3 added · checked 2 hours ago"
+function listCardSummary(l) {
+    if (l.checking) return 'Checking now…';
+    if (!l.last_check) return 'Not checked yet';
+    const r = l.last_result || {};
+    if (r.error) return r.error;
+    return [`${r.on_list ?? 0} on the list`, r.added ? `${r.added} added` : '', `checked ${timeAgo(l.last_check)}`].filter(Boolean).join(' · ');
+}
+
+function drawListCards() {
+    const box = document.getElementById('listCards');
+    box.innerHTML = watchedLists.map(l => {
+        const r = l.last_result || {};
+        return `<div class="arr-card" role="button" tabindex="0" data-id="${esc(l.id)}" title="Edit ${esc(l.name)}">
+            <div class="arr-card-name">${esc(l.name)}</div>
+            <div class="arr-labels">
+                <span class="arr-label">${esc(LIST_KINDS[l.kind] || LIST_KINDS.shelf)}</span>
+                ${l.enabled ? '<span class="arr-label ok">Enabled</span>' : '<span class="arr-label off">Disabled</span>'}
+                <span class="arr-label">${esc(l.monitor)}</span>
+                ${l.kind === 'list' ? `<span class="arr-label">Top ${esc(l.top || 100)}</span>` : ''}
+                ${l.checking ? '<span class="arr-label info">Checking</span>' : r.error ? '<span class="arr-label error">Error</span>' : ''}
+            </div>
+            <div class="arr-card-meta ${r.error && !l.checking ? 'result-error' : 'muted'}">${esc(listCardSummary(l))}</div>
         </div>`;
-    }).join('') : '<p class="muted">No lists watched yet.</p>';
-    box.querySelectorAll('.watched-list').forEach(row => {
-        const l = watchedLists.find(x => x.id === row.dataset.id);
-        const patch = async (fields, message) => {
-            const { ok, data } = await postJSON(`/api/lists/watched/${encodeURIComponent(l.id)}`, fields, 'PATCH');
-            if (ok) { watchedLists = data.lists; drawWatchedLists(); toast(message, 'ok'); }
-            else toast(data.detail || 'Could not change it', 'error');
+    }).join('') + `<button type="button" class="arr-card arr-card-add" id="listAddCard" aria-label="Add a list" title="Add a list">
+        <svg viewBox="0 0 24 24" width="36" height="36" stroke="currentColor" stroke-width="2" fill="none"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+    </button>`;
+    box.querySelectorAll('.arr-card[data-id]').forEach(card => {
+        const open = () => {
+            const list = watchedLists.find(l => l.id === card.dataset.id);
+            if (list) openListEdit({ list });
         };
-        row.querySelector('.wl-enabled').addEventListener('change', e => patch({ enabled: e.target.checked }, `${l.name} ${e.target.checked ? 'is checked again' : 'is paused'}`));
-        row.querySelector('.wl-monitor').addEventListener('change', e => patch({ monitor: e.target.value }, `New books from ${l.name} are added as ${e.target.value}`));
-        row.querySelector('.wl-check').addEventListener('click', async () => {
-            await postJSON(`/api/lists/watched/${encodeURIComponent(l.id)}/check`);
-            loadWatchedLists();
-        });
-        row.querySelector('.wl-remove').addEventListener('click', async () => {
-            if (!await confirmDialog(`Stop watching ${l.name}? Books it added stay in your library.`, { title: 'Stop watching', confirmText: 'Stop Watching', danger: true })) return;
-            const res = await fetch(`/api/lists/watched/${encodeURIComponent(l.id)}`, { method: 'DELETE' });
-            watchedLists = (await res.json()).lists || [];
-            drawWatchedLists();
+        card.addEventListener('click', open);
+        card.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
         });
     });
+    document.getElementById('listAddCard').addEventListener('click', () => showModal(addListModal));
+}
+
+// Exclusions: ignored books, which nothing adds automatically
+let exclusions = [];
+
+async function loadExclusions() {
+    const data = await fetch('/api/ignored').then(r => r.json()).catch(() => null);
+    if (!data) return;
+    exclusions = data.ignored || [];
+    drawExclusions();
+}
+
+function drawExclusions() {
+    const rows = document.getElementById('exclusionRows');
+    const { shown } = pageOf('exclusions', exclusions);
+    rows.innerHTML = shown.map((e, i) => `<tr>
+        <td>${esc(e.title || (e.ids || [])[0] || '')}</td>
+        <td class="muted">${esc(shortNames(e.authors))}</td>
+        <td class="muted">${esc(e.series ? `${e.series}${e.sequence ? ' #' + e.sequence : ''}` : '')}</td>
+        <td class="muted nowrap">${esc(e.when ? new Date(e.when).toLocaleDateString() : '')}</td>
+        <td class="col-actions"><button type="button" class="link-btn exclusion-remove" data-index="${i}">Remove</button></td>
+    </tr>`).join('') || '<tr><td colspan="5" class="no-results">No books are ignored.</td></tr>';
+    drawPager('exclusions', exclusions.length, drawExclusions);
+    rows.querySelectorAll('.exclusion-remove').forEach(btn => btn.addEventListener('click', async () => {
+        const e = shown[Number(btn.dataset.index)];
+        btn.disabled = true;
+        const { ok, data } = await postJSON('/api/ignored', { ids: e.ids, ignored: false });
+        if (!ok) {
+            btn.disabled = false;
+            toast(data.detail || 'Could not remove it', 'error');
+            return;
+        }
+        exclusions = data.ignored || [];
+        drawExclusions();
+        toast(`"${e.title}" is no longer ignored`, 'ok');
+        fetchLibrary();
+    }));
 }
 
 // Settings > Audiobookshelf: Update Audiobookshelf
@@ -3544,76 +3742,183 @@ async function showAbbUsage() {
 
 function setupWatchedLists() {
     document.getElementById('absSeriesOrderBtn').addEventListener('click', runAbsSeriesOrder);
-    document.getElementById('wlAddBtn').addEventListener('click', () => {
-        const status = document.getElementById('wlStatus');
-        // One link per line (or separated by spaces): each is reviewed, then watched, in turn
-        const urls = [...new Set(document.getElementById('wlUrl').value.split(/\s+/).map(u => u.trim()).filter(Boolean))];
-        if (!urls.length) { setActionStatus(status, 'Paste a Goodreads link first', 'error'); return; }
-        setActionStatus(status, '');
-        startWatchReviews(urls);
+    document.getElementById('listsUpdateAll').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        const { ok, data } = await postJSON('/api/lists/check_all');
+        btn.disabled = false;
+        if (!ok) return toast(data.detail || 'Could not check the lists', 'error');
+        const enabled = (data.lists || []).filter(l => l.enabled).length;
+        toast(enabled ? `Checking ${enabled} list${enabled === 1 ? '' : 's'}` : 'No lists are enabled', enabled ? 'ok' : '');
+        loadWatchedLists();
     });
-    setupWatchReview();
+    document.getElementById('closeAddListModal').addEventListener('click', () => hideModal(addListModal));
+    addListModal.addEventListener('click', (e) => { if (e.target === addListModal) hideModal(addListModal); });
+    document.querySelectorAll('#addListModal .list-type').forEach(btn => btn.addEventListener('click', () => {
+        if (btn.dataset.kind === 'csv') {
+            hideModal(addListModal);
+            showModal(listModal);
+            return;
+        }
+        openListEdit({ kind: btn.dataset.kind });
+    }));
+    setupListEdit();
 }
 
 // -----------------
-// Reviewing a Goodreads list before watching it: its books and their Audible matches, like
-// an import. Several links are reviewed one after another.
+// Adding or editing a list. A new list is read and each book looked up on Audible first,
+// like an import: you choose which to add before it's watched.
 // -----------------
-const watchModal = document.getElementById('watchModal');
-let watchQueue = [];          // Links still to review
-let watchOptions = {};        // Shelf, name and top from the form (shelf and name for one link only)
+const addListModal = document.getElementById('addListModal');
+const listEditModal = document.getElementById('listEditModal');
+let listEdit = null;          // {kind, id}: the list in the dialog (id: a watched list's)
 let watchReview = null;       // The review as the server has it
 let watchChoices = {};        // index -> another match chosen with Change
 let watchUnticked = new Set();
+let watchSeen = new Set();    // Results drawn before (ignored ones start unticked)
 let watchTimer = null;
-let watchDone = { lists: 0, books: 0, failed: [] };
 
-function startWatchReviews(urls) {
-    const single = urls.length === 1;
-    watchQueue = urls.slice();
-    watchOptions = {
-        shelf: single ? document.getElementById('wlShelf').value.trim() : '',
-        name: single ? document.getElementById('wlName').value.trim() : '',
-        top: parseInt(document.getElementById('wlTop').value, 10) || 100,
-        later: document.getElementById('wlMonitor').value,
-    };
-    watchDone = { lists: 0, books: 0, failed: [] };
-    nextWatchReview();
+const LINK_HINTS = {
+    shelf: "Your shelf's address (open Want to Read on Goodreads and copy it), your profile, the shelf's RSS link or your Goodreads user number. A private profile's shelf needs its RSS link (it includes a key).",
+    list: "The Listopia list's address.",
+};
+const LINK_PLACEHOLDERS = { shelf: 'goodreads.com/review/list/12345678-name?shelf=to-read', list: 'goodreads.com/list/show/12345.Some_List' };
+
+function reviewing() {
+    return !document.getElementById('listReviewStep').hidden;
 }
 
-async function nextWatchReview() {
+function openListEdit({ kind, list }) {
+    hideModal(addListModal);
     clearTimeout(watchTimer);
-    const url = watchQueue.shift();
-    if (!url) return finishWatchReviews();
-    const total = watchDone.lists + watchDone.failed.length + watchQueue.length + 1;
-    const position = total > 1 ? ` (list ${total - watchQueue.length} of ${total})` : '';
-    watchReview = null; watchChoices = {}; watchUnticked = new Set();
-    document.getElementById('watchLink').textContent = url + position;
-    document.getElementById('watchName').value = watchOptions.name;
-    document.getElementById('watchName').placeholder = '';
-    document.getElementById('watchRows').innerHTML = '';
-    document.getElementById('watchTableBox').hidden = true;
-    document.getElementById('watchLater').value = watchOptions.later;
-    document.getElementById('watchGo').disabled = true;
-    setActionStatus(document.getElementById('watchStatus'), 'Reading the list…');
-    showModal(watchModal);
-    const { ok, data } = await postJSON('/api/lists/preview', { url, shelf: watchOptions.shelf, top: watchOptions.top });
-    if (!ok) {
-        watchDone.failed.push({ url, reason: data.detail || "Couldn't read that list" });
-        setActionStatus(document.getElementById('watchStatus'), data.detail || "Couldn't read that list", 'error');
-        document.getElementById('watchSkip').textContent = watchQueue.length ? 'Next List' : 'Close';
+    listEdit = { kind: list ? (list.kind || 'shelf') : kind, id: list ? list.id : '' };
+    const shelfOf = l => new URLSearchParams(l.url.split('?')[1] || '').get('shelf') || '';
+    document.getElementById('leName').value = list ? list.name : '';
+    document.getElementById('leName').placeholder = 'From Goodreads';
+    document.getElementById('leEnabled').checked = list ? list.enabled !== false : true;
+    document.getElementById('leMonitor').value = list ? list.monitor : 'Monitored';
+    // A watched list's link stays as it is: another link is another list, added with +
+    const url = document.getElementById('leUrl');
+    url.value = list ? (list.source || list.url) : '';
+    url.placeholder = LINK_PLACEHOLDERS[listEdit.kind];
+    url.disabled = Boolean(list);
+    document.getElementById('leUrlHint').textContent = list ? 'To watch a different list, add it with +.' : LINK_HINTS[listEdit.kind];
+    const shelf = document.getElementById('leShelf');
+    shelf.value = list ? shelfOf(list) : '';
+    shelf.disabled = Boolean(list);
+    document.getElementById('leTop').value = String(list ? (list.top || 100) : 100);
+    document.querySelectorAll('#listFormStep .form-row[data-kind]').forEach(row => { row.hidden = row.dataset.kind !== listEdit.kind; });
+    showListStep('form');
+    drawListInfo();
+    setActionStatus(document.getElementById('leStatus'), '');
+    showModal(listEditModal);
+    if (!list) setTimeout(() => url.focus(), 50);
+}
+
+function showListStep(step) {
+    const review = step === 'review';
+    document.getElementById('listFormStep').hidden = review;
+    document.getElementById('listReviewStep').hidden = !review;
+    // The review is a wide table, with its progress on a line of its own
+    document.getElementById('listEditContent').classList.toggle('import-content', review);
+    document.getElementById('listEditContent').classList.toggle('modal-medium', !review);
+    document.querySelector('.list-edit-footer').classList.toggle('reviewing', review);
+    document.getElementById('leAddAsBox').hidden = !review;
+    document.getElementById('leBack').hidden = !review;
+    document.getElementById('leTest').hidden = review;
+    document.getElementById('leDelete').hidden = review || !listEdit.id;
+    document.getElementById('leCheck').hidden = review || !listEdit.id;
+    const save = document.getElementById('leSave');
+    save.disabled = false;
+    save.textContent = 'Save';
+    document.getElementById('listEditTitle').textContent =
+        `${listEdit.id ? 'Edit' : 'Add'} List - ${LIST_KINDS[listEdit.kind]}${review ? ': Choose Books' : ''}`;
+}
+
+// A watched list's last check, and the books on it that weren't found on Audible
+function drawListInfo() {
+    const box = document.getElementById('leInfo');
+    const l = listEdit && listEdit.id ? watchedLists.find(x => x.id === listEdit.id) : null;
+    box.hidden = !l;
+    if (!l) return;
+    const unmatched = (l.unmatched || []).length ? `<details><summary>Not found on Audible (${l.unmatched.length})</summary><ul>
+        ${l.unmatched.map(u => `<li>${esc(u.title)} <span class="muted">· ${esc(u.author)}</span>
+            <a href="#/search/${encodeURIComponent(`${u.title} ${u.author}`)}" class="link-btn">Search</a></li>`).join('')}</ul></details>` : '';
+    box.innerHTML = `<div class="${(l.last_result || {}).error ? 'result-error' : 'muted'}">Last check: ${esc(watchedResultText(l))}</div>${unmatched}`;
+    document.getElementById('leCheck').disabled = Boolean(l.checking);
+}
+
+function listFormValues() {
+    return {
+        kind: listEdit.kind,
+        url: document.getElementById('leUrl').value.trim(),
+        shelf: document.getElementById('leShelf').value.trim(),
+        top: parseInt(document.getElementById('leTop').value, 10) || 100,
+        name: document.getElementById('leName').value.trim(),
+        enabled: document.getElementById('leEnabled').checked,
+        monitor: document.getElementById('leMonitor').value,
+    };
+}
+
+async function testList(e) {
+    const btn = e.currentTarget;
+    const status = document.getElementById('leStatus');
+    const v = listFormValues();
+    if (!listEdit.id && !v.url) return setActionStatus(status, "Paste the list's link first", 'error');
+    btn.disabled = true;
+    setActionStatus(status, 'Reading the list…');
+    const { ok, data } = await postJSON('/api/lists/test', listEdit.id ? { list_id: listEdit.id } : v);
+    btn.disabled = false;
+    if (!ok) return setActionStatus(status, data.detail || "Couldn't read that list", 'error');
+    if (data.title && !listEdit.id) document.getElementById('leName').placeholder = data.title;
+    const books = `${data.count}${data.more ? '+' : ''} book${data.count === 1 ? '' : 's'}`;
+    setActionStatus(status, `Found ${data.title ? `"${data.title}"` : 'the list'} with ${books}`, 'ok');
+}
+
+async function saveList() {
+    const status = document.getElementById('leStatus');
+    const save = document.getElementById('leSave');
+    const v = listFormValues();
+    if (listEdit.id) {
+        const body = { name: v.name, enabled: v.enabled, monitor: v.monitor, ...(listEdit.kind === 'list' ? { top: v.top } : {}) };
+        save.disabled = true;
+        const { ok, data } = await postJSON(`/api/lists/watched/${encodeURIComponent(listEdit.id)}`, body, 'PATCH');
+        save.disabled = false;
+        if (!ok) return setActionStatus(status, data.detail || 'Could not save it', 'error');
+        watchedLists = data.lists;
+        drawListCards();
+        hideModal(listEditModal);
+        toast(`Saved ${v.name || 'the list'}`, 'ok');
         return;
     }
-    document.getElementById('watchSkip').textContent = 'Cancel';
+    if (!v.url) return setActionStatus(status, "Paste the list's link first", 'error');
+    // A new list: read it and look its books up on Audible, then choose which to add
+    save.disabled = true;
+    setActionStatus(status, 'Reading the list…');
+    const { ok, data } = await postJSON('/api/lists/preview', { url: v.url, shelf: v.shelf, top: v.top, kind: v.kind });
+    if (!ok) {
+        save.disabled = false;
+        return setActionStatus(status, data.detail || "Couldn't read that list", 'error');
+    }
+    watchReview = null;
+    watchChoices = {};
+    watchUnticked = new Set();
+    watchSeen = new Set();
+    document.getElementById('watchRows').innerHTML = '';
+    document.getElementById('watchTableBox').hidden = true;
+    document.getElementById('leAddAs').value = v.monitor;
+    showListStep('review');
+    document.getElementById('leSave').disabled = true;
+    setActionStatus(status, 'Reading the list…');
     pollWatchReview();
 }
 
 async function pollWatchReview() {
     clearTimeout(watchTimer);
     const st = await fetch('/api/lists/preview').then(r => r.json()).catch(() => null);
-    if (!st || !watchModal.classList.contains('show')) return;
+    if (!st || !listEditModal.classList.contains('show') || !reviewing()) return;
     watchReview = st;
-    if (st.title) document.getElementById('watchName').placeholder = st.title;
+    if (st.title) document.getElementById('leName').placeholder = st.title;
     drawWatchReview();
     if (st.running) watchTimer = setTimeout(pollWatchReview, 1500);
 }
@@ -3632,17 +3937,23 @@ function watchChosen() {
 
 function drawWatchReview() {
     const st = watchReview;
-    const status = document.getElementById('watchStatus');
+    const status = document.getElementById('leStatus');
     if (st.error) {
         setActionStatus(status, st.error, 'error');
-        document.getElementById('watchSkip').textContent = watchQueue.length ? 'Next List' : 'Close';
+        updateWatchGo();
         return;
     }
+    // Books you ignored start unticked
+    st.results.forEach(r => {
+        if (watchSeen.has(r.index)) return;
+        watchSeen.add(r.index);
+        if (r.ignored) watchUnticked.add(r.index);
+    });
     document.getElementById('watchTableBox').hidden = !st.results.length;
     document.getElementById('watchRows').innerHTML = st.results.map(r => {
         const m = watchMatchOf(r);
         const changed = Boolean(watchChoices[r.index]);
-        const change = r.in_library ? '' : `<button class="link-btn watch-choose" data-index="${r.index}">${m ? 'Change' : 'Choose…'}</button>`;
+        const change = r.in_library ? '' : `<button type="button" class="link-btn watch-choose" data-index="${r.index}">${m ? 'Change' : 'Choose…'}</button>`;
         const details = m ? [m.ga_url && !m.asin ? 'GraphicAudio' : '', m.authors, m.narrators ? 'read by ' + shortNames(m.narrators) : '',
             seriesLabel(m), formatRuntime(m.runtime_min), releaseDate(m.release_date, 4)].filter(Boolean).join(' · ') : '';
         const audible = m
@@ -3650,6 +3961,7 @@ function drawWatchReview() {
                 <span><b>${esc(m.title)}${abridgedIcon(m)}</b><span class="muted">${esc(details)}${changed ? ' · chosen by you' : ''}</span> ${change}</span></div>`
             : `<span class="muted">Not found on Audible</span> ${change}`;
         const state = r.in_library ? `<span class="library-status ${esc(statusClass(r.in_library))} inline-status">${esc(r.in_library)}</span>`
+            : r.ignored && !changed ? '<span class="muted" title="You ignored this book (Settings > Lists > Exclusions); ticking it adds it anyway">Ignored</span>'
             : m ? '<span class="muted">New</span>' : '<span class="muted" title="Looked up again every week while the list is watched">Not added</span>';
         return `<tr>
             <td class="col-check">${watchCanAdd(r) ? `<input type="checkbox" class="watch-check" data-index="${r.index}" ${watchUnticked.has(r.index) ? '' : 'checked'}>` : ''}</td>
@@ -3681,9 +3993,9 @@ function drawWatchReview() {
 
 function updateWatchGo() {
     const n = watchChosen().length;
-    const btn = document.getElementById('watchGo');
+    const btn = document.getElementById('leSave');
     btn.disabled = !watchReview || watchReview.running || Boolean(watchReview.error);
-    btn.textContent = n ? `Watch & Add ${n} Book${n === 1 ? '' : 's'}` : 'Watch';
+    btn.textContent = n ? `Save & Add ${n} Book${n === 1 ? '' : 's'}` : 'Save';
     const all = document.getElementById('watchAll');
     const addable = (watchReview ? watchReview.results : []).filter(watchCanAdd).length;
     all.checked = addable > 0 && n === addable;
@@ -3691,54 +4003,71 @@ function updateWatchGo() {
 }
 
 async function commitWatchReview() {
-    const btn = document.getElementById('watchGo');
-    const later = document.getElementById('watchLater').value;
+    const btn = document.getElementById('leSave');
+    const v = listFormValues();
     btn.disabled = true;
     const { ok, data } = await postJSON('/api/lists/preview/commit', {
         preview_id: watchReview.id,
-        name: document.getElementById('watchName').value.trim(),
-        monitor: later === 'off' ? 'Monitored' : later,
-        enabled: later !== 'off',
-        add_as: document.getElementById('watchAddAs').value,
-        choices: watchChosen().map(r => ({ index: r.index, asin: watchChoices[r.index] ? watchChoices[r.index].asin : '' })),
+        name: v.name,
+        monitor: v.monitor,
+        enabled: v.enabled,
+        add_as: document.getElementById('leAddAs').value,
+        choices: watchChosen().map(r => ({ index: r.index, asin: watchChoices[r.index] ? (watchChoices[r.index].asin || watchChoices[r.index].ga_url || '') : '' })),
     });
     if (!ok) {
         btn.disabled = false;
-        setActionStatus(document.getElementById('watchStatus'), data.detail || "Couldn't watch the list", 'error');
+        setActionStatus(document.getElementById('leStatus'), data.detail || "Couldn't save the list", 'error');
         return;
     }
-    watchDone.lists += 1;
-    watchDone.books += data.added;
-    nextWatchReview();
+    watchReview = null;
+    hideModal(listEditModal);
+    watchedLists = data.lists || [];
+    drawListCards();
+    const list = watchedLists.find(l => l.id === data.list_id);
+    toast(`Watching ${list ? list.name : 'the list'}${data.added ? `: added ${data.added} book${data.added === 1 ? '' : 's'}` : ''}`, 'ok');
+    await fetchLibrary();
+    if (!document.getElementById('libraryView').hidden) renderLibrary();
 }
 
-async function skipWatchReview() {
+// Leaving the review stops looking the list's books up
+async function stopListReview() {
     clearTimeout(watchTimer);
-    if (watchReview && watchReview.id) await fetch('/api/lists/preview', { method: 'DELETE' }).catch(() => null);
-    nextWatchReview();
+    if (reviewing()) await fetch('/api/lists/preview', { method: 'DELETE' }).catch(() => null);
+    watchReview = null;
 }
 
-async function finishWatchReviews() {
-    hideModal(watchModal);
-    await Promise.all([loadWatchedLists(), fetchLibrary()]);
-    renderLibrary();
-    const status = document.getElementById('wlStatus');
-    const box = document.getElementById('wlUrl');
-    box.value = watchDone.failed.map(f => f.url).join('\n');  // What's left still needs fixing
-    if (watchDone.lists) ['wlShelf', 'wlName'].forEach(id => { document.getElementById(id).value = ''; });
-    const parts = [watchDone.lists ? `Watching ${watchDone.lists} new list${watchDone.lists === 1 ? '' : 's'}` : '',
-        watchDone.books ? `${watchDone.books} book${watchDone.books === 1 ? '' : 's'} added` : ''].filter(Boolean);
-    const failed = watchDone.failed.map(f => `${f.url}: ${f.reason}`).join(' · ');
-    setActionStatus(status, [parts.join(', '), failed && `couldn't add: ${failed}`].filter(Boolean).join('; '),
-        watchDone.failed.length ? 'error' : 'ok');
+async function closeListEdit() {
+    await stopListReview();
+    hideModal(listEditModal);
 }
 
-function setupWatchReview() {
-    document.getElementById('watchGo').addEventListener('click', commitWatchReview);
-    document.getElementById('watchSkip').addEventListener('click', skipWatchReview);
-    document.getElementById('closeWatchModal').addEventListener('click', async () => {
-        watchQueue = [];  // Closing stops the remaining links too
-        await skipWatchReview();
+function setupListEdit() {
+    document.getElementById('leSave').addEventListener('click', () => (reviewing() ? commitWatchReview() : saveList()));
+    document.getElementById('leTest').addEventListener('click', testList);
+    document.getElementById('leCancel').addEventListener('click', closeListEdit);
+    document.getElementById('closeListEdit').addEventListener('click', closeListEdit);
+    listEditModal.addEventListener('click', (e) => { if (e.target === listEditModal) closeListEdit(); });
+    document.getElementById('leBack').addEventListener('click', async () => {
+        await stopListReview();
+        showListStep('form');
+        setActionStatus(document.getElementById('leStatus'), '');
+    });
+    document.getElementById('leCheck').addEventListener('click', async () => {
+        const { ok, data } = await postJSON(`/api/lists/watched/${encodeURIComponent(listEdit.id)}/check`);
+        if (!ok) return setActionStatus(document.getElementById('leStatus'), data.detail || 'Could not check it', 'error');
+        watchedLists = data.lists;
+        drawListInfo();
+        loadWatchedLists();
+    });
+    document.getElementById('leDelete').addEventListener('click', async () => {
+        const l = watchedLists.find(x => x.id === listEdit.id);
+        if (!l || !await confirmDialog(`Delete the list "${l.name}"? Books it added stay in your library.`,
+            { title: 'Delete list', confirmText: 'Delete', danger: true })) return;
+        const res = await fetch(`/api/lists/watched/${encodeURIComponent(l.id)}`, { method: 'DELETE' });
+        watchedLists = (await res.json().catch(() => ({}))).lists || watchedLists.filter(x => x.id !== l.id);
+        drawListCards();
+        hideModal(listEditModal);
+        toast(`Deleted ${l.name}`, 'ok');
     });
     document.getElementById('watchAll').addEventListener('change', e => {
         (watchReview ? watchReview.results : []).filter(watchCanAdd)
@@ -3919,9 +4248,9 @@ function openFollowDialog() {
     const list = document.getElementById('authorPickList');
     list.innerHTML = a.candidates.length ? a.candidates.map(b => `
         <label class="pick-row">
-            <input type="checkbox" value="${esc(b.asin)}" ${b.upcoming ? 'checked' : ''}>
+            <input type="checkbox" value="${esc(b.asin)}" ${b.upcoming && !b.ignored ? 'checked' : ''}>
             <span class="muted pick-seq">${esc(releaseDate(b.release_date, 4))}</span>
-            <span class="pick-title">${esc(b.title)}${b.series ? ` <span class="muted">(${esc(seriesLabel(b))})</span>` : ''}${b.upcoming ? ' <span class="edition-badge edition-upcoming">Upcoming</span>' : ''}</span>
+            <span class="pick-title">${esc(b.title)}${b.series ? ` <span class="muted">(${esc(seriesLabel(b))})</span>` : ''}${b.upcoming ? ' <span class="edition-badge edition-upcoming">Upcoming</span>' : ''}${b.ignored ? ' <span class="muted">(ignored)</span>' : ''}</span>
         </label>`).join('') : '<p class="muted">You already have every book by this author (in the editions your settings ask for).</p>';
     list.querySelectorAll('input').forEach(cb => cb.addEventListener('change', updateFollowButton));
     updateFollowButton();
@@ -4030,7 +4359,6 @@ async function watchListJob() {
 }
 
 function setupListImport() {
-    document.getElementById('listImportBtn').addEventListener('click', () => showModal(listModal));
     document.getElementById('closeListModal').addEventListener('click', () => hideModal(listModal));
     listModal.addEventListener('click', (e) => { if (e.target === listModal) hideModal(listModal); });
     document.getElementById('listFile').addEventListener('change', async (e) => {
@@ -4191,17 +4519,24 @@ function conversionRow(label, title, detail, action, bookId) {
 }
 
 // Activity: the book being converted, the queue, and recent results
+let convertData = null;
+
 async function renderConversions() {
-    const section = document.getElementById('conversionSection');
     const st = await convertStatus();
     if (!st) return;
-    const recent = st.recent.slice(0, 5);
-    section.hidden = !st.current && !st.queue.length && !recent.length;
-    drawConversions(st, recent, document.getElementById('conversionList'));
-    drawConversions(st, recent, document.getElementById('settingsConversionList'));
+    convertData = st;
+    drawActivityConversions();
+    drawConversions(st, st.recent.slice(0, 5), document.getElementById('settingsConversionList'));
 }
 
-function drawConversions(st, recent, list) {
+function drawActivityConversions() {
+    const st = convertData;
+    if (!st) return;
+    document.getElementById('conversionSection').hidden = !st.current && !st.queue.length && !st.recent.length;
+    drawConversions(st, st.recent, document.getElementById('conversionList'), 'conversions');
+}
+
+function drawConversions(st, recent, list, pager = '') {
     const resultLabels = { converted: 'Converted', error: 'Failed', cancelled: 'Cancelled', skipped: 'Skipped' };
     const rows = [];
     if (st.current) {
@@ -4215,8 +4550,10 @@ function drawConversions(st, recent, list) {
     recent.forEach(r => rows.push(conversionRow(resultLabels[r.result] || r.result, r.title,
         esc([new Date(r.finished).toLocaleString(), r.message].filter(Boolean).join(' · ')), '', r.book_id)
         .replace('conversion-row', `conversion-row result-${esc(r.result)}`)));
+    const shown = pager ? pageOf(pager, rows).shown : rows;
     list.innerHTML = (st.available ? '' : '<p class="settings-hint">ffmpeg isn\'t installed, so nothing is converted (it\'s included in the Docker image).</p>')
-        + (rows.join('') || '<p class="muted">Nothing queued.</p>');
+        + (shown.join('') || '<p class="muted">Nothing queued.</p>');
+    if (pager) drawPager(pager, rows.length);
     list.querySelectorAll('.conversion-remove').forEach(btn => btn.addEventListener('click', async () => {
         await fetch(`/api/convert/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
         renderConversions();

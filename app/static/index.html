@@ -268,7 +268,10 @@
                 <div class="page-header">
                     <h2>Activity</h2>
                 </div>
-                <h3 class="section-title">Queue</h3>
+                <div class="section-header">
+                    <h3 class="section-title">Queue</h3>
+                    <label class="inline-select">Show <select class="page-size" data-pager="queue" aria-label="Queue items per page"></select></label>
+                </div>
                 <div id="queueNotice" class="settings-hint"></div>
                 <div class="table-container activity-table">
                     <table class="data-table">
@@ -276,8 +279,12 @@
                         <tbody id="queueRows"></tbody>
                     </table>
                 </div>
+                <div class="pager" data-pager="queue" hidden></div>
                 <div id="seedingSection" hidden>
-                    <h3 class="section-title">Seeding</h3>
+                    <div class="section-header">
+                        <h3 class="section-title">Seeding</h3>
+                        <label class="inline-select">Show <select class="page-size" data-pager="seeding" aria-label="Seeding items per page"></select></label>
+                    </div>
                     <div id="seedingNotice" class="settings-hint"></div>
                     <div class="table-container activity-table">
                         <table class="data-table">
@@ -285,22 +292,19 @@
                             <tbody id="seedingRows"></tbody>
                         </table>
                     </div>
+                    <div class="pager" data-pager="seeding" hidden></div>
                 </div>
                 <div id="conversionSection" hidden>
-                    <h3 class="section-title">Conversions to M4B</h3>
+                    <div class="section-header">
+                        <h3 class="section-title">Conversions to M4B</h3>
+                        <label class="inline-select">Show <select class="page-size" data-pager="conversions" aria-label="Conversions per page"></select></label>
+                    </div>
                     <div id="conversionList" class="conversion-list"></div>
+                    <div class="pager" data-pager="conversions" hidden></div>
                 </div>
                 <div class="section-header">
                     <h3 class="section-title">History</h3>
-                    <label class="inline-select">Show
-                        <select id="historyLimit">
-                            <option value="10">10</option>
-                            <option value="20">20</option>
-                            <option value="50">50</option>
-                            <option value="100">100</option>
-                            <option value="all">All</option>
-                        </select>
-                    </label>
+                    <label class="inline-select">Show <select class="page-size" data-pager="history" aria-label="History events per page"></select></label>
                 </div>
                 <div class="table-container activity-table">
                     <table class="data-table">
@@ -308,6 +312,7 @@
                         <tbody id="historyRows"></tbody>
                     </table>
                 </div>
+                <div class="pager" data-pager="history" hidden></div>
             </div>
 
             <div class="content-wrapper" id="importView" hidden>
@@ -710,27 +715,24 @@
 
                     <!-- Lists -->
                     <section class="settings-section" data-section="lists" hidden>
-                        <h3>Watched Goodreads Lists</h3>
-                        <p class="settings-hint">Watch as many as you like: your shelves (Want to Read, any shelf of yours or a friend's) and Listopia lists (goodreads.com/list/show/...). Bayarr checks them every 6 hours (and when you click Check Now). New books on them are looked up on Audible and added to your library; only clear matches (title and author), so a few may need adding by hand from Search. A book you remove from the library isn't added back. A shelf's profile must be public, unless you use the shelf's RSS link (it includes a key).</p>
-                        <div id="watchedLists" class="indexer-list no-dirty"></div>
-                        <div class="indexer-form no-dirty" id="watchForm">
-                            <div class="indexer-form-grid">
-                                <label class="full-row">Goodreads Links (one per line)<textarea id="wlUrl" class="form-input" rows="3" spellcheck="false" placeholder="goodreads.com/review/list/12345678-name?shelf=to-read&#10;goodreads.com/list/show/12345.Some_List"></textarea></label>
-                                <label>Shelf<input type="text" id="wlShelf" class="form-input" placeholder="From the link, else to-read"></label>
-                                <label>Name<input type="text" id="wlName" class="form-input" placeholder="From Goodreads"></label>
-                                <label>Add Books As<select id="wlMonitor" class="form-select"><option value="Monitored">Monitored (downloaded)</option><option value="Unmonitored">Unmonitored</option></select></label>
-                                <label>Listopia Lists: the Top<select id="wlTop" class="form-select"><option value="50">50 books</option><option value="100" selected>100 books</option><option value="250">250 books</option><option value="500">500 books</option></select></label>
-                            </div>
-                            <p class="settings-hint">Paste one or more addresses: a shelf (open your Want to Read list on Goodreads and copy it), your profile, a shelf's RSS link, your Goodreads user number, or a Listopia list. Each list is read and its books looked up on Audible first, so you can choose which to add and how, before it's watched. Shelf and Name apply when you add one link; a Listopia list is watched for its top books.</p>
-                            <div class="inline-actions">
-                                <button type="button" class="primary-btn" id="wlAddBtn">Watch</button>
-                                <span class="action-status" id="wlStatus"></span>
-                            </div>
+                        <div class="settings-heading">
+                            <h3>Lists</h3>
+                            <button type="button" class="secondary-btn" id="listsUpdateAll" title="Check every enabled list now">Update All Lists</button>
                         </div>
+                        <p class="settings-hint">Bayarr reads your lists every 6 hours and adds the books that are new on them, looked up on Audible (clear matches only: the title and author must match). A book you remove from your library isn't added back. Choose a list to change it, or + to add one.</p>
+                        <div id="listCards" class="arr-cards"></div>
 
-                        <h3>Import a File</h3>
-                        <p class="settings-hint">A one-time import of a Goodreads or StoryGraph export (CSV), or any CSV with Title and Author columns: choose a shelf, check the Audible matches, then add them.</p>
-                        <button type="button" id="listImportBtn" class="secondary-btn">Import a CSV Export…</button>
+                        <div class="settings-heading">
+                            <h3>Exclusions</h3>
+                        </div>
+                        <p class="settings-hint">Ignored books: never added automatically, by a list, a monitored series or a followed author. Ignore a book from its series page; remove it here to allow it again.</p>
+                        <div class="table-container">
+                            <table class="data-table exclusions-table">
+                                <thead><tr><th>Book</th><th>Author</th><th>Series</th><th class="col-when">Ignored</th><th class="col-actions"></th></tr></thead>
+                                <tbody id="exclusionRows"></tbody>
+                            </table>
+                        </div>
+                        <div class="pager" data-pager="exclusions" hidden></div>
                     </section>
 
                     <!-- Audiobookshelf -->
@@ -951,18 +953,64 @@
         </div>
     </div>
 
-    <div id="watchModal" class="modal">
-        <div class="modal-content import-content">
+    <!-- Add List: choose the kind of list (like Sonarr's) -->
+    <div id="addListModal" class="modal">
+        <div class="modal-content modal-medium">
             <div class="modal-header">
-                <h2>Watch a Goodreads List</h2>
-                <button type="button" class="close-btn" id="closeWatchModal" aria-label="Close">&times;</button>
+                <h2>Add List</h2>
+                <button type="button" class="close-btn" id="closeAddListModal" aria-label="Close">&times;</button>
             </div>
             <div class="modal-pad">
-                <p class="modal-lead">Each book on the list is looked up on Audible (clear matches only: the title and author must match). Choose the ones to add now; <b>Change</b> picks another match. The list is then watched, and books added to it later are added as you choose below.</p>
-                <div class="watch-head">
-                    <label>Name<input type="text" id="watchName" class="form-input" autocomplete="off"></label>
-                    <span class="muted" id="watchLink"></span>
+                <p class="modal-lead">Bayarr watches lists for books to add to your library. Choose the kind of list.</p>
+                <h4 class="list-type-group">Goodreads</h4>
+                <div class="list-types">
+                    <button type="button" class="list-type" data-kind="shelf"><b>Goodreads Shelf</b><span>Want to Read, or any shelf of yours or a friend's</span></button>
+                    <button type="button" class="list-type" data-kind="list"><b>Goodreads List</b><span>A Listopia list: its top books</span></button>
                 </div>
+                <h4 class="list-type-group">Other</h4>
+                <div class="list-types">
+                    <button type="button" class="list-type" data-kind="csv"><b>CSV File</b><span>A one-time import of a Goodreads or StoryGraph export, or any CSV with Title and Author columns</span></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add or edit a list; adding one then shows its books and their Audible matches to choose from -->
+    <div id="listEditModal" class="modal">
+        <div class="modal-content modal-medium" id="listEditContent">
+            <div class="modal-header">
+                <h2 id="listEditTitle">Add List</h2>
+                <button type="button" class="close-btn" id="closeListEdit" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-pad" id="listFormStep">
+                <div class="form-rows">
+                    <label class="form-row"><span class="form-row-label">Name</span>
+                        <span class="form-row-field"><input type="text" id="leName" class="form-input" autocomplete="off" placeholder="From Goodreads"></span></label>
+                    <label class="form-row"><span class="form-row-label">Enable</span>
+                        <span class="form-row-field"><span class="checkbox-label"><input type="checkbox" id="leEnabled" checked> <span class="muted">Check the list every 6 hours and add the books that are new on it</span></span></span></label>
+                    <label class="form-row"><span class="form-row-label">Monitor</span>
+                        <span class="form-row-field"><select id="leMonitor" class="form-select">
+                            <option value="Monitored">Monitored (download)</option>
+                            <option value="Unmonitored">Unmonitored (just track)</option>
+                        </select><span class="settings-hint">How books found on the list are added</span></span></label>
+                    <label class="form-row"><span class="form-row-label">Link</span>
+                        <span class="form-row-field"><input type="text" id="leUrl" class="form-input" autocomplete="off" spellcheck="false">
+                            <span class="settings-hint" id="leUrlHint"></span></span></label>
+                    <label class="form-row" data-kind="shelf"><span class="form-row-label">Shelf</span>
+                        <span class="form-row-field"><input type="text" id="leShelf" class="form-input" autocomplete="off" placeholder="to-read">
+                            <span class="settings-hint">From the link, else Want to Read (to-read)</span></span></label>
+                    <label class="form-row" data-kind="list"><span class="form-row-label">Limit</span>
+                        <span class="form-row-field"><select id="leTop" class="form-select">
+                            <option value="50">The top 50 books</option>
+                            <option value="100" selected>The top 100 books</option>
+                            <option value="250">The top 250 books</option>
+                            <option value="500">The top 500 books</option>
+                        </select><span class="settings-hint">Books further down the list aren't added</span></span></label>
+                </div>
+                <div id="leInfo" class="list-info" hidden></div>
+            </div>
+            <div class="modal-pad" id="listReviewStep" hidden>
+                <p class="modal-lead">Each book on the list was looked up on Audible (clear matches only: the title and author must match). Choose the ones to add now; <b>Change</b> picks another match. Books added to the list later are added as the list's Monitor setting says.</p>
                 <div class="table-container import-table" id="watchTableBox" hidden>
                     <table class="data-table">
                         <thead><tr><th class="col-check"><input type="checkbox" id="watchAll" aria-label="Select all"></th><th>On the list</th><th>On Audible</th><th>Status</th></tr></thead>
@@ -970,23 +1018,20 @@
                     </table>
                 </div>
             </div>
-            <div class="modal-footer watch-footer">
-                <span id="watchStatus" class="action-status"></span>
-                <label>Add the chosen books as
-                    <select id="watchAddAs" class="form-select">
+            <div class="modal-footer list-edit-footer">
+                <button type="button" class="danger-btn" id="leDelete" hidden>Delete</button>
+                <span id="leStatus" class="action-status"></span>
+                <label id="leAddAsBox" hidden>Add the chosen books as
+                    <select id="leAddAs" class="form-select">
                         <option value="Monitored">Monitored (download)</option>
                         <option value="Unmonitored">Unmonitored (just track)</option>
                     </select>
                 </label>
-                <label>Books added to the list later
-                    <select id="watchLater" class="form-select">
-                        <option value="Monitored">Add as Monitored</option>
-                        <option value="Unmonitored">Add as Unmonitored</option>
-                        <option value="off">Don't add (only these now)</option>
-                    </select>
-                </label>
-                <button class="secondary-btn" id="watchSkip">Cancel</button>
-                <button class="primary-btn" id="watchGo" disabled>Watch</button>
+                <button type="button" class="secondary-btn" id="leCheck" hidden>Check Now</button>
+                <button type="button" class="secondary-btn" id="leTest">Test</button>
+                <button type="button" class="secondary-btn" id="leBack" hidden>Back</button>
+                <button type="button" class="secondary-btn" id="leCancel">Cancel</button>
+                <button type="button" class="primary-btn" id="leSave">Save</button>
             </div>
         </div>
     </div>

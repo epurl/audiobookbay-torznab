@@ -355,7 +355,7 @@ def status():
     state = _load()
     return {"available": available(), "current": dict(job) if job["running"] else None,
             "queue": [{**q, "position": i + 1} for i, q in enumerate(state["queue"])],
-            "recent": list(reversed(state["recent"]))[:10]}
+            "recent": list(reversed(state["recent"]))}  # The last RECENT_KEPT, newest first
 
 
 def _record(book_id, title, result, message=""):

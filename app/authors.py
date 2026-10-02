@@ -72,11 +72,12 @@ async def detail(name):
     index = LibraryIndex(db.get_library())
     wanted = wanted_editions()
     today = datetime.date.today().isoformat()
+    ignored = db.ignored_ids()
     rows = []
     for b in books:
         owned = index.find(b)
         rows.append({**b, "book_id": (owned or {}).get("id", ""), "status": (owned or {}).get("status", ""),
-                     "upcoming": (b.get("release_date") or "") > today})
+                     "upcoming": (b.get("release_date") or "") > today, "ignored": db.is_ignored(b, ignored)})
     entry = get(name=name)
     # The library's own spelling of the name, if any
     spelled = next((a.strip() for b in db.get_library() for a in (b.get("authors") or "").split(",")
@@ -111,6 +112,7 @@ async def follow(name, add_asins=()):
     for b in books:
         if b.get("asin") in set(add_asins) and not index.find(b):
             added.append(db.add_to_library({**b, "description": ""}))
+            db.unignore(b)  # Chosen by you: no longer ignored
     if added:
         db.add_history("author", {"title": name}, f"Added {len(added)} book{'s' if len(added) != 1 else ''} by {name}")
     return entry, added
@@ -122,9 +124,11 @@ async def sync(entry, settings):
     index = LibraryIndex(db.get_library())
     known = set(entry.get("known_asins") or [])
     wanted = wanted_editions(settings.get("edition_preference"))
+    ignored = db.ignored_ids()
     added = []
     for b in books:
-        if b.get("asin") and b["asin"] not in known and b["edition"] in wanted and not index.find(b):
+        if (b.get("asin") and b["asin"] not in known and b["edition"] in wanted and not index.find(b)
+                and not db.is_ignored(b, ignored)):
             added.append(db.add_to_library({**b, "description": ""}))
     update(entry["id"], known_asins=sorted(known | {b["asin"] for b in books if b.get("asin")}),
            last_sync=datetime.datetime.now().isoformat(timespec="seconds"))

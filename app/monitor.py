@@ -206,6 +206,7 @@ async def sync_series(series, settings, selected=None):
     title = plain_title(series.get("title") or catalog.get("title", ""))
     index = LibraryIndex(db.get_library())
     known = series.get("known_asins")
+    ignored = db.ignored_ids()
     added = []
     for book in every_edition:
         if index.find(book):
@@ -214,13 +215,17 @@ async def sync_series(series, settings, selected=None):
         if selected is not None:
             wanted = bool(release_id) and release_id in selected
         else:
-            # Series monitored before known_asins existed: treat today's list as known
+            # Series monitored before known_asins existed: treat today's list as known. Books
+            # you ignored on the series page aren't added
             wanted = (known is not None and bool(release_id) and release_id not in known
-                      and not _known_part(book, every_edition, known) and editions.edition_of(book) in editions_wanted)
+                      and not _known_part(book, every_edition, known) and editions.edition_of(book) in editions_wanted
+                      and not db.is_ignored(book, ignored))
         if not wanted:
             continue
         from app import graphicaudio
         entry = db.add_to_library({**(await graphicaudio.with_details(book)), "description": ""})
+        if selected is not None:
+            db.unignore(book)  # Chosen by you: no longer ignored
         added.append(entry)
     all_asins = {b.get("asin") or b.get("ga_url") for b in every_edition if b.get("asin") or b.get("ga_url")}
     author = series_author([{"catalog": b, "book": None} for b in books]) or series.get("author", "")
@@ -277,7 +282,13 @@ async def check_library():
         status = book.get("status")
 
         # 1. Graduate Unreleased to Monitored once released. This doesn't need a
-        # download client, so it runs even when qBittorrent is disabled.
+        # download client, so it runs even when qBittorrent is disabled. A Monitored book
+        # that isn't out yet (set by hand, or its date moved) waits as Unreleased: there's
+        # nothing to find before then.
+        if status == "Monitored" and db.is_unreleased(book.get("release_date"), today):
+            logger.info(f"Book '{title}' isn't released until {book['release_date'][:10]}; waiting as Unreleased")
+            db.update_book(book["id"], status="Unreleased")
+            continue
         if status == "Unreleased" and book.get("release_date"):
             try:
                 dt = datetime.datetime.strptime(book["release_date"], "%Y-%m-%d").date()

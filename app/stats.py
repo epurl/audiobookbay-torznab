@@ -59,15 +59,19 @@ def compute():
         "totals": {
             "books": len(library),
             "on_disk": len(on_disk),
-            "wanted": sum(1 for b in library if b.get("status") in ("Monitored", "Missing", "Downloading", "Downloaded", "Needs Review")),
-            "upcoming": sum(1 for b in library if b.get("status") == "Unreleased"),
+            # A Monitored book that isn't out yet counts as upcoming, not wanted
+            "wanted": sum(1 for b in library if b.get("status") in ("Monitored", "Missing", "Downloading", "Downloaded", "Needs Review")
+                          and not (b.get("status") == "Monitored" and db.is_unreleased(b.get("release_date")))),
+            "upcoming": sum(1 for b in library if b.get("status") == "Unreleased"
+                            or (b.get("status") == "Monitored" and db.is_unreleased(b.get("release_date")))),
             "hours": round(minutes(on_disk) / 60),
             "size_bytes": sum(b.get("size_bytes") or 0 for b in on_disk),
             "authors": len({primary_author(b.get("authors")) for b in library if b.get("authors")}),
             "series": len({e["name"] for b in library for e in series_entries(b)}),
             "matched": sum(1 for b in library if b.get("asin") or b.get("ga_url")),  # Audible or GraphicAudio
         },
-        "statuses": _top(Counter(b.get("status") for b in library), 12),
+        "statuses": _top(Counter("Unreleased" if b.get("status") == "Monitored" and db.is_unreleased(b.get("release_date"))
+                                 else b.get("status") for b in library), 12),
         "editions": _top(Counter(editions.label(editions.edition_of(b)) for b in library), 5),
         "formats": _top(formats, 8),
         "languages": _top(Counter(b.get("language") or "Unknown" for b in library), 8),

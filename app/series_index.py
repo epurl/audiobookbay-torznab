@@ -4,6 +4,7 @@ belongs to and Audible's full list of releases for each series.
 A series' abridged editions (dramatizations included) are a series of their own ("Name
 (Abridged)", key "<key>~abridged"): owning one doesn't count towards the unabridged series."""
 import asyncio
+import datetime
 import logging
 from collections import Counter, defaultdict
 
@@ -13,7 +14,8 @@ from app.library import normalize, part_number, primary_author, series_entries, 
 
 logger = logging.getLogger(__name__)
 
-WANTED = {"Monitored", "Unreleased", "Downloading", "Downloaded", "Needs Review", "Missing"}
+# Books on their way: monitored and out (unreleased ones are counted as upcoming instead)
+WANTED = {"Monitored", "Downloading", "Downloaded", "Needs Review", "Missing"}
 DRAMA_SUFFIX = "~abridged"
 _OLD_SUFFIX = "~dramatized"  # Series page addresses from before
 
@@ -200,10 +202,37 @@ def _held(row):
     return row["book"] or row.get("other")
 
 
-def summarize(group, index):
+def _owned(row):
+    held = _held(row)
+    return bool(held) and held.get("status") == "Imported"
+
+
+def _upcoming(row, today=None):
+    """Not out yet (and not on disk): left out of the series' count until it's released."""
+    held = _held(row)
+    if _owned(row):
+        return False
+    if held and held.get("status") == "Unreleased":
+        return True
+    return db.is_unreleased((row["book"] or row["catalog"] or {}).get("release_date"), today)
+
+
+def _ignored(row, ignored):
+    """Ignored from the series page (and not on disk): left out of the series' count. By
+    the library book's ids or Audible's (a library book may not have its ASIN)."""
+    return bool(ignored) and not _owned(row) and bool((db.release_ids(row["book"]) | db.release_ids(row["catalog"])) & ignored)
+
+
+def summarize(group, index, ignored=frozenset()):
     rows = _rows(group, index)
     statuses = [_held(r)["status"] for r in rows if _held(r)]
     tracked = group["tracked"]
+    today = datetime.date.today()
+    skipped = [r for r in rows if _ignored(r, ignored)]
+    upcoming = [r for r in rows if not _ignored(r, ignored) and _upcoming(r, today)]
+    # Like Sonarr's episode count: released books you haven't ignored, and what you have
+    left_out = {id(r) for r in skipped + upcoming}
+    counted = [r for r in rows if id(r) not in left_out]
     return {
         "key": group["key"],
         "title": plain_title(group["title"]),
@@ -216,10 +245,12 @@ def summarize(group, index):
         "series_id": (tracked or {}).get("id", ""),
         "owned": statuses.count("Imported"),
         "in_library": len(statuses),
-        "wanted": sum(1 for st in statuses if st in WANTED),
+        "wanted": sum(1 for r in counted if _held(r) and _held(r)["status"] in WANTED),
+        "upcoming": len(upcoming),
+        "ignored": len(skipped),
         # Unknown until Audible's list for the series has been loaded
-        "total": len(rows) if group["catalog"] else None,
-        "missing": sum(1 for r in rows if not _held(r)) if group["catalog"] else None,
+        "total": len(counted) if group["catalog"] else None,
+        "missing": sum(1 for r in counted if not _held(r)) if group["catalog"] else None,
         # Audible dates books without a release date 2200-01-01
         "latest": max((d for r in rows if (d := (r["book"] or r["catalog"]).get("release_date") or "") < "2100"),
                       default=""),
@@ -230,7 +261,8 @@ def summarize(group, index):
 def index():
     groups = build_groups()
     lib_index = LibraryIndex(db.get_library())
-    return [summarize(g, lib_index) for g in groups.values()]
+    ignored = db.ignored_ids()
+    return [summarize(g, lib_index, ignored) for g in groups.values()]
 
 
 async def resolve_asin(group):
@@ -352,9 +384,11 @@ async def detail(key):
         # Audible only has dramatizations of this series
         group = _drama_variant(group)
         rows, alternates = _all_rows(group, lib_index)
-    summary = summarize(group, lib_index)
-    summary["rows"] = [_row_json(r) for r in rows]
-    summary["alternates"] = [_row_json(r) for r in alternates]
+    ignored = db.ignored_ids()
+    summary = summarize(group, lib_index, ignored)
+    today = datetime.date.today()
+    summary["rows"] = [_row_json(r, ignored, today) for r in rows]
+    summary["alternates"] = [_row_json(r, ignored, today) for r in alternates]
     # The series' two sides: narrated (with abridged) and dramatized
     main_key = group["key"][:-len(DRAMA_SUFFIX)] if group.get("dramatized") else group["key"]
     main_side = {**group, "key": main_key, "dramatized": False}
@@ -375,11 +409,13 @@ async def detail(key):
     return summary
 
 
-def _row_json(r):
+def _row_json(r, ignored=frozenset(), today=None):
     book, catalog = r["book"], r["catalog"]
     shown = book or catalog
     other = r.get("other")
     return {
+        "ignored": _ignored(r, ignored),
+        "upcoming": _upcoming(r, today),
         "sequence": r["sequence"],
         "book_id": (book or {}).get("id", ""),
         "status": (book or {}).get("status", ""),

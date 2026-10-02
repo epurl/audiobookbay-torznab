@@ -741,48 +741,6 @@ body {
     font-size: 0.9rem;
 }
 
-/* Reviewing a Goodreads list before watching it */
-.watch-head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    gap: 12px;
-    margin-bottom: 12px;
-}
-
-.watch-head label {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    min-width: min(320px, 100%);
-}
-
-#watchLink {
-    word-break: break-all;
-    font-size: 0.85rem;
-}
-
-.watch-footer {
-    flex-wrap: wrap;
-    gap: 10px;
-}
-
-/* Progress and results on a line of their own, above the choices */
-#watchStatus {
-    flex-basis: 100%;
-    order: -1;
-}
-
-.watch-footer label {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-}
-
 #manualMatchModal {
     z-index: 1100;  /* Opens over the import dialog */
 }
@@ -2071,6 +2029,34 @@ tr.clickable {
     opacity: 0.75;
 }
 
+/* An ignored book: not added or downloaded automatically, and not counted */
+.series-books-table tr.ignored-row td {
+    opacity: 0.55;
+}
+
+/* ... but its status and its Ignore box stay clear */
+.series-books-table tr.ignored-row td:nth-last-child(-n+2) {
+    opacity: 1;
+}
+
+.series-books-table .col-ignore {
+    width: 1%;
+    padding-left: 8px;
+    padding-right: 16px;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.series-books-table .ignore-toggle {
+    cursor: pointer;
+}
+
+.status-ignored {
+    background-color: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-muted);
+}
+
 .inline-status {
     position: static;
     box-shadow: none;
@@ -2949,24 +2935,6 @@ label.edition-check {
     font-size: 0.9rem;
 }
 
-.watched-list .indexer-info {
-    flex: 1;
-    min-width: 0;
-}
-
-.watched-list details {
-    margin-top: 6px;
-    font-size: 0.85rem;
-}
-
-.watched-list details ul {
-    margin: 6px 0 0 18px;
-}
-
-.watched-list .result-error {
-    display: block;
-}
-
 .indexer-form {
     padding: 12px;
     border: 1px dashed var(--border-color);
@@ -2986,18 +2954,6 @@ label.edition-check {
     gap: 4px;
     font-size: 0.85rem;
     color: var(--text-muted);
-}
-
-/* A field that takes the form's whole width (e.g. several links, one per line) */
-.indexer-form-grid .full-row {
-    grid-column: 1 / -1;
-}
-
-.indexer-form-grid textarea.form-input {
-    resize: vertical;
-    min-height: 4.5em;
-    font-family: inherit;
-    line-height: 1.4;
 }
 
 .release-source {
@@ -3256,4 +3212,299 @@ label.edition-check {
     display: block;
     height: 100%;
     background-color: var(--primary);
+}
+
+/* Settings > Lists: a card per list, like Sonarr's and Radarr's Import Lists */
+.settings-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 32px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border-color);
+}
+
+.settings-section > .settings-heading:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+.settings-section .settings-heading h3 {
+    margin: 0;
+    padding: 0;
+    border: none;
+}
+
+.settings-heading + .settings-hint {
+    margin: 8px 0 16px;
+}
+
+.arr-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+}
+
+.arr-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 116px;
+    padding: 12px 14px;
+    background-color: var(--bg-dark);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.2s;
+}
+
+.arr-card:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
+.arr-card-name {
+    font-size: 1.05rem;
+    font-weight: 500;
+    overflow-wrap: anywhere;
+}
+
+.arr-labels {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.arr-label {
+    padding: 1px 6px;
+    border: 1px solid var(--border-color);
+    border-radius: 2px;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.arr-label.ok {
+    border-color: var(--success);
+    background-color: var(--success);
+    color: #fff;
+}
+
+.arr-label.off {
+    border-color: #6b7280;
+    background-color: #6b7280;
+    color: #fff;
+}
+
+.arr-label.info {
+    border-color: #3b82f6;
+    background-color: #3b82f6;
+    color: #fff;
+}
+
+.arr-label.error {
+    border-color: var(--error);
+    background-color: var(--error);
+    color: #fff;
+}
+
+.arr-card-meta {
+    margin-top: auto;
+    font-size: 0.8rem;
+    overflow-wrap: anywhere;
+}
+
+.arr-card-add {
+    align-items: center;
+    justify-content: center;
+    border-style: dashed;
+    color: var(--text-muted);
+}
+
+@media (hover: hover) {
+    .arr-card:hover {
+        border-color: var(--primary);
+    }
+
+    .arr-card-add:hover {
+        color: var(--primary);
+    }
+
+    .list-type:hover {
+        border-color: var(--primary);
+    }
+}
+
+/* Add List: the kinds of list */
+.list-type-group {
+    margin: 16px 0 8px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.list-types {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 10px;
+}
+
+.list-type {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 14px;
+    background-color: var(--bg-dark);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.2s;
+}
+
+.list-type span {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+/* A list's settings: a label beside each field, as in Sonarr's dialogs */
+.form-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    align-items: start;
+    gap: 12px;
+}
+
+.form-row[hidden] {
+    display: none;
+}
+
+.form-row-label {
+    padding-top: 8px;
+    font-weight: 500;
+    text-align: right;
+}
+
+.form-row-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.form-row-field .settings-hint {
+    margin: 0;
+}
+
+.form-row-field .checkbox-label {
+    min-height: 36px;
+    font-size: 0.85rem;
+}
+
+.form-row-field .form-input:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.list-info {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border-color);
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
+}
+
+.list-info details {
+    margin-top: 8px;
+}
+
+.list-info ul {
+    margin: 6px 0 0 18px;
+}
+
+.list-edit-footer {
+    flex-wrap: wrap;
+}
+
+.list-edit-footer label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.list-edit-footer label[hidden] {
+    display: none;
+}
+
+/* Reviewing a list's books: progress and results on a line of their own, above the choices */
+.list-edit-footer.reviewing #leStatus {
+    flex-basis: 100%;
+    order: -1;
+}
+
+@media (max-width: 560px) {
+    .form-row {
+        grid-template-columns: 1fr;
+        gap: 4px;
+    }
+
+    .form-row-label {
+        padding-top: 0;
+        text-align: left;
+    }
+
+    /* Progress and results on a line of their own, above the buttons */
+    .list-edit-footer #leStatus {
+        flex-basis: 100%;
+        order: -1;
+    }
+
+    .list-edit-footer .danger-btn {
+        margin-right: auto;
+    }
+}
+
+.exclusions-table .col-actions {
+    width: 1%;
+    white-space: nowrap;
+    text-align: right;
+}
+
+/* Pages of a long list: Previous, "21-40 of 85", Next */
+.pager {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 8px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.pager[hidden] {
+    display: none;
+}
+
+.pager .secondary-btn {
+    min-width: 36px;
+    padding: 4px 10px;
+    font-size: 1rem;
+    line-height: 1.2;
 }
