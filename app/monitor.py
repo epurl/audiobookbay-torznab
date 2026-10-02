@@ -41,18 +41,24 @@ async def _search_loop():
 
 
 async def _import_loop():
+    from app import seeding  # Torrents of imported books: removed once they've seeded enough
     while True:
         try:
             settings = db.get_settings()
-            if settings.get("qbt_enabled"):
-                await check_active_downloads(settings)
-                await import_completed_downloads(settings)
-                from app import seeding  # Torrents of imported books: removed once they've seeded enough
-                await seeding.check(settings)
-            if usenet.client(settings):
-                await check_usenet_downloads(settings)
         except Exception as e:
             logger.error(f"Error in import loop: {e}", exc_info=True)
+            settings = {}
+        # Each step on its own, so a problem in one doesn't hold up the others
+        steps = []
+        if settings.get("qbt_enabled"):
+            steps += [check_active_downloads, import_completed_downloads, seeding.check]
+        if usenet.client(settings):
+            steps.append(check_usenet_downloads)
+        for step in steps:
+            try:
+                await step(settings)
+            except Exception as e:
+                logger.error(f"Error in import loop ({step.__name__}): {e}", exc_info=True)
         await asyncio.sleep(IMPORT_INTERVAL)
 
 

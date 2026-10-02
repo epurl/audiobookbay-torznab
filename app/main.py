@@ -39,11 +39,14 @@ class SafeJSONResponse(JSONResponse):
 app = FastAPI(title="Bayarr", default_response_class=SafeJSONResponse)
 app.middleware("http")(auth.auth_middleware)
 
+_loops = set()  # Kept here: the event loop only holds weak references to tasks
+
+
 @app.on_event("startup")
 async def startup_event():
     # Start the background monitor loop, and the M4B conversion queue
-    asyncio.create_task(run_monitor_loop())
-    asyncio.create_task(convert.run_queue())
+    _loops.add(asyncio.create_task(run_monitor_loop()))
+    _loops.add(asyncio.create_task(convert.run_queue()))
 
 # Ensure static directory exists
 os.makedirs("app/static", exist_ok=True)
