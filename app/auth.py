@@ -29,7 +29,7 @@ def hash_password(password: str) -> str:
 def _verify_hash(password: str, stored: str) -> bool:
     try:
         _, rounds, salt, digest = stored.split("$")
-        candidate = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), int(rounds)).hex()
+        candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8", "surrogateescape"), salt.encode(), int(rounds)).hex()
         return hmac.compare_digest(candidate, digest)
     except ValueError:
         return False
@@ -46,18 +46,24 @@ def credentials_configured() -> bool:
     return bool(settings.get("auth_username") and settings.get("auth_password_hash"))
 
 
+def _same(a: str, b: str) -> bool:
+    """Constant-time comparison that also takes non-ASCII text (compare_digest refuses
+    non-ASCII str)."""
+    return hmac.compare_digest(a.encode("utf-8", "surrogateescape"), b.encode("utf-8", "surrogateescape"))
+
+
 def check_credentials(username: str, password: str) -> bool:
     # Environment variables take priority over credentials saved from the UI
     if env_credentials_set():
-        user_ok = hmac.compare_digest(username, os.environ["BAYARR_USERNAME"])
-        pass_ok = hmac.compare_digest(password, os.environ["BAYARR_PASSWORD"])
+        user_ok = _same(username, os.environ["BAYARR_USERNAME"])
+        pass_ok = _same(password, os.environ["BAYARR_PASSWORD"])
         return user_ok and pass_ok
     settings = db.get_settings()
     stored_user = settings.get("auth_username", "")
     stored_hash = settings.get("auth_password_hash", "")
     if not stored_user or not stored_hash:
         return False
-    return hmac.compare_digest(username, stored_user) and _verify_hash(password, stored_hash)
+    return _same(username, stored_user) and _verify_hash(password, stored_hash)
 
 
 def _is_local_client(request: Request) -> bool:
@@ -66,6 +72,8 @@ def _is_local_client(request: Request) -> bool:
         ip = ipaddress.ip_address(host)
     except ValueError:
         return False
+    if getattr(ip, "ipv4_mapped", None):  # "::ffff:203.0.113.5" is that IPv4 address
+        ip = ip.ipv4_mapped
     return ip.is_loopback or ip.is_private
 
 

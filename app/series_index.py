@@ -286,6 +286,8 @@ def _attach_owned(asin, title, catalog_books):
             continue
         db.add_series_to_books({"name": title, "asin": asin, "sequence": cb.get("catalog_sequence") or ""}, {owned["id"]})
         fill = {k: cb[k] for k in _FILL_FROM_AUDIBLE if cb.get(k) and not owned.get(k)}
+        if cb.get("placeholder"):
+            fill.pop("asin", None)  # Listed by Audible, not sold there: its ASIN leads nowhere
         reordered = audible_author_order(owned.get("authors"), cb.get("authors"))
         if reordered:
             fill["authors"] = reordered

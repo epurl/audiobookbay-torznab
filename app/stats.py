@@ -65,7 +65,7 @@ def compute():
             "size_bytes": sum(b.get("size_bytes") or 0 for b in on_disk),
             "authors": len({primary_author(b.get("authors")) for b in library if b.get("authors")}),
             "series": len({e["name"] for b in library for e in series_entries(b)}),
-            "matched": sum(1 for b in library if b.get("asin")),
+            "matched": sum(1 for b in library if b.get("asin") or b.get("ga_url")),  # Audible or GraphicAudio
         },
         "statuses": _top(Counter(b.get("status") for b in library), 12),
         "editions": _top(Counter(editions.label(editions.edition_of(b)) for b in library), 5),
