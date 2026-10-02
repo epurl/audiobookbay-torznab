@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # How much searching each kind of search may do (pages fetched, detail pages loaded)
 LIMITS = {
-    "auto": {"pages": 6, "details": 3},
+    "auto": {"pages": 4, "details": 3},
     "manual": {"pages": 10, "details": 10},
 }
 
@@ -121,7 +121,10 @@ async def find_releases(book, settings, mode="auto"):
                 break
 
     abb = settings.get("abb_enabled", True) and torrents_ok
+    author_only = scraper.clean_query(primary_author(book.get("authors")) or "").lower()
     for query, max_pages in (queries if abb else []):
+        if mode == "auto" and query.lower() == author_only:
+            max_pages = 1  # Automatic searches: the author's newest page, not three
         if pages_used >= limits["pages"] or scraper.is_paused():
             break
         if strong() and mode == "auto":

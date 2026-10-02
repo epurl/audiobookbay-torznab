@@ -20,11 +20,13 @@ _background_tasks = set()
 
 
 async def run_monitor_loop():
-    logger.info("Starting background monitor (search every 6h, import check every 60s)...")
-    await asyncio.gather(_search_loop(), _import_loop())
+    logger.info("Starting background monitor (library check every 6h, AudiobookBay's new uploads every 2h, "
+                "import check every 60s)...")
+    await asyncio.gather(_search_loop(), _import_loop(), _feed_loop())
 
 
 async def _search_loop():
+    scraper.PURPOSE.set("background")  # Automatic work: paced wider, with a daily allowance
     while True:
         try:
             await asyncio.to_thread(db.daily_backup)
@@ -44,6 +46,7 @@ async def _search_loop():
 
 async def _import_loop():
     from app import seeding  # Torrents of imported books: removed once they've seeded enough
+    scraper.PURPOSE.set("background")  # (Searching again after a failed download is automatic)
     while True:
         try:
             settings = db.get_settings()
@@ -62,6 +65,21 @@ async def _import_loop():
             except Exception as e:
                 logger.error(f"Error in import loop ({step.__name__}): {e}", exc_info=True)
         await asyncio.sleep(IMPORT_INTERVAL)
+
+
+async def _feed_loop():
+    """AudiobookBay's newest uploads, matched against every Monitored book (abb_feed)."""
+    from app import abb_feed
+    scraper.PURPOSE.set("background")
+    await asyncio.sleep(5 * 60)  # After the start-up library check
+    while True:
+        try:
+            settings = db.get_settings()
+            if settings.get("qbt_enabled") and settings.get("abb_enabled", True) and scraper.background_allowed():
+                await abb_feed.check(settings)
+        except Exception as e:
+            logger.error(f"Error checking AudiobookBay's new uploads: {e}", exc_info=True)
+        await asyncio.sleep(abb_feed.FEED_INTERVAL)
 
 
 def _local_edition(book):
@@ -265,27 +283,31 @@ async def check_library():
                 dt = datetime.datetime.strptime(book["release_date"], "%Y-%m-%d").date()
                 if dt <= today:
                     logger.info(f"Book '{title}' is now released! Upgrading status to Monitored.")
-                    db.update_library_status(book["id"], "Monitored")
+                    db.update_book(book["id"], status="Monitored", abb_searched="", abb_misses=0)
                     db.add_history("released", book, "Released today; now Monitored")
                     status = "Monitored"
             except ValueError:
                 pass
 
-        # 2. Search for Monitored books
+        # 2. Search for Monitored books. AudiobookBay is searched for a book only when it's
+        # due (new uploads are watched separately); your indexers every round
         if status == "Monitored":
             if not searching:
                 continue
-            if scraper.is_paused():
-                continue  # AudiobookBay isn't responding; try again next round
             # Searching takes a while: a book grabbed or imported meanwhile is left alone
             current = db.get_book(book["id"])
             if not current or current.get("status") != "Monitored":
                 continue
-            logger.info(f"Searching for Monitored book: {title}")
+            abb = settings.get("abb_enabled", True) and abb_due(current) and scraper.background_allowed()
+            if not abb and not _indexers_usable(settings):
+                continue
+            logger.info(f"Searching for Monitored book: {title}" + ("" if abb else " (indexers only)"))
             try:
-                await auto_download_book(current, settings)
+                await auto_download_book(current, settings if abb else {**settings, "abb_enabled": False})
             except Exception as e:  # One book's search failing doesn't skip the rest
                 logger.error(f"Searching for {title} failed: {e}", exc_info=True)
+            if abb:
+                await asyncio.sleep(ROUND_GAP)  # Spread over the round rather than in one burst
 
 
 def score_result(book, result, settings):
@@ -309,9 +331,42 @@ async def auto_download_book(book, settings):
         return False
     _searching.add(book["id"])
     try:
-        return await _auto_download_book(book, settings)
+        grabbed = await _auto_download_book(book, settings)
     finally:
         _searching.discard(book["id"])
+    # When AudiobookBay was searched: when, and how many searches in a row found nothing
+    if grabbed is not None and settings.get("abb_enabled", True) and settings.get("qbt_enabled"):
+        misses = 0 if grabbed else int(book.get("abb_misses") or 0) + 1
+        db.update_book(book["id"], abb_searched=datetime.datetime.now().isoformat(timespec="seconds"), abb_misses=misses)
+    return grabbed
+
+
+# Days to wait before searching AudiobookBay for a book again, after 1, 2, 3, 4 or more full
+# searches in a row that found nothing to grab (new uploads are checked every 2 hours anyway)
+ABB_BACKOFF_DAYS = (1, 3, 7, 14)
+ROUND_GAP = 10  # seconds between books' AudiobookBay searches in the library check
+
+
+def abb_due(book, now=None):
+    """Whether the library check should search AudiobookBay for this book: never searched
+    yet (or released, or a download failed since), else after a wait that grows."""
+    last = book.get("abb_searched")
+    misses = int(book.get("abb_misses") or 0)
+    if not last or not misses:
+        return True
+    try:
+        last = datetime.datetime.fromisoformat(last)
+    except ValueError:
+        return True
+    wait = datetime.timedelta(days=ABB_BACKOFF_DAYS[min(misses, len(ABB_BACKOFF_DAYS)) - 1])
+    return (now or datetime.datetime.now()) - last >= wait - datetime.timedelta(hours=1)  # Rounds drift a little
+
+
+def _indexers_usable(settings):
+    """An enabled indexer the download clients can take releases from."""
+    return any(i.get("enabled", True) and (usenet.client(settings) if indexers.protocol(i) == "usenet"
+                                           else settings.get("qbt_enabled"))
+               for i in indexers.get_all())
 
 
 async def _auto_download_book(book, settings):
@@ -320,7 +375,7 @@ async def _auto_download_book(book, settings):
         results, _ = await book_search.find_releases(book, settings, mode="auto")
     except RuntimeError as e:
         logger.warning(f"Couldn't search for {title}: {e}")
-        return False
+        return None  # Not searched: doesn't count as a search that found nothing
     if not results:
         logger.info(f"No results found for {title}")
         return False

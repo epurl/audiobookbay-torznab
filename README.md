@@ -6,7 +6,7 @@ An audiobook manager in the style of Sonarr and Radarr, built around AudiobookBa
 
 ## Features
 
-- **Library:** books from Audible move through `Unreleased` → `Monitored` → `Downloading` → `Imported`. Monitored books are searched when added and every 6 hours (not while qBittorrent can't be reached, unless a Usenet client is set up).
+- **Library:** books from Audible move through `Unreleased` → `Monitored` → `Downloading` → `Imported`. Monitored books are searched when added or released; after that AudiobookBay's new uploads are watched every 2 hours, your indexers are searched every 6 hours, and AudiobookBay itself is searched again for a book less and less often (see **Going easy on AudiobookBay**). Nothing is searched while qBittorrent can't be reached, unless a Usenet client is set up.
 - **Smart AudiobookBay search:** several searches per book, every release scored against the book. Only clear matches are grabbed; box sets, abridged versions (dramatizations included) and other books with the same title are skipped.
 - **Import:** finished downloads are copied (so seeding continues), renamed, and checked against Audible's runtime.
   A download holding several books of a series (`Series 01 - Title, Part 1.m4b`, `Book 2 - Title`...) that's too long for the book: only the grabbed book's files are imported (picked by title, else by number, and they must match Audible's length). The pack's other books are imported too if they're in your library as Monitored or Missing, in the same series and edition, and their length matches.
@@ -201,7 +201,30 @@ Add a **Torznab** indexer in Prowlarr, Listenarr or LazyLibrarian:
 - **API key:** the one set in **Settings → Indexers → Bayarr as an Indexer** (**Generate** makes one). With none set, anything works and anyone who can reach Bayarr can search through it.
 - **Categories:** `3000` and `3030`.
 
-These endpoints don't need the Bayarr login (only the API key, when one is set). Searches (`t=search` / `t=book`) return AudiobookBay results with magnet links.
+These endpoints don't need the Bayarr login (only the API key, when one is set). Searches (`t=search` / `t=book`) return AudiobookBay results (one page for an app's RSS check, at most two for a search); a release's page, with its magnet, is loaded when it's grabbed (through `/api/download`) unless Bayarr already has it.
+
+## Going easy on AudiobookBay
+
+Bayarr keeps its requests to AudiobookBay few and spread out, using your own session (your cookie and your browser's
+user agent):
+
+- **New uploads instead of repeated searches.** Every 2 hours Bayarr reads the newest posts, only as far as the ones it
+  saw last time (usually one page), and matches every Monitored book against them; a clear match (the whole title and
+  the author, nothing ruling it out) has its page loaded and is grabbed. A book is searched on AudiobookBay when it's
+  added or released and when you click **Search Now**; one never found is searched again after 1, 3, 7, then every 14
+  days. Your Torznab and Newznab indexers are still searched every 6 hours.
+- **Smaller searches:** at most 4 result pages per automatic search (the author-only query reads one page), and stops at
+  the first clear match.
+- **Caching:** search pages for an hour (the newest uploads for 20 minutes); a book's page (magnet, narrator, files) for
+  30 days, kept in `config/abb_details.json`. Bayarr and Prowlarr asking for the same page at once share one request.
+- **Pacing:** at least 1 second between requests for searches you start, 2 for Prowlarr & co., 4 for automatic work,
+  which also has an allowance of 300 requests a day.
+- **Backing off:** a block (403), a rate limit (429, honouring Retry-After), a server error or a Cloudflare check pauses
+  every request to AudiobookBay: 5 minutes, then 30 minutes, 2 hours and 6 hours if it happens again (a request that
+  goes through resets that). A Cloudflare check means the cookie needs refreshing (Settings → Indexers); **Test** lifts a
+  pause once the site answers.
+- Settings → Indexers shows today's requests (automatic, yours, Prowlarr's), any pause and why, and the last check of
+  the new uploads.
 
 ## Environment variables
 

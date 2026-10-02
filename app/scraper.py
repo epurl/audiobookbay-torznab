@@ -6,11 +6,14 @@ site's JavaScript. Both are parsed the same way once decoded."""
 import asyncio
 import base64
 import binascii
+import contextvars
 import datetime
+import json
 import logging
 import os
 import re
 import ssl
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -50,11 +53,85 @@ def user_agent():
 RESULTS_PER_PAGE = 9
 MAX_QUERY_LENGTH = 50  # The site's search box limit; longer queries find nothing
 
-# Requests are spaced out so a big search doesn't hammer the site
-_MIN_INTERVAL = 1.0
+# --- Being a light user of the site --------------------------------------------------
+# Every request is counted and spaced out: wider apart for automatic work than for a search
+# you start. At the first sign the site is unhappy (a block, a rate limit, a server error, a
+# Cloudflare check) all requests pause, and longer each time it happens again; a successful
+# request resets that. Automatic work also stops for the day after BACKGROUND_DAILY_CAP.
+
+# What a request is for: set by the caller ("background" for automatic searches and the
+# new-uploads check, "torznab" for Prowlarr & co.); anything else is a search you started
+PURPOSE = contextvars.ContextVar("abb_purpose", default="interactive")
+SPACING = {"interactive": 1.0, "torznab": 2.0, "background": 4.0}  # seconds between requests
+BACKGROUND_DAILY_CAP = 300
+PAUSES = (5 * 60, 30 * 60, 2 * 3600, 6 * 3600)  # after the 1st, 2nd, 3rd, later warning in a row
 _next_slot = 0.0
-PAUSE_AFTER_FAILURE = 5 * 60
 _paused_until = 0.0
+_pause_level = 0
+_pause_reason = ""
+_counts = {}  # date -> {purpose: requests}
+_inflight = {}  # a page being fetched -> the task fetching it, so callers share one request
+
+
+class SiteUnavailable(ConnectionError):
+    """AudiobookBay isn't asked right now: paused after a warning, or the day's automatic
+    requests are used up."""
+
+
+def _human(seconds):
+    return f"{round(seconds / 3600)} hours" if seconds >= 2 * 3600 else f"{max(1, round(seconds / 60))} minutes"
+
+
+def _count(purpose):
+    today = datetime.date.today().isoformat()
+    for day in sorted(_counts)[:-7]:  # A week is kept
+        del _counts[day]
+    day = _counts.setdefault(today, {})
+    day[purpose] = day.get(purpose, 0) + 1
+
+
+def requests_today(purpose=None):
+    day = _counts.get(datetime.date.today().isoformat(), {})
+    return day.get(purpose, 0) if purpose else sum(day.values())
+
+
+def is_paused():
+    """True while requests are paused after a warning sign from the site."""
+    return time.monotonic() < _paused_until
+
+
+def background_allowed():
+    """Automatic work may ask the site: not paused, and the day's allowance not used up."""
+    return not is_paused() and requests_today("background") < BACKGROUND_DAILY_CAP
+
+
+def status():
+    """For Settings > Indexers: requests today, and any pause and why."""
+    left = max(0, _paused_until - time.monotonic())
+    return {"paused": left > 0, "paused_for": round(left), "reason": _pause_reason if left > 0 else "",
+            "today": {**_counts.get(datetime.date.today().isoformat(), {})}, "total_today": requests_today(),
+            "background_cap": BACKGROUND_DAILY_CAP}
+
+
+def resume():
+    """Lifts a pause (the Test button: you've just checked the site answers)."""
+    global _paused_until, _pause_level, _pause_reason
+    _paused_until, _pause_level, _pause_reason = 0.0, 0, ""
+
+
+def _pause(reason, at_least=0):
+    global _paused_until, _pause_level, _pause_reason
+    seconds = max(PAUSES[min(_pause_level, len(PAUSES) - 1)], at_least)
+    _pause_level += 1
+    _paused_until = time.monotonic() + seconds
+    _pause_reason = reason
+    logger.warning(f"AudiobookBay: {reason}; pausing all requests to it for {_human(seconds)}")
+
+
+def _looks_like_challenge(html):
+    """A Cloudflare check instead of the page (markers only its challenge pages have)."""
+    head = html[:20000]
+    return "_cf_chl_opt" in head or "cf-browser-verification" in head or "<title>just a moment" in head.lower()
 
 
 async def fetch_html(url: str, params: Optional[dict] = None) -> str:
@@ -77,29 +154,45 @@ async def fetch_html(url: str, params: Optional[dict] = None) -> str:
         with urllib.request.urlopen(req, context=context, timeout=30.0) as response:
             return response.read().decode('utf-8', errors='ignore')
 
-    global _paused_until
-    if time.monotonic() < _paused_until:
-        minutes = max(1, round((_paused_until - time.monotonic()) / 60))
-        raise ConnectionError(f"AudiobookBay isn't responding; searches are paused for {minutes} more minute(s)")
+    purpose = PURPOSE.get()
+    if is_paused():
+        raise SiteUnavailable(f"AudiobookBay requests are paused for {_human(_paused_until - time.monotonic())} "
+                              f"({_pause_reason})")
+    if purpose == "background" and not background_allowed():
+        raise SiteUnavailable(f"Today's {BACKGROUND_DAILY_CAP} automatic AudiobookBay requests are used up")
 
-    # Dropped connections, timeouts, rate limits and server errors are retried. If the
-    # site still doesn't answer, searches pause for a while rather than keep trying.
-    for backoff in (1, 3, None):
+    # A dropped connection or time-out is tried once more. Anything that says the site is
+    # unhappy (a block, a rate limit, a server error, a Cloudflare check) isn't retried:
+    # all requests pause instead.
+    for attempt in (1, 2):
         try:
-            return await _fetch_spaced(fetch)
+            html = await _fetch_spaced(fetch, purpose)
         except urllib.error.HTTPError as e:
-            if e.code not in (429, 500, 502, 503, 504):
-                raise
-            error = e
+            if e.code in (403, 429, 500, 502, 503, 504):
+                retry_after = e.headers.get("Retry-After", "") if e.headers else ""
+                _pause(f"it answered {e.code}" + (" (rate limit)" if e.code == 429 else "")
+                       + (": your cookie may need refreshing" if e.code == 403 else ""),
+                       int(retry_after) if retry_after.isdigit() else 0)
+            raise
         except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
-            error = e
-        if backoff is None:
-            _paused_until = time.monotonic() + PAUSE_AFTER_FAILURE
-            logger.warning(f"AudiobookBay isn't responding ({error}); pausing searches for "
-                           f"{PAUSE_AFTER_FAILURE // 60} minutes")
-            raise error
-        logger.info(f"AudiobookBay request failed ({error}); retrying in {backoff}s")
-        await asyncio.sleep(backoff)
+            if attempt == 2:
+                _pause(f"it isn't responding ({e})")
+                raise
+            logger.info(f"AudiobookBay request failed ({e}); trying once more in 5s")
+            await asyncio.sleep(5)
+            continue
+        if _looks_like_challenge(html):
+            _pause("it returned a Cloudflare check instead of the page: refresh your cookie in Settings > Indexers")
+            raise SiteUnavailable("AudiobookBay returned a Cloudflare check instead of the page. Add a fresh "
+                                  "AudiobookBay cookie in Settings > Indexers.")
+        resume_level()
+        return html
+
+
+def resume_level():
+    """A request went through: the next warning starts the pauses from the shortest again."""
+    global _pause_level
+    _pause_level = 0
 
 
 def _tls_context(verify=None):
@@ -114,46 +207,89 @@ def _tls_context(verify=None):
     return context
 
 
-def is_paused():
-    """True while searches are paused because the site stopped responding."""
-    return time.monotonic() < _paused_until
-
-
-async def _fetch_spaced(fetch):
-    """Runs a request in the next free time slot."""
+async def _fetch_spaced(fetch, purpose="interactive"):
+    """Runs a request in the next free time slot, and counts it."""
     global _next_slot
     now = time.monotonic()
     slot = max(now, _next_slot)
-    _next_slot = slot + _MIN_INTERVAL
+    _next_slot = slot + SPACING.get(purpose, 1.0)
     if slot > now:
         await asyncio.sleep(slot - now)
+    _count(purpose)
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, fetch)
 
 
+async def _shared(key, make):
+    """One request for a page however many callers want it at once (e.g. Prowlarr and a
+    Bayarr search asking for the same page)."""
+    task = _inflight.get(key)
+    if task is None:
+        task = asyncio.ensure_future(make())
+        _inflight[key] = task
+        task.add_done_callback(lambda t: _inflight.pop(key, None) if _inflight.get(key) is t else None)
+    return await asyncio.shield(task)
+
+
 class _Cache:
-    """A small time-limited cache (search pages and detail pages)."""
+    """A small time-limited cache (search pages and detail pages). With a file, entries are
+    kept there too, so they survive restarts."""
 
-    def __init__(self, ttl, size):
-        self.ttl, self.size, self.items = ttl, size, {}
+    def __init__(self, ttl, size, file=None):
+        self.ttl, self.size, self.items, self.file, self.loaded = ttl, size, {}, file, file is None
 
-    def get(self, key):
+    def _load(self):
+        if self.loaded:
+            return
+        self.loaded = True
+        try:
+            with open(self.file(), "r", encoding="utf-8") as f:
+                stored = json.load(f)
+            now = time.time()
+            self.items = {k: (t, v) for k, (t, v) in stored.items() if now - t < self.ttl}
+        except (OSError, ValueError, TypeError):
+            self.items = {}
+
+    def _save(self):
+        if not self.file:
+            return
+        try:
+            path = self.file()
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".abb-cache-", suffix=".json")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(self.items, f)
+            os.replace(tmp, path)
+        except OSError as e:
+            logger.warning(f"Couldn't save the AudiobookBay cache: {e}")
+
+    def get(self, key, ttl=None):
+        self._load()
         hit = self.items.get(key)
-        if hit and time.monotonic() - hit[0] < self.ttl:
+        if hit and time.time() - hit[0] < (ttl or self.ttl):
             return hit[1]
-        self.items.pop(key, None)
         return None
 
     def put(self, key, value):
+        self._load()
         if len(self.items) >= self.size:
             oldest = min(self.items, key=lambda k: self.items[k][0])
             self.items.pop(oldest, None)
-        self.items[key] = (time.monotonic(), value)
+        self.items[key] = (time.time(), value)
+        self._save()
         return value
 
 
-_search_cache = _Cache(ttl=15 * 60, size=300)
-_detail_cache = _Cache(ttl=6 * 3600, size=1000)
+def _detail_file():
+    from app import db
+    return os.path.join(db.CONFIG_DIR, "abb_details.json")
+
+
+# Search pages for an hour (the newest uploads, which change, for 20 minutes); book pages,
+# whose magnet and files don't change, for 30 days, kept on disk
+SEARCH_TTL, FEED_TTL = 3600, 20 * 60
+_search_cache = _Cache(ttl=SEARCH_TTL, size=300)
+_detail_cache = _Cache(ttl=30 * 24 * 3600, size=3000, file=_detail_file)
 
 
 # --- Values ------------------------------------------------------------------
@@ -329,21 +465,24 @@ async def search_page(query: str, page: int = 1) -> tuple[List[Dict], int]:
     """One page of search results and the number of pages there are. Cached for a while."""
     query = clean_query(query)
     key = (query.lower(), page)
-    cached = _search_cache.get(key)
+    # The newest uploads (no query) change through the day; a search's results much less
+    cached = _search_cache.get(key, None if query else FEED_TTL)
     if cached is not None:
         return cached
-    url = f"{base_url()}/page/{page}/" if page > 1 else f"{base_url()}/"
-    html = await fetch_html(url, {"s": query} if query else None)
-    if "cf-browser-verification" in html or "challenge-platform" in html and "postTitle" not in html:
-        raise RuntimeError("AudiobookBay returned a Cloudflare check instead of results. Add your AudiobookBay cookie in Settings > Indexers.")
-    results = parse_search_page(html)
-    return _search_cache.put(key, (results, last_page(html)))
+
+    async def load():
+        url = f"{base_url()}/page/{page}/" if page > 1 else f"{base_url()}/"
+        html = await fetch_html(url, {"s": query} if query else None)  # Raises on a Cloudflare check
+        return _search_cache.put(key, (parse_search_page(html), last_page(html)))
+
+    return await _shared(("search",) + key, load)
 
 
 async def search_audiobooks(query: str, offset: int = 0, limit: int = 100, known_author: Optional[str] = None) -> List[Dict]:
     """Search results for a free-text query, with magnets (for Torznab clients)."""
     start_page = (offset // RESULTS_PER_PAGE) + 1
-    pages_to_fetch = min(5, max(1, (limit // RESULTS_PER_PAGE) + 1))
+    # The newest uploads (an app's RSS check, no query): one page; a search: at most two
+    pages_to_fetch = 1 if not (query or "").strip() else min(TORZNAB_PAGES, max(1, (limit // RESULTS_PER_PAGE) + 1))
 
     all_results = []
     for page in range(start_page, start_page + pages_to_fetch):
@@ -358,15 +497,13 @@ async def search_audiobooks(query: str, offset: int = 0, limit: int = 100, known
 
     skip = offset % RESULTS_PER_PAGE
     final_results = all_results[skip:skip + limit]
-    # Detail pages (with the magnet) only for the first few results and ones already
-    # cached: loading every one, a second apart, would outlast the client's time-out. The
-    # rest link to /api/download, which finds the magnet when the release is grabbed.
-    await add_details([r for i, r in enumerate(final_results)
-                       if i < TORZNAB_DETAILS or _detail_cache.get(r.get("link")) is not None])
+    # Detail pages (with the magnet) only where already cached: the rest link to
+    # /api/download, which loads the page when the release is actually grabbed
+    await add_details([r for r in final_results if _detail_cache.get(r.get("link")) is not None])
     return final_results
 
 
-TORZNAB_DETAILS = 10
+TORZNAB_PAGES = 2
 
 
 # --- Detail pages ------------------------------------------------------------
@@ -461,19 +598,22 @@ async def fetch_detail(detail_url: str, title: str = "") -> Optional[Dict]:
         return None
     cached = _detail_cache.get(detail_url)
     if cached is None:
-        logger.debug(f"Fetching detail page: {detail_url}")
+        async def load():
+            logger.debug(f"Fetching detail page: {detail_url}")
+            parsed_page = parse_detail(await fetch_html(detail_url))  # Raises on a Cloudflare check
+            # A page without a magnet (a hiccup) isn't kept, so the next try fetches it again
+            if parsed_page.get("magnet"):
+                _detail_cache.put(detail_url, parsed_page)
+            return parsed_page
+
         try:
-            html = await fetch_html(detail_url)
+            cached = await _shared(("detail", detail_url), load)
+        except SiteUnavailable as e:
+            logger.warning(f"Not loading {detail_url}: {e}")
+            return None
         except Exception as e:
             logger.error(f"Error fetching detail page {detail_url}: {e}", exc_info=True)
             return None
-        cached = parse_detail(html)
-        # A page without a magnet is usually a Cloudflare check or a hiccup: not kept, so
-        # the next try fetches it again rather than failing for hours
-        if cached.get("magnet"):
-            _detail_cache.put(detail_url, cached)
-        elif "challenge-platform" in html or "cf-browser-verification" in html:
-            logger.warning(f"AudiobookBay returned a Cloudflare check for {detail_url}; a fresh cookie may help")
     detail = dict(cached)
     if title and detail.get("magnet") and "&dn=" not in detail["magnet"]:
         detail["magnet"] = detail["magnet"].replace("&tr=", f"&dn={urllib.parse.quote(title)}&tr=", 1) \
@@ -526,7 +666,6 @@ async def add_details(results, concurrency=3):
 async def test_connection(url="", cookie_value=None, agent="", verify=None):
     """Reaches the site and says whether the cookie logs in. Unsaved values from the form
     can be tried before saving them."""
-    global _paused_until
     url = (url or base_url()).strip().rstrip("/")
     headers = {"User-Agent": (agent or user_agent()).strip()}
     value = cookie() if cookie_value is None else cookie_value.strip()
@@ -540,6 +679,7 @@ async def test_connection(url="", cookie_value=None, agent="", verify=None):
             return response.read().decode("utf-8", errors="ignore")
 
     try:
+        _count("interactive")
         html = await asyncio.get_running_loop().run_in_executor(None, fetch)
     except Exception as e:
         if isinstance(getattr(e, "reason", e), ssl.SSLCertVerificationError):
@@ -547,9 +687,9 @@ async def test_connection(url="", cookie_value=None, agent="", verify=None):
                     "message": f"{url} has an invalid certificate ({getattr(e, 'reason', e)}). Check the address; "
                                "only if it's right, turn off Check the Site's Certificate."}
         return {"ok": False, "logged_in": False, "message": f"Couldn't reach {url}: {e}"}
-    _paused_until = 0.0  # It answers again: no need to keep searches paused
-    if "challenge-platform" in html and "postTitle" not in html:
+    if _looks_like_challenge(html):
         return {"ok": False, "logged_in": False, "message": "Cloudflare blocked the request. A fresh cookie (with the matching user agent) usually helps."}
+    resume()  # It answers again: no need to keep requests paused
     logged_in = bool(re.search(r"log\s*out|logout", html, re.IGNORECASE))
     if logged_in:
         return {"ok": True, "logged_in": True, "message": "Connected and logged in."}

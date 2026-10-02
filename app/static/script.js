@@ -369,6 +369,7 @@ async function fetchSettings() {
         document.getElementById('setAbbUrl').value = appSettings.abb_url || '';
         document.getElementById('setAbbUserAgent').value = appSettings.abb_user_agent || '';
         document.getElementById('setAbbVerifyTls').checked = appSettings.abb_verify_tls ?? true;
+        showAbbUsage();
         document.getElementById('setTorznabKey').value = appSettings.torznab_api_key || '';
         document.getElementById('setAbbCookie').value = '';
         abbCookieClearing = false;
@@ -3518,6 +3519,26 @@ function downloadsEnabled() {
     return !!(appSettings.qbt_enabled || (appSettings.usenet_client && appSettings.usenet_host));
 }
 
+// How much Bayarr has asked AudiobookBay today, and whether it's holding off (Settings > Indexers)
+async function showAbbUsage() {
+    const el = document.getElementById('abbUsage');
+    const st = await fetch('/api/abb/status').then(r => r.ok ? r.json() : null).catch(() => null);
+    if (!el || !st) return;
+    const t = st.today || {};
+    const parts = [`${t.background || 0} automatic (allowance ${st.background_cap})`,
+        t.interactive && `${t.interactive} for searches you started`, t.torznab && `${t.torznab} for Prowlarr & co.`];
+    let text = `Requests to AudiobookBay today: ${st.total_today}. ${parts.filter(Boolean).join(', ')}.`;
+    if (st.feed && st.feed.checked) {
+        text += ` New uploads last checked ${new Date(st.feed.checked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+            + (st.feed.error ? ` (failed: ${st.feed.error})` : `: ${st.feed.new} new, ${st.feed.grabbed} grabbed`) + '.';
+    }
+    if (st.paused) {
+        const left = st.paused_for >= 7200 ? `${Math.round(st.paused_for / 3600)} hours` : `${Math.max(1, Math.round(st.paused_for / 60))} minutes`;
+        text += ` Paused for ${left}: ${st.reason}. Test lifts the pause once the site answers.`;
+    }
+    el.textContent = text;
+}
+
 function setupWatchedLists() {
     document.getElementById('absSeriesOrderBtn').addEventListener('click', runAbsSeriesOrder);
     document.getElementById('wlAddBtn').addEventListener('click', async (e) => {
@@ -3571,6 +3592,7 @@ function setupIndexers() {
         });
         btn.disabled = false;
         setActionStatus(status, ok ? data.message : (data.detail || 'Test failed'), ok && data.ok ? (data.logged_in ? 'ok' : '') : 'error');
+        showAbbUsage();
     });
     document.getElementById('ixSaveBtn').addEventListener('click', async () => {
         const status = document.getElementById('ixStatus');

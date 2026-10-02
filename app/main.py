@@ -114,6 +114,7 @@ async def favicon():
 @app.get("/api")
 async def torznab_api(request: Request, t: str = "", q: str = "", author: str = "", title: str = "", offset: int = 0, limit: int = 100):
     """Main Torznab endpoint for indexer queries."""
+    scraper.PURPOSE.set("torznab")  # Prowlarr & co.: counted and paced as such
     
     # Return Capabilities
     if t == "caps":
@@ -153,6 +154,7 @@ async def torznab_api(request: Request, t: str = "", q: str = "", author: str = 
 @app.get("/api/download")
 async def get_magnet(url: str, title: str = None):
     """Simulates downloading a torrent by fetching the detail page and returning the magnet."""
+    scraper.PURPOSE.set("torznab")
     logger.info(f"Download requested for URL: {url} with title: {title}")
     if not url:
         logger.warning("Download requested without URL parameter")
@@ -483,6 +485,13 @@ async def api_test_indexer(request: Request):
     if not str(data.get("url") or "").startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="The URL must start with http:// or https://")
     return await indexers.test(data)
+
+@app.get("/api/abb/status")
+async def api_abb_status():
+    """Requests to AudiobookBay today (by what they were for), any pause and why, and the
+    last check of its new uploads."""
+    from app import abb_feed
+    return {**scraper.status(), "feed": abb_feed.status()}
 
 @app.post("/api/abb/test")
 async def api_test_abb(request: Request):
