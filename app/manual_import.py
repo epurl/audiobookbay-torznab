@@ -222,6 +222,23 @@ def _remove_sources(item, audio, cover):
         shutil.rmtree(path)
 
 
+def _keep_source(source, dest, root_folder, book_id):
+    """Why a move must keep the originals ("" when they can go): they are the imported
+    copy (the files were already where they belong), or hold it, the library or another
+    book."""
+    norm = lambda p: os.path.normcase(os.path.abspath(p))
+    inside = lambda a, b: a == b or a.startswith(b.rstrip(os.sep) + os.sep)  # a is b or inside it
+    src = norm(source)
+    if not dest or inside(norm(dest), src) or inside(src, norm(dest)):
+        return "they're already where the book belongs"
+    if root_folder and inside(norm(root_folder), src):
+        return "the folder holds the library"
+    other = next((b for b in db.get_library() if b["id"] != book_id and b.get("path") and inside(norm(b["path"]), src)), None)
+    if other:
+        return f"the folder holds {other.get('title')}"
+    return ""
+
+
 async def _import_one(item, choice, mode, settings, root_folder):
     """Returns (ok, message, book id)."""
     book, created = await _book_for(item, choice, settings)
@@ -243,8 +260,12 @@ async def _import_one(item, choice, mode, settings, root_folder):
             raise ValueError("Copying the files failed; see History.")
         imported = True
         if mode == "move":
+            keep = _keep_source(item["path"], (db.get_book(book["id"]) or {}).get("path"), root_folder, book["id"])
             try:
-                await asyncio.to_thread(_remove_sources, item, audio, cover)
+                if keep:
+                    warning = (warning + " " if warning else "") + f"The originals were kept: {keep}."
+                else:
+                    await asyncio.to_thread(_remove_sources, item, audio, cover)
             except OSError as e:
                 warning = (warning + " " if warning else "") + f"Imported, but the originals couldn't be deleted: {e}"
         return True, warning or "", book["id"]
