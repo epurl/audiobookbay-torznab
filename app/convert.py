@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 ORIGINAL_SUFFIX = ".original"
 AAC_CONTAINERS = {".m4a", ".m4b", ".mp4"}
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 QUEUE_FILE = os.path.join(db.CONFIG_DIR, "convert_queue.json")
 RECENT_KEPT = 30
@@ -132,6 +133,11 @@ def build(book, files, durations, cover, out_path, workdir, encode=False):
 async def _run(book):
     folder = book["path"]
     files = sorted((f for f, _ in audio_files(folder)), key=_natural_key)
+    # ffmpeg reads the files from a list, one per line: a name with a line break in it (a
+    # crafted download) could add entries of its own, e.g. a URL for ffmpeg to fetch
+    odd = next((f for f in files + [book.get("cover") or ""] if _CONTROL.search(f)), None)
+    if odd:
+        raise RuntimeError(f"A file name has a line break or control character in it ({odd!r}); rename it first")
     durations = await asyncio.to_thread(lambda: [file_duration_min(f) for f in files])
     if any(not d for d in durations):
         bad = [os.path.basename(f) for f, d in zip(files, durations) if not d]
